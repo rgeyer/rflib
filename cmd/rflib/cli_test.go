@@ -483,7 +483,8 @@ func TestRadioWorkflow(t *testing.T) {
 		t.Fatalf("model list = %q", out)
 	}
 	c.fails("unknown radio model", "radio", "add", "HT", "--model", "uv-5r")
-	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g", "--default-power", "high", "--sync-service", "noaa")
+	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g", "--default-power", "high")
+	c.ok("radio", "sources", "add", "HT", "service:noaa")
 
 	if out := c.ok("radio", "channels", "add", "HT", "--tag", "repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
 		t.Fatalf("add by filter = %q", out)
@@ -509,7 +510,7 @@ func TestRadioWorkflow(t *testing.T) {
 	}
 	for _, want := range []string{
 		"0\tGMRS 1\tfits\tHigh\tscan\t462.562500\tGMRS 1\t",  // capped at 5 W: High (4 W) is fine
-		"1\tGMRS15R\tshortened\tHigh\tscan\t462.550000",       // 7 characters
+		"1\tGMRS15R\tshortened\tHigh\tscan\t462.550000",      // 7 characters
 		"§20\tKIDS*\tfits\tLow\tskip*\t467.562500\tGMRS 8\t", // 0.5 W cap: lowest level, warned
 	} {
 		if !strings.Contains(out, want) {
@@ -523,7 +524,7 @@ func TestRadioWorkflow(t *testing.T) {
 	if got := c.ok("radio", "sync", "HT", "--dry-run"); strings.Count(got, "would add") != 7 {
 		t.Fatalf("sync dry run = %q", got)
 	}
-	if got := c.ok("radio", "sync", "HT"); got != "Added 7 channels to HT" {
+	if got := c.ok("radio", "sync", "HT"); !strings.HasSuffix(got, "Added 7 channels to HT") {
 		t.Fatalf("sync = %q", got)
 	}
 	if got := c.ok("radio", "sync", "HT"); got != "Added 0 channels to HT" {
@@ -583,4 +584,142 @@ func TestRadioMoveBeforeAfter(t *testing.T) {
 		}
 	}
 	c.fails("not on Truck", "radio", "channels", "move", "Truck", "--id", "nope", "--top")
+}
+
+func TestSearchAndSavedSearches(t *testing.T) {
+	c := newCLI(t)
+	c.ok("seed", "install", "us-gmrs", "us-noaa", "us-ham-calling")
+	count := func(args ...string) int {
+		out := c.ok(append([]string{"channel", "list"}, args...)...)
+		if out == "" {
+			return 0
+		}
+		return len(strings.Split(out, "\n"))
+	}
+	all := count()
+	if n := count("band:gmrs", "is:repeater"); n != 8 {
+		t.Errorf("GMRS repeaters = %d", n)
+	}
+	if n := count("--query", "band:gmrs is:repeater"); n != 8 {
+		t.Errorf("--query = %d", n)
+	}
+	// A leading negation needs -- so it isn't read as a flag.
+	c.fails("unknown shorthand flag", "channel", "list", "-service:gmrs")
+	if n := count("--", "-service:gmrs"); n != all-30 {
+		t.Errorf("negation = %d of %d", n, all)
+	}
+	if n := count("band:2m", "OR", "band:70cm"); n == 0 {
+		t.Error("OR matched nothing")
+	}
+	if n := count("--service", "noaa", "is:rxonly"); n != 7 {
+		t.Errorf("shorthand plus query = %d", n)
+	}
+	c.fails(`unknown field "frq"`, "channel", "list", "frq:146")
+	c.fails("--lat, --lon, and --radius-km", "channel", "list", "--lat", "34")
+
+	c.ok("search", "add", "wx", "service:noaa")
+	c.ok("search", "add", "@Quiet", "@wx OR service:gmrs -is:repeater", "--notes", "listen")
+	c.fails("already exists", "search", "add", "wx", "band:noaa")
+	c.fails("uses itself", "search", "add", "loop", "@loop")
+	c.fails("no saved search", "search", "add", "bad", "@missing")
+	c.fails("must be lower-case", "search", "add", "Bad Name!", "tag:x")
+	if n := count("@quiet"); n != 7+22 {
+		t.Errorf("@quiet = %d", n)
+	}
+	if out := c.ok("search", "list"); !strings.Contains(out, "@quiet\t29\t") || !strings.Contains(out, "@wx\t7\tservice:noaa") {
+		t.Errorf("search list = %q", out)
+	}
+	c.fails("uses itself (@wx → @quiet → @wx)", "search", "update", "wx", "--query", "@quiet")
+	c.fails("used by @quiet", "search", "delete", "wx", "--yes")
+	c.fails("used by @quiet", "search", "update", "wx", "--name", "weather")
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "sources", "add", "HT", "@quiet")
+	if out := c.ok("search", "show", "quiet"); !strings.Contains(out, "used by: radio HT source 1") || !strings.Contains(out, "matches: 29") {
+		t.Errorf("search show = %q", out)
+	}
+	c.fails("used by radio HT source 1", "search", "delete", "quiet", "--yes")
+	c.ok("radio", "sources", "remove", "HT", "1")
+	c.ok("search", "delete", "quiet", "--yes")
+	c.ok("search", "update", "wx", "--name", "weather", "--query", "band:noaa")
+	if n := count("@weather"); n != 7 {
+		t.Errorf("renamed search = %d", n)
+	}
+	if n := count("radio:none"); n != all {
+		t.Errorf("radio:none = %d", n)
+	}
+}
+
+func TestRadioSources(t *testing.T) {
+	c := newCLI(t)
+	c.ok("seed", "install", "us-gmrs", "us-noaa")
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.fails("no sources", "radio", "sync", "HT")
+	c.ok("radio", "sources", "add", "HT", "band:noaa", "--sort", "freq", "--section-start", "100")
+	c.ok("radio", "sources", "add", "HT", "band:gmrs -is:repeater", "--sort", "freq")
+	c.fails("unknown field", "radio", "sources", "add", "HT", "frq:1")
+	c.fails("unknown sort", "radio", "sources", "add", "HT", "tag:x", "--sort", "size")
+	// Make GMRS first: it claims its channels first and goes at the top.
+	c.ok("radio", "sources", "move", "HT", "2", "--to", "1")
+	if got := c.ok("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (band:gmrs -is:repeater): added 22") || !strings.HasSuffix(got, "Added 29 channels to HT") {
+		t.Fatalf("sync = %q", got)
+	}
+	// A hand-added channel goes at the end and stays there.
+	hand := c.ok("channel", "add", "--name", "Hand", "--rx", "146.52")
+	c.ok("radio", "channels", "add", "HT", "--id", hand)
+	// New matches for the first source go after its channels, not at the end.
+	newGMRS := c.ok("channel", "add", "--name", "AAA New", "--rx", "462.7125", "--service", "gmrs")
+	c.ok("radio", "sync", "HT")
+
+	type row struct {
+		Memory       int    `json:"memory"`
+		SectionStart bool   `json:"section_start"`
+		ChannelID    string `json:"channel_id"`
+		ChannelName  string `json:"channel_name"`
+		ReceiveMHz   string `json:"receive_mhz"`
+	}
+	var rows []row
+	if err := json.Unmarshal([]byte(c.ok("radio", "channels", "list", "HT", "--format", "json")), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 31 {
+		t.Fatalf("%d memories", len(rows))
+	}
+	if rows[0].Memory != 1 || rows[0].ReceiveMHz != "462.550000" {
+		t.Errorf("first = %+v", rows[0])
+	}
+	if rows[22].ChannelID != newGMRS || rows[22].Memory != 23 {
+		t.Errorf("new GMRS match = %+v, want memory 23", rows[22])
+	}
+	if !rows[23].SectionStart || rows[23].Memory != 100 || rows[23].ReceiveMHz != "162.400000" {
+		t.Errorf("NOAA section = %+v", rows[23])
+	}
+	if rows[30].ChannelID != hand || rows[30].Memory != 107 {
+		t.Errorf("hand-added = %+v", rows[30])
+	}
+
+	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t-\tsort freq\t23 channels\tband:gmrs -is:repeater") ||
+		!strings.Contains(out, "2\t§100\tsort freq\t7 channels\tband:noaa") {
+		t.Errorf("sources list = %q", out)
+	}
+	if out := c.ok("radio", "show", "HT"); !strings.Contains(out, "sources:\n1\t") {
+		t.Errorf("radio show = %q", out)
+	}
+	// Moving the section start applies now; removing it clears it.
+	c.ok("radio", "sources", "set", "HT", "2", "--section-start", "50")
+	if !strings.Contains(c.ok("radio", "channels", "list", "HT"), "§50\t") {
+		t.Error("section start not moved")
+	}
+	c.fails("already reach memory", "radio", "sources", "set", "HT", "2", "--section-start", "5")
+	c.ok("radio", "sources", "set", "HT", "2", "--section-start", "")
+	if strings.Contains(c.ok("radio", "channels", "list", "HT"), "§") {
+		t.Error("section start not cleared")
+	}
+	c.fails("has sources 1-2", "radio", "sources", "remove", "HT", "3")
+	if out := c.ok("radio", "sources", "remove", "HT", "2", "--with-channels"); out != "Removed source 2 from HT and 7 channels" {
+		t.Errorf("remove = %q", out)
+	}
+	c.ok("radio", "sources", "remove", "HT", "1")
+	if out := c.ok("radio", "list"); !strings.Contains(out, "24 channels") {
+		t.Errorf("channels kept after removing a source: %q", out)
+	}
 }

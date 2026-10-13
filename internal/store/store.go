@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -117,6 +116,23 @@ CREATE TABLE radios (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, model TEXT 
 CREATE TABLE radio_channels (radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, position INTEGER NOT NULL, section_start INTEGER, name TEXT NOT NULL DEFAULT '', power TEXT NOT NULL DEFAULT '', skip INTEGER, PRIMARY KEY(radio_id, channel_id));
 CREATE INDEX idx_radio_channels_order ON radio_channels(radio_id, position);
 CREATE INDEX idx_radio_channels_channel ON radio_channels(channel_id);`},
+	// Saved searches, and radio sources in place of the one-filter sync.
+	// Each radio's old sync filter becomes its first source. The sync_*
+	// columns stay (SQLite can't drop a column with a foreign key) but are
+	// no longer read or written.
+	{6, `
+CREATE TABLE searches (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, query TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE radio_sources (id TEXT PRIMARY KEY, radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, position INTEGER NOT NULL, query TEXT NOT NULL, sort TEXT NOT NULL DEFAULT 'name', section_start INTEGER);
+CREATE INDEX idx_radio_sources_order ON radio_sources(radio_id, position);
+ALTER TABLE radio_channels ADD COLUMN source_id TEXT REFERENCES radio_sources(id) ON DELETE SET NULL;
+INSERT INTO radio_sources (id, radio_id, position, query, sort)
+SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(6))), id, 0,
+	trim(
+		CASE WHEN sync_tag <> '' THEN 'tag:"' || replace(replace(sync_tag, '\', '\\'), '"', '\"') || '" ' ELSE '' END ||
+		CASE WHEN sync_group_id IS NOT NULL THEN 'group:' || sync_group_id || ' ' ELSE '' END ||
+		CASE WHEN sync_service <> '' THEN 'service:' || sync_service ELSE '' END),
+	'name'
+FROM radios WHERE sync_tag <> '' OR sync_group_id IS NOT NULL OR sync_service <> '';`},
 }
 
 func latestVersion() int64 {
@@ -438,7 +454,7 @@ func (s *Store) ListChannels(ctx context.Context, f ChannelFilter) ([]domain.Cha
 	}
 	out := chs[:0]
 	for _, c := range chs {
-		if c.Group != nil && c.Group.Latitude != nil && distanceKM(*f.Latitude, *f.Longitude, *c.Group.Latitude, *c.Group.Longitude) <= *f.RadiusKM {
+		if c.Group != nil && c.Group.Latitude != nil && domain.DistanceKM(*f.Latitude, *f.Longitude, *c.Group.Latitude, *c.Group.Longitude) <= *f.RadiusKM {
 			out = append(out, c)
 		}
 	}
@@ -541,11 +557,4 @@ func scanChannel(r scanner) (domain.Channel, error) {
 		c.Group = &g
 	}
 	return c, nil
-}
-func distanceKM(lat1, lon1, lat2, lon2 float64) float64 {
-	const r = 6371
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLon := (lon2 - lon1) * math.Pi / 180
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	return r * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }

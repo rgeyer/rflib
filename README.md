@@ -45,9 +45,11 @@ Channels record a receive frequency plus an optional transmit frequency. Use mat
   --group "Portland Metro" --rx 146.940 --tx 146.340 --mode FM \
   --rx-tone ctcss:100.0 --tx-tone ctcss:100.0 --tone-squelch --tags "ham,repeater"
 
-./rflib channel list --tag repeater
-./rflib channel list --lat 45.52 --lon -122.68 --radius-km 30
+./rflib channel list tag:repeater
+./rflib channel list 'service:none freq:144..148 is:repeater'
 ```
+
+See [Search](#search) for the query language.
 
 Supported modes are `FM`, `NFM`, `AM`, `USB`, and `LSB`. Channel frequencies are entered in MHz and stored exactly as integer Hz. CTCSS tones are entered in Hz and stored exactly as integer millihertz, preserving standard values such as `69.3 Hz` without floating-point math or rounding.
 
@@ -69,9 +71,62 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--gro
 
 `--short-names` gives a channel your own abbreviations for radios with narrow displays, such as `--short-names "SB Sheriff Disp,SBSO Disp"`. See [Names on radio displays](#names-on-radio-displays).
 
+## Search
+
+`channel list` takes a query, much like a Gmail search. Every command that selects channels (`export`, `names`, `check`, and `radio channels add`) takes the same query with `--query` or `-q`.
+
+```sh
+./rflib channel list service:none freq:144..148 is:repeater
+./rflib channel list 'tag:ham (near:34.64,-120.46,40 OR -has:location)'
+./rflib export chirp -q 'band:2m OR band:70cm' --output dual.csv
+```
+
+- **Combining:** terms are `field:value`, and a space between them means AND. `OR` binds tighter than AND, so `a b OR c` means `a AND (b OR c)`.
+- **Negating:** a leading `-` (or `NOT`) negates a term or a parenthesized group. When a negation comes first among the arguments, put `--` before it so it isn't read as a flag: `channel list -- -tag:hf`. Quoting a whole query, or passing it with `-q`, avoids this.
+- **Grouping and quoting:** parentheses group terms, and quotes keep spaces in a value: `name:"Lompoc PD"`.
+- **Bare words** match names, short names, notes, and group names, ignoring case.
+
+| Field | Values |
+|---|---|
+| `name:`, `notes:` | Text the name (or a short name), or the notes, contains |
+| `service:` | A service, or `none` |
+| `tag:` | A tag |
+| `group:` | A group's name or ID, or `none` |
+| `freq:`, `rx:`, `tx:` | MHz: `146.52`, a range `144..148` (either end optional), or `>=420`, `<30`. `freq:` matches either frequency. |
+| `band:` | `160m` through `23cm`, `air`, `marine`, `cb`, `frs`, `gmrs`, `murs`, `noaa` (by receive frequency) |
+| `duplex:` | `+`, `-`, `split`, `simplex`, or `off` (no transmit frequency) |
+| `tone:`, `txtone:`, `rxtone:` | `131.8`, `dcs:023`, `ctcss`, `dcs`, or `none`, as programmed: the receive tone counts only with tone squelch. `tone:` matches either direction; `tone:none` means neither has one. |
+| `mode:` | `FM`, `NFM`, `AM`, `USB`, or `LSB` |
+| `power:` | `low`, `medium`, `high`, `max`, or `none` |
+| `squelch:`, `skip:` | `yes` or `no` |
+| `is:` | `repeater` (transmit differs from receive), `simplex`, `rxonly`, `transmit` (a radio export would let it transmit; see [Where radios transmit](#where-radios-transmit)), `skip` |
+| `has:` | `location`, `service`, `group`, `tag`, `tone`, `power`, `notes`, `shortname`, `radio` |
+| `near:` | `LAT,LON,KM`, see below |
+| `radio:` | A radio's name, `any`, or `none` |
+| `created:`, `updated:` | `YYYY-MM-DD`, with comparisons and ranges like `freq:` |
+| `id:` | A channel ID |
+
+**Location.** A channel's location is its group's. `near:` matches when the group is within the distance plus the group's own `--radius-km`, so a repeater whose coverage reaches you counts. Channels without a location never match `near:`. To keep them, say so: `near:34.64,-120.46,40 OR -has:location`.
+
+**Shorthand flags.** `--tag`, `--group`, `--service`, and `--lat`/`--lon`/`--radius-km` still work and are added to the query.
+
+### Saved searches
+
+Save a query by name and use it anywhere as `@name`: in `channel list`, in other searches, and in radio sources.
+
+```sh
+./rflib search add local-rptrs '(band:2m OR band:70cm) is:repeater near:34.64,-120.46,50'
+./rflib channel list @local-rptrs -tag:hf
+./rflib search list          # each search, how many channels it matches, and its query
+./rflib search show local-rptrs
+./rflib search update local-rptrs --query 'band:2m is:repeater'
+```
+
+A search can't use itself, directly or through others. A search in use by another search or a radio can't be renamed or deleted; `search show` lists what uses it.
+
 ## Services and receive-only channels
 
-Each channel can record its radio service with `--service`: `amateur`, `gmrs`, `frs`, `cb`, `murs`, `marine`, `noaa`, `public_safety`, or `other`. Leaving it out means unspecified; `rflib` never guesses from frequency, since services such as FRS and GMRS share channels. `channel list`, `export`, and `check` accept `--service` as a filter.
+Each channel can record its radio service with `--service`: `amateur`, `gmrs`, `frs`, `cb`, `murs`, `marine`, `noaa`, `public_safety`, or `other`. Leaving it out means unspecified; `rflib` never guesses from frequency, since services such as FRS and GMRS share channels. Search with `service:gmrs`, or `service:none` for channels without one.
 
 `--rx-only` marks a channel you must never transmit on. Unlike omitting `--tx`, it keeps the system's input frequency on record (useful for public safety repeaters), while exports such as CHIRP program the channel receive only. `noaa` and `public_safety` channels are receive only unless you pass `--rx-only=false`.
 
@@ -112,7 +167,7 @@ A radio is one of your own radios: a model, the channels programmed into it in y
 ```sh
 ./rflib model list
 ./rflib radio add Truck --model yaesu-ftm150 --default-power medium
-./rflib radio channels add Truck --tag mobile --sort freq
+./rflib radio channels add Truck -q tag:mobile --sort freq
 ./rflib radio channels add Truck --id <channel-id>
 ./rflib radio channels list Truck
 ./rflib radio export Truck --output truck.csv
@@ -135,7 +190,7 @@ A radio is one of your own radios: a model, the channels programmed into it in y
 
 ### Channel order and memory numbers
 
-`radio channels add` appends to the end of the list, by `--id` or by filter (`--tag`, `--group`, `--service`). Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
+`radio channels add` appends to the end of the list, by `--id` or by `--query`. Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
 
 ```sh
 ./rflib radio channels move Truck --id <id> --before <other-id>   # or --after, --to N, --top, --bottom
@@ -173,13 +228,24 @@ On CHIRP radios, receive-only means duplex `off`. The Yaesu FTM-150 and FTM-6000
 
 ### Keeping radios up to date
 
-Give a radio a saved filter, and `radio sync` appends any matching channels it doesn't have yet. It never removes or reorders anything.
+A radio's **sources** are searches that `radio sync` adds new matching channels from. Each source keeps its channels together in the radio's list, in its own sort order, and can start a section at a memory number.
 
 ```sh
-./rflib radio update Truck --sync-tag mobile
-./rflib radio sync Truck --dry-run
-./rflib radio sync Truck
+./rflib radio sources add HT @local-rptrs --sort freq
+./rflib radio sources add HT band:gmrs --sort freq --section-start 100
+./rflib radio sources add HT band:noaa --section-start 150
+./rflib radio sync HT --dry-run
+./rflib radio sync HT
+./rflib radio sources list HT    # number, section start, sort, channels added, query
 ```
+
+- **Placement:** each source's new channels go after the last channel that source added. A source with none yet goes after the channels of earlier sources and before those of later ones.
+- **Order and claims:** sources are numbered from 1. An earlier source claims a channel first, and `radio sources move HT 3 --to 1` changes the order.
+- **What sync leaves alone:** it never removes or reorders anything. Channels you add by hand stay where you put them, and so do channels you move.
+- **Changing a source:** `radio sources set HT 2 --query ... --sort ... --section-start ...` changes a source. A new section start moves to the source's first channel right away.
+- **Removing a source:** `radio sources remove HT 2` removes a source and leaves its channels on the radio. Add `--with-channels` to take them off too.
+
+Sync warns when the result no longer fits the radio, such as a source running past the next section start.
 
 ## Power
 
@@ -205,7 +271,7 @@ If a model has no level for the intent, `low` takes its lowest level, and `mediu
 
 ## Export
 
-Exports write to stdout unless `--output PATH` is given, and accept the same filters as `channel list`.
+Exports write to stdout unless `--output PATH` is given, and select channels with `--query` (see [Search](#search)).
 
 ```sh
 ./rflib export csv --output channels.csv --tag ham

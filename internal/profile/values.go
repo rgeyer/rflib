@@ -9,9 +9,8 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 )
 
-// splitThresholdHz matches chirp.SplitThresholdHz: offsets this large are
-// written as split rather than +/-.
-const splitThresholdHz = 50_000_000
+// splitThresholdHz: offsets this large are written as split rather than +/-.
+const splitThresholdHz = domain.SplitThresholdHz
 
 // ToneMode names the programmed tone combination of a channel.
 func ToneMode(tx, rx domain.Tone) string {

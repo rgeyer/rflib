@@ -204,23 +204,6 @@ func validChannels(warn io.Writer, v export.Validator, cs []domain.Channel) []do
 	return out
 }
 
-func filteredChannels(cmd *cobra.Command, s *store.Store) ([]domain.Channel, error) {
-	filter, err := channelFilter(cmd, s)
-	if err != nil {
-		return nil, err
-	}
-	return s.ListChannels(ctx(cmd), filter)
-}
-
-func filtered(cmd *cobra.Command) bool {
-	for _, name := range []string{"group", "tag", "service", "lat", "lon", "radius-km"} {
-		if cmd.Flags().Changed(name) {
-			return true
-		}
-	}
-	return false
-}
-
 func referencedGroups(groups []domain.Group, channels []domain.Channel) []domain.Group {
 	used := map[string]bool{}
 	for _, c := range channels {

@@ -89,8 +89,9 @@ func newCheckCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "check", Short: "Report channels that don't fit their service's US band plan", Args: cobra.NoArgs,
 		Long: `Report channels that don't fit their service's US band plan: amateur
 transmit frequencies outside the amateur bands, off-plan FRS, GMRS, MURS, CB,
-and NOAA channels, and transmitting NOAA or public safety channels. Channels
-without a service are not checked. Exits non-zero when anything is reported.`}
+and NOAA channels, transmitting NOAA or public safety channels, and channels
+without a service that transmit outside the amateur bands and FRS, GMRS, MURS,
+and CB channels. Exits non-zero when anything is reported.`}
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		return withStore(cmd, func(s *store.Store) error {

@@ -21,9 +21,8 @@ var Columns = []string{"Location", "Name", "Frequency", "Duplex", "Offset", "Ton
 
 // SplitThresholdHz is the RX/TX difference at or above which a channel is
 // written as duplex "split" (Offset holds the TX frequency) rather than as a
-// +/- offset. Every standard repeater offset, up to 25 MHz on 33 cm, is
-// below it; cross-band pairs are above it.
-const SplitThresholdHz = 50_000_000
+// +/- offset.
+const SplitThresholdHz = domain.SplitThresholdHz
 
 // Defaults CHIRP writes for tone fields a memory doesn't use.
 const (
