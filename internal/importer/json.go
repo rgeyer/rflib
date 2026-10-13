@@ -33,7 +33,7 @@ func ParseJSON(r io.Reader) (Batch, error) {
 	}
 	for i, rec := range doc.Channels {
 		row := i + 1
-		c := domain.Channel{ID: rec.ID, Name: rec.Name, ReceiveHz: rec.ReceiveHz, TransmitHz: rec.TransmitHz, Mode: rec.Mode, ToneSquelch: rec.ToneSquelch, Power: rec.Power, Bandwidth: rec.Bandwidth, Skip: rec.Skip, Tags: rec.Tags, Notes: rec.Notes, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt}
+		c := domain.Channel{ID: rec.ID, Name: rec.Name, ReceiveHz: rec.ReceiveHz, TransmitHz: rec.TransmitHz, Mode: rec.Mode, ToneSquelch: rec.ToneSquelch, Power: rec.Power, Bandwidth: rec.Bandwidth, Skip: rec.Skip, Tags: rec.Tags, ShortNames: rec.ShortNames, Notes: rec.Notes, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt}
 		var err error
 		if c.Service, err = domain.ParseService(rec.Service); err != nil {
 			b.fail(row, "%v", err)

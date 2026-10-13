@@ -158,7 +158,9 @@ func TestExportRejectsUnsupportedChannels(t *testing.T) {
 		edit func(*domain.Channel)
 		want string
 	}{
-		{"tone squelch", func(c *domain.Channel) { c.TransmitTone, c.ReceiveTone, c.ToneSquelch = tone(t, "ctcss:100"), tone(t, "ctcss:100"), true }, "tone squelch (tone mode \"tsql\")"},
+		{"tone squelch", func(c *domain.Channel) {
+			c.TransmitTone, c.ReceiveTone, c.ToneSquelch = tone(t, "ctcss:100"), tone(t, "ctcss:100"), true
+		}, "tone squelch (tone mode \"tsql\")"},
 		{"usb", func(c *domain.Channel) { c.Mode = "USB" }, "mode USB"},
 		{"inverted dcs", func(c *domain.Channel) { c.TransmitTone = tone(t, "dcs:023:inverted") }, "inverted DCS"},
 		{"odd ctcss", func(c *domain.Channel) { c.TransmitTone = tone(t, "ctcss:100.5") }, "standard"},

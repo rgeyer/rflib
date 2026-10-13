@@ -38,6 +38,7 @@ type channelOut struct {
 	Bandwidth   string    `json:"bandwidth"`
 	Skip        bool      `json:"skip"`
 	Tags        []string  `json:"tags"`
+	ShortNames  []string  `json:"short_names"`
 	Notes       string    `json:"notes"`
 }
 
@@ -62,10 +63,14 @@ func newChannelOut(c domain.Channel) channelOut {
 		Bandwidth:   c.Bandwidth,
 		Skip:        c.Skip,
 		Tags:        c.Tags,
+		ShortNames:  c.ShortNames,
 		Notes:       c.Notes,
 	}
 	if o.Tags == nil {
 		o.Tags = []string{}
+	}
+	if o.ShortNames == nil {
+		o.ShortNames = []string{}
 	}
 	if c.TransmitHz != nil {
 		mhz := domain.FormatFrequencyMHz(*c.TransmitHz)
@@ -131,8 +136,8 @@ func writeChannel(out io.Writer, c domain.Channel, format string) error {
 	if format == "json" {
 		return writeJSON(out, newChannelOut(c))
 	}
-	fmt.Fprintf(out, "%s\nname: %s\ngroup: %s\nservice: %s\nrx: %s MHz\ntx: %s\nmode: %s\nreceive tone: %s\ntransmit tone: %s\ntone squelch: %t\npower: %s\nbandwidth: %s\nskip: %t\ntags: %s\nnotes: %s\n",
-		c.ID, c.Name, groupName(c), serviceName(c.Service), domain.FormatFrequencyMHz(c.ReceiveHz), txText(c), c.Mode,
+	fmt.Fprintf(out, "%s\nname: %s\nshort names: %s\ngroup: %s\nservice: %s\nrx: %s MHz\ntx: %s\nmode: %s\nreceive tone: %s\ntransmit tone: %s\ntone squelch: %t\npower: %s\nbandwidth: %s\nskip: %t\ntags: %s\nnotes: %s\n",
+		c.ID, c.Name, strings.Join(c.ShortNames, ", "), groupName(c), serviceName(c.Service), domain.FormatFrequencyMHz(c.ReceiveHz), txText(c), c.Mode,
 		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, c.Power, c.Bandwidth, c.Skip,
 		strings.Join(c.Tags, ","), c.Notes)
 	return nil

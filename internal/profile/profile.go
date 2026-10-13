@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ryan/rflib/internal/naming"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,6 +38,9 @@ type Profile struct {
 	MaxNameLength int `yaml:"max_name_length"`
 	// NameCase is "" (unchanged) or "upper".
 	NameCase string `yaml:"name_case"`
+	// NameCharset limits the characters in names: "ascii" (default),
+	// "alnum", or a literal set such as "A-Z0-9 -/" (see naming.ParseCharset).
+	NameCharset string `yaml:"name_charset"`
 	// StandardTonesOnly rejects CTCSS/DCS tones outside the standard sets.
 	StandardTonesOnly bool     `yaml:"standard_tones_only"`
 	Columns           []Column `yaml:"columns"`
@@ -113,6 +117,9 @@ func (p Profile) Validate() error {
 	if p.NameCase != "" && p.NameCase != "upper" {
 		fail("name_case must be empty or upper")
 	}
+	if _, err := naming.ParseCharset(p.NameCharset); err != nil {
+		fail("name_charset: %v", err)
+	}
 	if p.Slots < 0 || p.MaxNameLength < 0 || p.Start != nil && *p.Start < 0 {
 		fail("start, slots, and max_name_length must not be negative")
 	}
@@ -141,6 +148,12 @@ func (p Profile) Validate() error {
 		fail("a column with source rx_mhz is required")
 	}
 	return errors.Join(errs...)
+}
+
+// NameRules are the profile's display limits for the naming engine.
+func (p Profile) NameRules() naming.Rules {
+	cs, _ := naming.ParseCharset(p.NameCharset) // checked by Validate
+	return naming.Rules{MaxLen: p.MaxNameLength, Upper: p.NameCase == "upper", Charset: cs}
 }
 
 func (p Profile) start() int {

@@ -11,6 +11,7 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/importer"
+	"github.com/ryan/rflib/internal/naming"
 	"github.com/ryan/rflib/internal/profile"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
@@ -64,14 +65,17 @@ func newExportCHIRPCommand() *cobra.Command {
 		Long: `Export channels as a CSV file for CHIRP's File > Import.
 
 Memories are numbered from --start in --sort order. CHIRP only accepts the
-standard CTCSS and DCS tone sets and FM, NFM, and AM modes; channels outside
-them fail the export unless --skip-invalid is given. A receive tone is only
-programmed when tone squelch is on.`}
+standard CTCSS and DCS tone sets; channels outside them fail the export unless
+--skip-invalid is given. A receive tone is only programmed when tone squelch
+is on.
+
+` + namesHelp}
 	cmd.Flags().String("output", "-", "Output path, or - for stdout")
 	cmd.Flags().Int("start", 1, "First memory location")
-	cmd.Flags().Int("max-name-len", 0, "Truncate names to this many characters (0 keeps full names)")
+	cmd.Flags().Int("max-name-len", 0, "Fit names to this many characters (0 keeps full names)")
 	cmd.Flags().String("sort", "name", "Memory order: name, freq, or group")
 	cmd.Flags().Bool("skip-invalid", false, "Leave out channels CHIRP can't represent instead of failing")
+	dedupeFlag(cmd)
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		start, _ := cmd.Flags().GetInt("start")
@@ -79,7 +83,7 @@ programmed when tone squelch is on.`}
 		if start < 0 || maxLen < 0 {
 			return fmt.Errorf("--start and --max-name-len must not be negative")
 		}
-		return exportNumbered(cmd, export.CHIRP{Start: start, MaxNameLen: maxLen})
+		return exportNumbered(cmd, export.CHIRP{Start: start, MaxNameLen: maxLen}, naming.Rules{MaxLen: maxLen})
 	}
 	return cmd
 }
@@ -91,11 +95,14 @@ func newExportProfileCommand() *cobra.Command {
 
 Memories are numbered from the profile's first location, or --start, in --sort
 order. Channels the profile can't represent fail the export unless
---skip-invalid is given.`}
+--skip-invalid is given.
+
+` + namesHelp}
 	cmd.Flags().String("output", "-", "Output path, or - for stdout")
 	cmd.Flags().Int("start", 1, "First memory location (default: the profile's)")
 	cmd.Flags().String("sort", "name", "Memory order: name, freq, or group")
 	cmd.Flags().Bool("skip-invalid", false, "Leave out channels the profile can't represent instead of failing")
+	dedupeFlag(cmd)
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		e, err := profile.Find(args[0])
@@ -110,18 +117,30 @@ order. Channels the profile can't represent fail the export unless
 			}
 			ex.Start = &start
 		}
-		return exportNumbered(cmd, ex)
+		return exportNumbered(cmd, ex, e.Profile.NameRules())
 	}
 	return cmd
 }
 
+const namesHelp = `Names are fitted to the radio's display: the full name if it fits, else the
+longest of the channel's short names that fits, else a shortened name. Preview
+them with "rflib names". --dedupe tells apart names that come out the same.`
+
+func dedupeFlag(cmd *cobra.Command) {
+	cmd.Flags().String("dedupe", "none", "Tell apart duplicate names: none, index (append 1, 2...), or freq (append frequency digits)")
+}
+
 // exportNumbered runs an export that numbers memories: filter, sort,
-// optionally drop invalid channels, then write.
+// optionally drop invalid channels, fit names, then write.
 func exportNumbered(cmd *cobra.Command, ex interface {
 	export.Exporter
 	export.Validator
-}) error {
+}, rules naming.Rules) error {
 	skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
+	dedupe, err := naming.ParseDedupe(getString(cmd, "dedupe"))
+	if err != nil {
+		return err
+	}
 	return withStore(cmd, func(s *store.Store) error {
 		cs, err := filteredChannels(cmd, s)
 		if err != nil {
@@ -133,8 +152,20 @@ func exportNumbered(cmd *cobra.Command, ex interface {
 		if skipInvalid {
 			cs = validChannels(cmd.ErrOrStderr(), ex, cs)
 		}
+		cs, results := naming.Apply(cs, rules, dedupe)
+		warnDuplicateNames(cmd, results)
 		return writeOutput(cmd, len(cs), func(w io.Writer) error { return ex.Export(w, cs) })
 	})
+}
+
+func warnDuplicateNames(cmd *cobra.Command, results []naming.Result) {
+	if groups := naming.Duplicates(results); len(groups) > 0 {
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = fmt.Sprintf("%q (%d)", results[g[0]].Name, len(g))
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: duplicate names on the radio: %s; use --dedupe index or freq to tell them apart\n", strings.Join(names, ", "))
+	}
 }
 
 // sortChannels orders channels for exporters that number memories. The store

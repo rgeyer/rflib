@@ -67,6 +67,8 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--gro
 
 `list` and `show` commands accept `--format json` for scripting.
 
+`--short-names` gives a channel your own abbreviations for radios with narrow displays, such as `--short-names "SB Sheriff Disp,SBSO Disp"`. See [Names on radio displays](#names-on-radio-displays).
+
 ## Services and receive-only channels
 
 Each channel can record its radio service with `--service`: `amateur`, `gmrs`, `frs`, `cb`, `murs`, `marine`, `noaa`, `public_safety`, or `other`. Leaving it out means unspecified; `rflib` never guesses from frequency, since services such as FRS and GMRS share channels. `channel list`, `export`, and `check` accept `--service` as a filter.
@@ -113,7 +115,7 @@ Exports write to stdout unless `--output PATH` is given, and accept the same fil
 ./rflib export json --output backup.json
 ```
 
-- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, and group coordinates. New columns are only ever added at the end.
+- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and group coordinates. New columns are only ever added at the end.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
 - **`export profile NAME`** writes a radio programming tool's own CSV format, such as Yaesu ADMS. See [Export profiles](#export-profiles) below.
 - **`export json`** is a full-fidelity backup, including IDs, timestamps, and group details that the CSV leaves out. Without filters it includes every group, even empty ones. With filters it includes only the groups the exported channels use.
@@ -135,6 +137,46 @@ Exports write to stdout unless `--output PATH` is given, and accept the same fil
 - **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, tone squelch, and group. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
 - **Groups:** channels are attached to groups by ID, then by name. Groups that don't exist yet are created and listed in the summary. `--group NAME` puts every imported channel in an existing group instead.
 - **`--tags`** adds tags to every imported channel.
+
+## Names on radio displays
+
+Radio displays fit anywhere from 6 to 16 or more characters. Every export that numbers memories (`export chirp` and `export profile`) fits each name to the radio:
+
+1. The full name, if it fits.
+2. Otherwise the longest of the channel's `--short-names` that fits.
+3. Otherwise a shortened name. Shortening starts from the shortest short name, which already carries your own abbreviations, or from the full name when there are none.
+
+Shortening works through these steps, stopping as soon as the name fits:
+
+1. **Abbreviate** with a built-in radio dictionary (Repeater → Rpt, Dispatch → Disp, Search and Rescue → SAR, Common Traffic Advisory Frequency → CTAF, and about 100 more), biggest saving first.
+2. **Drop filler words** such as "of" and "the" (only in lower case, so the "A" in "Diablo A" stays).
+3. **Remove spaces**, capitalizing each word so it stays readable ("MetroRpt").
+4. **Trim common words.** When fitting a whole export, words that many channels share, such as an agency prefix, give way before the words that tell channels apart.
+5. **Remove inner vowels** ("Lompoc" → "Lmpc").
+6. **Trim words toward their initial**, leftmost first, so the last word (usually the channel's function) survives.
+7. **Cut** what's left.
+
+Some words get special treatment:
+- **Identifiers survive.** Any word with a digit (`15R`, `1D`, `TAC 7`, a callsign) is kept until the final cut, so "SBCoSO Ops 1D" and "SBCoSO Ops 2D" stay distinct even at 6 characters.
+- **Acronyms keep their vowels.** In mixed-case names, mostly-capital words such as "ARES" are left alone until the cut.
+- **Punctuation and run-together words split.** Brackets and slashes count as word breaks, and run-together words split at capitals: "SantaBarbaraPD1" is read as "Santa Barbara PD1".
+
+The same name always shortens the same way, so names stay stable between exports.
+
+Preview names before exporting, and add a short name to any channel whose result you don't like:
+
+```sh
+./rflib names --max-len 6 --tag ham
+./rflib names --profile yaesu-ftm6000 --dedupe freq
+```
+
+The method column shows how each name was produced: `fits`, `variant` (one of your short names), `shortened`, or `cut`.
+
+**Duplicates.** When two channels end up with the same name on the radio, exports warn and leave them as they are. `--dedupe` tells them apart instead:
+- `index` appends 1, 2, 3, and so on.
+- `freq` appends the shortest trailing frequency digits that differ, for example "RitzOps65" and "RitzOps75". Channels sharing a frequency are numbered instead.
+
+`--dedupe` works on `names`, `export chirp`, and `export profile`.
 
 ## Export profiles
 
@@ -161,6 +203,7 @@ In ADMS, open the *Memories* tab and use *File > Import* on the exported file. A
 - **Repeaters:** written as `+RPT`/`-RPT` with the offset, and cross-band as `-/+`. The transmit frequency is always written as well.
 - **Receive only:** these radios have no per-memory transmit inhibit, so receive-only channels are written as simplex. Both radios only transmit on 2 m and 70 cm.
 - **Step:** the coarsest of 25, 5, 6.25, or 12.5 kHz that the frequency fits.
+- **Names:** fitted to 16 (FTM-150) or 6 (FTM-6000) characters as described in [Names on radio displays](#names-on-radio-displays).
 - **Tone modes:** only `OFF`, `TONE` (encode), and `DCS` are mapped, because those are the only spellings confirmed in ADMS exports. Tone squelch and split-tone channels fail the export (or are left out with `--skip-invalid`) until their ADMS spelling is confirmed. Override the profile, as below, to add them sooner.
 
 Importing reads every non-empty memory. Unnamed memories are named after their frequency, and unused tone columns are ignored.
@@ -187,6 +230,7 @@ start: 0                # first memory number (default 1)
 slots: 0                # pad to this many memories (0: channels only)
 max_name_length: 8
 name_case: upper
+name_charset: "A-Z0-9 -/"   # ascii (default), alnum, or a literal set with ranges
 standard_tones_only: true
 columns:
   - {name: Ch, source: location}
@@ -223,7 +267,7 @@ columns:
 ./rflib export chirp --tag ham --sort freq --max-name-len 8 --output ft60.csv
 ```
 
-Open the radio's image in CHIRP, then use *File > Import* on the exported file. Memories are numbered from `--start` (default 1) in `--sort` order: `name` (the default), `freq`, or `group`. Use `--max-name-len` to fit the radio's display.
+Open the radio's image in CHIRP, then use *File > Import* on the exported file. Memories are numbered from `--start` (default 1) in `--sort` order: `name` (the default), `freq`, or `group`. Use `--max-name-len` to fit names to the radio's display (see [Names on radio displays](#names-on-radio-displays)).
 
 How library channels map to CHIRP:
 
