@@ -1,9 +1,11 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
@@ -52,8 +54,83 @@ func newExportCommand() *cobra.Command {
 		})
 	}
 
-	exp.AddCommand(csv, js)
+	exp.AddCommand(csv, js, newExportCHIRPCommand())
 	return exp
+}
+
+func newExportCHIRPCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "chirp", Short: "Export channels as a CHIRP CSV file", Args: cobra.NoArgs,
+		Long: `Export channels as a CSV file for CHIRP's File > Import.
+
+Memories are numbered from --start in --sort order. CHIRP only accepts the
+standard CTCSS and DCS tone sets and FM, NFM, and AM modes; channels outside
+them fail the export unless --skip-invalid is given. A receive tone is only
+programmed when tone squelch is on.`}
+	cmd.Flags().String("output", "-", "Output path, or - for stdout")
+	cmd.Flags().Int("start", 1, "First memory location")
+	cmd.Flags().Int("max-name-len", 0, "Truncate names to this many characters (0 keeps full names)")
+	cmd.Flags().String("sort", "name", "Memory order: name, freq, or group")
+	cmd.Flags().Bool("skip-invalid", false, "Leave out channels CHIRP can't represent instead of failing")
+	filterFields(cmd)
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		start, _ := cmd.Flags().GetInt("start")
+		maxLen, _ := cmd.Flags().GetInt("max-name-len")
+		skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
+		if start < 0 || maxLen < 0 {
+			return fmt.Errorf("--start and --max-name-len must not be negative")
+		}
+		ex := export.CHIRP{Start: start, MaxNameLen: maxLen}
+		return withStore(cmd, func(s *store.Store) error {
+			cs, err := filteredChannels(cmd, s)
+			if err != nil {
+				return err
+			}
+			if err := sortChannels(cs, getString(cmd, "sort")); err != nil {
+				return err
+			}
+			if skipInvalid {
+				cs = validChannels(cmd.ErrOrStderr(), ex, cs)
+			}
+			return writeOutput(cmd, len(cs), func(w io.Writer) error { return ex.Export(w, cs) })
+		})
+	}
+	return cmd
+}
+
+// sortChannels orders channels for exporters that number memories. The store
+// already returns them by name, then frequency; sorts are stable on that.
+func sortChannels(cs []domain.Channel, by string) error {
+	switch by {
+	case "name":
+	case "freq":
+		slices.SortStableFunc(cs, func(a, b domain.Channel) int { return cmp.Compare(a.ReceiveHz, b.ReceiveHz) })
+	case "group":
+		// Ungrouped channels sort last.
+		key := func(c domain.Channel) string {
+			if c.Group == nil {
+				return "\uffff"
+			}
+			return c.Group.Name
+		}
+		slices.SortStableFunc(cs, func(a, b domain.Channel) int { return cmp.Compare(key(a), key(b)) })
+	default:
+		return fmt.Errorf("unknown sort %q; use name, freq, or group", by)
+	}
+	return nil
+}
+
+// validChannels drops channels the exporter can't represent, warning about
+// each one.
+func validChannels(warn io.Writer, v export.Validator, cs []domain.Channel) []domain.Channel {
+	out := cs[:0]
+	for _, c := range cs {
+		if err := v.Validate(c); err != nil {
+			fmt.Fprintf(warn, "skipped %q (%s MHz): %v\n", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), err)
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 func filteredChannels(cmd *cobra.Command, s *store.Store) ([]domain.Channel, error) {
@@ -120,6 +197,7 @@ func newImportCommand() *cobra.Command {
 	imp.AddCommand(
 		newImportFormatCommand("csv", "Import the generic CSV format written by export csv", importer.ParseGenericCSV),
 		newImportFormatCommand("json", "Restore a JSON backup written by export json", importer.ParseJSON),
+		newImportFormatCommand("chirp", "Import a CHIRP CSV file (File > Export in CHIRP)", importer.ParseCHIRP),
 	)
 	return imp
 }
@@ -134,7 +212,8 @@ Reads FILE, or stdin when FILE is omitted or "-". The import is all-or-nothing:
 any invalid row aborts it unless --skip-invalid is given.
 
 A channel is a duplicate when it has the same ID as an existing channel, or the
-same name, receive frequency, and group. Unknown groups are created.`,
+same name, frequencies, tones, tone squelch, and group. Unknown groups are
+created.`,
 		Args: cobra.MaximumNArgs(1),
 	}
 	cmd.Flags().Bool("dry-run", false, "Report what would change without writing")

@@ -268,3 +268,61 @@ func TestExportJSONFiltersGroups(t *testing.T) {
 		t.Fatalf("restore is not identical:\n%s\n---\n%s", all, got)
 	}
 }
+
+func TestExportCHIRP(t *testing.T) {
+	c := newCLI(t)
+	c.ok("group", "add", "--name", "Alpha")
+	c.ok("channel", "add", "--name", "Zulu", "--rx", "146.520", "--tx", "146.520", "--group", "Alpha")
+	c.ok("channel", "add", "--name", "Mike", "--rx", "446.000", "--tx", "446.000")
+	c.ok("channel", "add", "--name", "Alpha Rpt", "--rx", "147.000", "--tx", "147.600", "--tx-tone", "ctcss:100")
+	c.ok("channel", "add", "--name", "Odd", "--rx", "145.000", "--tx-tone", "ctcss:100.5")
+
+	_, _, err := c.exec("export", "chirp")
+	if err == nil || !strings.Contains(err.Error(), `"Odd"`) {
+		t.Fatalf("err = %v", err)
+	}
+
+	names := func(args ...string) string {
+		t.Helper()
+		out, stderr, err := c.exec(append([]string{"export", "chirp", "--skip-invalid"}, args...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(stderr, `skipped "Odd"`) {
+			t.Fatalf("stderr = %q", stderr)
+		}
+		var got []string
+		for _, line := range strings.Split(strings.TrimSpace(out), "\r\n")[1:] {
+			f := strings.Split(line, ",")
+			got = append(got, f[0]+":"+f[1])
+		}
+		return strings.Join(got, " ")
+	}
+	if got := names(); got != "1:Alpha Rpt 2:Mike 3:Zulu" {
+		t.Errorf("name sort = %s", got)
+	}
+	if got := names("--sort", "freq", "--start", "0"); got != "0:Zulu 1:Alpha Rpt 2:Mike" {
+		t.Errorf("freq sort = %s", got)
+	}
+	if got := names("--sort", "group", "--max-name-len", "4"); got != "1:Zulu 2:Alph 3:Mike" {
+		t.Errorf("group sort = %s", got)
+	}
+	c.fails("unknown sort", "export", "chirp", "--sort", "power")
+}
+
+func TestImportCHIRP(t *testing.T) {
+	c := newCLI(t)
+	file := writeFile(t, "Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment,URCALL,RPT1CALL,RPT2CALL,DVCODE\r\n"+
+		"1,Metro,146.940000,-,0.600000,TSQL,100.0,100.0,023,NN,023,Tone->Tone,FM,5.00,,50W,,,,,\r\n")
+	if out := c.ok("import", "chirp", file, "--tags", "chirp"); !strings.Contains(out, "created 1") {
+		t.Fatalf("import output = %q", out)
+	}
+	if out := c.ok("import", "chirp", file); !strings.Contains(out, "skipped 1 duplicate") {
+		t.Fatalf("re-import output = %q", out)
+	}
+	id := strings.Fields(c.ok("channel", "list", "--tag", "chirp"))[0]
+	ch := c.channel(id)
+	if *ch.TransmitMHz != "146.340000" || ch.RXTone != "ctcss:100.000" || !ch.ToneSquelch || ch.Power != "50W" {
+		t.Fatalf("channel = %+v", ch)
+	}
+}

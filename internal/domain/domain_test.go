@@ -27,7 +27,7 @@ func TestParseTone(t *testing.T) {
 			t.Errorf("ParseTone(%q): %v", tc, err)
 		}
 	}
-	for _, tc := range []string{"ctcss:20", "ctcss:69.3001"} {
+	for _, tc := range []string{"ctcss:20", "ctcss:69.3001", "dcs:089", "dcs:000", "dcs:1000"} {
 		if _, err := ParseTone(tc); err == nil {
 			t.Errorf("invalid tone %q accepted", tc)
 		}
@@ -37,5 +37,23 @@ func TestValidateChannelToneSquelch(t *testing.T) {
 	c := Channel{Name: "Test", ReceiveHz: 146520000, Mode: "FM", ReceiveTone: Tone{Kind: ToneNone}, TransmitTone: Tone{Kind: ToneNone}, ToneSquelch: true}
 	if err := ValidateChannel(c); err == nil {
 		t.Fatal("accepted tone squelch without receive tone")
+	}
+}
+
+func TestStandardToneLists(t *testing.T) {
+	if len(StandardCTCSSMilliHz) != 50 || len(StandardDCSCodes) != 104 {
+		t.Fatalf("lists have %d CTCSS and %d DCS entries", len(StandardCTCSSMilliHz), len(StandardDCSCodes))
+	}
+	for _, tc := range []struct {
+		tone string
+		want bool
+	}{{"none", true}, {"ctcss:100", true}, {"ctcss:100.5", false}, {"dcs:023", true}, {"dcs:024", false}} {
+		tone, err := ParseTone(tc.tone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := IsStandardTone(tone); got != tc.want {
+			t.Errorf("IsStandardTone(%s) = %v", tc.tone, got)
+		}
 	}
 }

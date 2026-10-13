@@ -4,13 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/store"
 )
 
 // DuplicatePolicy decides what happens when an imported channel matches an
-// existing one, first by ID and then by name, receive frequency, and group.
+// existing one, first by ID and then by every programmed field (see
+// duplicateKey). Update therefore changes metadata such as power, notes,
+// skip, and tags; a changed tone or frequency makes a new channel.
 type DuplicatePolicy string
 
 const (
@@ -128,12 +132,19 @@ func (a *applier) addChannel(c domain.Channel) {
 	a.chanByKey[duplicateKey(c)] = c
 }
 
+// duplicateKey covers everything programmed into a radio, so channels that
+// only share a name and frequency (RadioReference lists often reuse short
+// names across sites with different tones) are kept apart.
 func duplicateKey(c domain.Channel) string {
-	gid := ""
+	gid, tx := "", "rx-only"
 	if c.GroupID != nil {
 		gid = *c.GroupID
 	}
-	return fmt.Sprintf("%s\x00%d\x00%s", c.Name, c.ReceiveHz, gid)
+	if c.TransmitHz != nil {
+		tx = strconv.FormatInt(*c.TransmitHz, 10)
+	}
+	return strings.Join([]string{c.Name, strconv.FormatInt(c.ReceiveHz, 10), tx,
+		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), strconv.FormatBool(c.ToneSquelch), gid}, "\x00")
 }
 
 // group finds g by ID, then by name, creating it when neither exists.

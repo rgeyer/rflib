@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ryan/rflib/internal/chirp"
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/store"
@@ -165,15 +166,42 @@ func TestDuplicatePolicies(t *testing.T) {
 	}
 }
 
-func TestDuplicatesMatchByNameFrequencyAndGroup(t *testing.T) {
+func TestDuplicatesMatchEveryProgrammedField(t *testing.T) {
 	s := newStore(t)
-	csv := "name,receive_mhz,group_name\nCalling,146.520,Metro\nCalling,146.520,Metro\nCalling,146.520,\n"
+	csv := "name,receive_mhz,transmit_mhz,receive_tone,transmit_tone,tone_squelch,group_name,power\n" +
+		"Calling,146.520,,,,,Metro,\n" +
+		"Calling,146.520,,,,,Metro,5W\n" + // duplicate: only power differs
+		"Calling,146.520,,,,,,\n" + // different group
+		"Calling,146.520,146.520,,,,Metro,\n" + // different TX
+		"Calling,146.520,,,ctcss:100,,Metro,\n" + // different TX tone
+		"Calling,146.520,,ctcss:100,,true,Metro,\n" // different squelch tone
 	b, err := ParseGenericCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum := mustApply(t, s, b, Options{}); sum.Created != 2 || sum.Skipped != 1 {
+	if sum := mustApply(t, s, b, Options{}); sum.Created != 5 || sum.Skipped != 1 {
 		t.Fatalf("summary = %+v", sum)
+	}
+}
+
+// Regression: RadioReference exports reuse a name and frequency for sites
+// that differ only by tone; both must survive import.
+func TestCHIRPSameNameDifferentToneIsNotDuplicate(t *testing.T) {
+	s := newStore(t)
+	csv := strings.Join(append([]string{strings.Join(chirp.Columns, ",")},
+		"57,SBCo Med6,463.125000,split,468.125000,TSQL,110.9,110.9,023,NN,023,Tone->Tone,FM,5.00,,50W,Cottage Santa Ynez,,,,",
+		"58,SBCo Med6,463.125000,split,468.125000,TSQL,114.8,114.8,023,NN,023,Tone->Tone,FM,5.00,,50W,Cottage Goleta,,,,",
+	), "\r\n")
+	b, err := ParseCHIRP(strings.NewReader(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := mustApply(t, s, b, Options{}); sum.Created != 2 || sum.Skipped != 0 {
+		t.Fatalf("summary = %+v", sum)
+	}
+	// Re-importing the same file is still a no-op.
+	if sum := mustApply(t, s, b, Options{}); sum.Created != 0 || sum.Skipped != 2 {
+		t.Fatalf("re-import summary = %+v", sum)
 	}
 }
 
