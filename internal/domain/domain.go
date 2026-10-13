@@ -141,9 +141,11 @@ func ParseTone(value string) (Tone, error) {
 		if len(parts) > 2 || parts[0] == "" {
 			return Tone{}, fmt.Errorf("DCS tone must be dcs:<code> or dcs:<code>:inverted")
 		}
+		// DCS codes are octal; keep the digits as written (023 stores as 23).
+		_, octErr := strconv.ParseUint(parts[0], 8, 16)
 		code, err := strconv.Atoi(parts[0])
-		if err != nil || code < 1 || code > 777 {
-			return Tone{}, fmt.Errorf("DCS code must be between 001 and 777")
+		if octErr != nil || err != nil || code < 1 || code > 777 {
+			return Tone{}, fmt.Errorf("DCS code must be an octal code between 001 and 777")
 		}
 		inverted := len(parts) == 2 && parts[1] == "inverted"
 		if len(parts) == 2 && !inverted {
