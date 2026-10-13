@@ -72,7 +72,7 @@ func readCSV(r io.Reader, required []string, fn func(row int, get func(string) s
 func lower(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
 func channelFromCSV(get func(string) string) (domain.Channel, error) {
-	c := domain.Channel{ID: get("id"), Name: get("name"), Mode: get("mode"), Power: get("power"), Bandwidth: get("bandwidth"), Notes: get("notes")}
+	c := domain.Channel{ID: get("id"), Name: get("name"), Mode: get("mode"), Power: domain.PowerFromText(get("power")), Bandwidth: get("bandwidth"), Notes: get("notes")}
 	var err error
 	if c.ReceiveHz, err = domain.ParseFrequencyMHz(get("receive_mhz")); err != nil {
 		return c, fmt.Errorf("receive_mhz: %w", err)

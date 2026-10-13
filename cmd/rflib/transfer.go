@@ -342,14 +342,19 @@ func runFileImport(cmd *cobra.Command, args []string, parse func(io.Reader) (imp
 func importFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("dry-run", false, "Report what would change without writing")
 	cmd.Flags().String("on-duplicate", "skip", "What to do with duplicates: skip, update, or create")
+	cmd.Flags().String("match", "exact", "What makes a duplicate: exact (name, frequencies, tones, and group) or programmed (frequencies and tones only)")
 	cmd.Flags().String("group", "", "Assign every imported channel to this existing group (ID or name)")
 	cmd.Flags().String("tags", "", "Comma-separated tags added to every imported channel")
 }
 
 func importOptions(cmd *cobra.Command) (importer.Options, error) {
 	policy, err := importer.ParseDuplicatePolicy(getString(cmd, "on-duplicate"))
+	if err != nil {
+		return importer.Options{}, err
+	}
+	match, err := importer.ParseMatchRule(getString(cmd, "match"))
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	return importer.Options{OnDuplicate: policy, Group: getString(cmd, "group"), Tags: splitTags(getString(cmd, "tags")), DryRun: dryRun}, err
+	return importer.Options{OnDuplicate: policy, Match: match, Group: getString(cmd, "group"), Tags: splitTags(getString(cmd, "tags")), DryRun: dryRun}, err
 }
 
 func applyImport(cmd *cobra.Command, s *store.Store, batch importer.Batch, opts importer.Options, invalid int) error {

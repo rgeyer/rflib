@@ -34,9 +34,11 @@ type Group struct {
 	Latitude    *float64
 	Longitude   *float64
 	RadiusKM    *float64
-	Notes       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// Power is the default power intent for the group's channels.
+	Power     PowerIntent
+	Notes     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type Channel struct {
@@ -54,7 +56,7 @@ type Channel struct {
 	ReceiveTone  Tone
 	TransmitTone Tone
 	ToneSquelch  bool
-	Power        string
+	Power        PowerIntent
 	Bandwidth    string
 	Skip         bool
 	Notes        string
@@ -62,6 +64,9 @@ type Channel struct {
 	// ShortNames are the user's own abbreviations of Name, for radios with
 	// narrow displays (see package naming).
 	ShortNames []string
+	// ProgrammedPower is the radio power level chosen for an export. It is
+	// set on export copies by a radio's power resolution and never stored.
+	ProgrammedPower *PowerLevel
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	Group      *Group
@@ -227,6 +232,9 @@ func ValidateGroup(g Group) error {
 	if g.RadiusKM != nil && *g.RadiusKM <= 0 {
 		return fmt.Errorf("radius must be positive")
 	}
+	if _, err := ParsePowerIntent(string(g.Power)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -249,6 +257,9 @@ func ValidateChannel(c Channel) error {
 	}
 	if c.ReceiveTone.Kind == "" || c.TransmitTone.Kind == "" {
 		return fmt.Errorf("receive and transmit tones are required; use none when unset")
+	}
+	if _, err := ParsePowerIntent(string(c.Power)); err != nil {
+		return err
 	}
 	if c.ToneSquelch && c.ReceiveTone.Kind == ToneNone {
 		return fmt.Errorf("tone squelch requires a receive tone")

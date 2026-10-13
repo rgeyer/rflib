@@ -44,7 +44,7 @@ func TestCHIRPGolden(t *testing.T) {
 	none := mustTone(t, "none")
 	channels := []domain.Channel{
 		{Name: "Calling", ReceiveHz: 146520000, TransmitHz: mhz(146520000), Mode: "FM", ReceiveTone: none, TransmitTone: none},
-		{Name: "Metro Repeater", ReceiveHz: 146940000, TransmitHz: mhz(146340000), Mode: "FM", ReceiveTone: mustTone(t, "ctcss:100"), TransmitTone: mustTone(t, "ctcss:100"), ToneSquelch: true, Power: "50W", Notes: "Linked, \"busy\""},
+		{Name: "Metro Repeater", ReceiveHz: 146940000, TransmitHz: mhz(146340000), Mode: "FM", ReceiveTone: mustTone(t, "ctcss:100"), TransmitTone: mustTone(t, "ctcss:100"), ToneSquelch: true, Power: domain.PowerHigh, Notes: "Linked, \"busy\""},
 		{Name: "UHF Repeater", ReceiveHz: 444100000, TransmitHz: mhz(449100000), Mode: "FM", ReceiveTone: none, TransmitTone: mustTone(t, "ctcss:107.2")},
 		{Name: "DCS Simplex", ReceiveHz: 446000000, TransmitHz: mhz(446000000), Mode: "NFM", ReceiveTone: mustTone(t, "dcs:023"), TransmitTone: mustTone(t, "dcs:023"), ToneSquelch: true},
 		{Name: "Cross Band", ReceiveHz: 146520000, TransmitHz: mhz(446000000), Mode: "FM", ReceiveTone: mustTone(t, "dcs:754"), TransmitTone: mustTone(t, "ctcss:88.5"), ToneSquelch: true},

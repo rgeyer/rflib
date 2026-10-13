@@ -111,7 +111,7 @@ func reverse(m map[string]string, text string) (string, bool) {
 func (x Parser) has(src string) bool { return Exporter{Profile: x.Profile}.hasSource(src) }
 
 func (x Parser) channel(get func(string) string) (domain.Channel, error) {
-	c := domain.Channel{Name: get("name"), Mode: strings.ToUpper(get("mode")), Power: get("power"), Notes: get("notes"), Skip: get("skip") == "true"}
+	c := domain.Channel{Name: get("name"), Mode: strings.ToUpper(get("mode")), Power: domain.PowerFromText(get("power")), Notes: get("notes"), Skip: get("skip") == "true"}
 	var err error
 	if c.ReceiveHz, err = domain.ParseFrequencyMHz(get("rx_mhz")); err != nil {
 		return c, fmt.Errorf("receive frequency: %w", err)

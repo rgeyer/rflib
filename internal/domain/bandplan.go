@@ -46,9 +46,19 @@ var (
 	}
 )
 
+// PersonalTransmitAllowed reports whether hz is somewhere a ham or
+// personal-radio user may transmit: the US amateur bands, FRS and GMRS
+// channels and GMRS repeater inputs, MURS, and CB. Radio exports program
+// anything else receive-only; see program.Build.
+func PersonalTransmitAllowed(hz int64) bool {
+	return InUSAmateurBand(hz) || slices.Contains(FRSChannelsHz, hz) || slices.Contains(GMRSRepeaterInputsHz, hz) ||
+		slices.Contains(MURSChannelsHz, hz) || slices.Contains(CBChannelsHz, hz)
+}
+
 // CheckBandPlan returns warnings where a channel doesn't fit its service's
-// US channel plan. Channels without a service, or in services without a
-// fixed plan (marine, other), are not checked.
+// US channel plan. Channels without a service are only checked for
+// transmitting outside PersonalTransmitAllowed; services without a fixed
+// plan (marine, other) are not checked.
 func CheckBandPlan(c Channel) []string {
 	var warns []string
 	warn := func(format string, args ...any) { warns = append(warns, fmt.Sprintf(format, args...)) }
@@ -60,6 +70,10 @@ func CheckBandPlan(c Channel) []string {
 	mhz := FormatFrequencyMHz
 
 	switch c.Service {
+	case ServiceUnspecified:
+		if transmits && !PersonalTransmitAllowed(tx) {
+			warn("transmit frequency %s MHz is outside the amateur bands and FRS, GMRS, MURS, and CB channels; radio exports program it receive-only (set --service, or mark it --rx-only)", mhz(tx))
+		}
 	case ServiceAmateur:
 		if transmits && !InUSAmateurBand(tx) {
 			warn("transmit frequency %s MHz is outside the US amateur bands", mhz(tx))

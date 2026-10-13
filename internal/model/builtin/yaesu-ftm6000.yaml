@@ -1,0 +1,10 @@
+name: yaesu-ftm6000
+description: Yaesu FTM-6000 (programmed with ADMS-13)
+format: profile:yaesu-ftm6000
+memories: {first: 1, last: 999}
+names: {max_length: 6}
+power:
+  - {label: LOW, watts: 5, intent: low}
+  - {label: MID, watts: 25, intent: medium}
+  - {label: HIGH, watts: 50, intent: high}
+source: Yaesu FTM-6000R/E operating manual (EH079M200), RF power output specification

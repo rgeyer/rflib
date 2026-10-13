@@ -20,7 +20,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite library path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
-	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand())
+	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand())
 	return root
 }
 
@@ -69,6 +69,7 @@ func groupFields(cmd *cobra.Command) {
 	cmd.Flags().String("lat", "", "Latitude (empty clears on update)")
 	cmd.Flags().String("lon", "", "Longitude (empty clears on update)")
 	cmd.Flags().String("radius-km", "", "Radius in kilometers (empty clears on update)")
+	cmd.Flags().String("power", "", "Default power intent for the group's channels: low, medium, high, or max (empty clears on update)")
 	cmd.Flags().String("notes", "", "Notes")
 }
 
@@ -84,6 +85,13 @@ func applyGroupFlags(cmd *cobra.Command, g *domain.Group, all bool) error {
 	}
 	if set("notes") {
 		g.Notes = getString(cmd, "notes")
+	}
+	if set("power") {
+		p, err := domain.ParsePowerIntent(getString(cmd, "power"))
+		if err != nil {
+			return err
+		}
+		g.Power = p
 	}
 	for _, f := range []struct {
 		name string
@@ -211,7 +219,7 @@ func channelFields(cmd *cobra.Command) {
 	cmd.Flags().String("rx-tone", "none", "none, ctcss:<Hz>, or dcs:<code>[:inverted]")
 	cmd.Flags().String("tx-tone", "none", "none, ctcss:<Hz>, or dcs:<code>[:inverted]")
 	cmd.Flags().Bool("tone-squelch", false, "Enable receive tone squelch")
-	cmd.Flags().String("power", "", "Power label")
+	cmd.Flags().String("power", "", "Power intent: low, medium, high, or max; each radio maps it to its own levels (empty clears on update)")
 	cmd.Flags().String("bandwidth", "", "Bandwidth label")
 	cmd.Flags().Bool("skip", false, "Skip when scanning")
 	cmd.Flags().String("notes", "", "Notes")
@@ -227,10 +235,17 @@ func applyChannelFlags(cmd *cobra.Command, s *store.Store, c *domain.Channel, al
 	for _, f := range []struct {
 		name string
 		dst  *string
-	}{{"name", &c.Name}, {"mode", &c.Mode}, {"power", &c.Power}, {"bandwidth", &c.Bandwidth}, {"notes", &c.Notes}} {
+	}{{"name", &c.Name}, {"mode", &c.Mode}, {"bandwidth", &c.Bandwidth}, {"notes", &c.Notes}} {
 		if set(f.name) {
 			*f.dst = getString(cmd, f.name)
 		}
+	}
+	if set("power") {
+		p, err := domain.ParsePowerIntent(getString(cmd, "power"))
+		if err != nil {
+			return err
+		}
+		c.Power = p
 	}
 	if set("rx") {
 		hz, err := domain.ParseFrequencyMHz(getString(cmd, "rx"))

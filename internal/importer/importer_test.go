@@ -48,7 +48,7 @@ func seed(t *testing.T, s *store.Store) {
 	tx := int64(146340000)
 	simplex := int64(146520000)
 	for _, c := range []domain.Channel{
-		{Name: "Repeater, Main", GroupID: &metro.ID, ReceiveHz: 146940000, TransmitHz: &tx, Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: tone("ctcss:69.3"), TransmitTone: tone("ctcss:69.3"), ToneSquelch: true, Power: "25W", Bandwidth: "25kHz", Tags: []string{"ham", "repeater"}, ShortNames: []string{"Rpt Main", "RptM"}, Notes: "quoted \"note\""},
+		{Name: "Repeater, Main", GroupID: &metro.ID, ReceiveHz: 146940000, TransmitHz: &tx, Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: tone("ctcss:69.3"), TransmitTone: tone("ctcss:69.3"), ToneSquelch: true, Power: domain.PowerHigh, Bandwidth: "25kHz", Tags: []string{"ham", "repeater"}, ShortNames: []string{"Rpt Main", "RptM"}, Notes: "quoted \"note\""},
 		{Name: "Calling", ReceiveHz: 146520000, TransmitHz: &simplex, Mode: "NFM", ReceiveTone: tone("none"), TransmitTone: tone("dcs:023:inverted"), Skip: true},
 		{Name: "Air", ReceiveHz: 121500000, Mode: "AM", Service: domain.ServiceOther, RXOnly: true, ReceiveTone: tone("dcs:754"), TransmitTone: tone("none")},
 	} {
@@ -142,7 +142,7 @@ func TestDuplicatePolicies(t *testing.T) {
 	seed(t, s)
 	data := exportCSV(t, s)
 	parse := func() Batch {
-		b, err := ParseGenericCSV(strings.NewReader(strings.ReplaceAll(data, "25W", "50W")))
+		b, err := ParseGenericCSV(strings.NewReader(strings.ReplaceAll(data, ",high,", ",low,")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,7 +155,7 @@ func TestDuplicatePolicies(t *testing.T) {
 	if sum := mustApply(t, s, parse(), Options{OnDuplicate: UpdateDuplicates}); sum.Updated != 3 {
 		t.Fatalf("update: %+v", sum)
 	}
-	if !strings.Contains(exportCSV(t, s), "50W") {
+	if !strings.Contains(exportCSV(t, s), ",low,") {
 		t.Fatal("update did not change power")
 	}
 	if sum := mustApply(t, s, parse(), Options{OnDuplicate: CreateDuplicates}); sum.Created != 3 {
@@ -181,6 +181,39 @@ func TestDuplicatesMatchEveryProgrammedField(t *testing.T) {
 	}
 	if sum := mustApply(t, s, b, Options{}); sum.Created != 5 || sum.Skipped != 1 {
 		t.Fatalf("summary = %+v", sum)
+	}
+}
+
+// A radio's own file shortens names and has no groups; matching on what is
+// programmed still finds the library's channels.
+func TestMatchProgrammedIgnoresNameAndGroup(t *testing.T) {
+	s := newStore(t)
+	library := "name,receive_mhz,transmit_mhz,receive_tone,transmit_tone,tone_squelch,group_name\n" +
+		"2m FM Call,146.520,,,,,Calling\n" +
+		"Marian,147.300,147.900,,,,Repeaters\n"
+	b, err := ParseGenericCSV(strings.NewReader(library))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, s, b, Options{})
+	radio := "name,receive_mhz,transmit_mhz,receive_tone,transmit_tone,tone_squelch,group_name\n" +
+		"VHF Call,146.520,,,,,\n" + // same programming, different name and group
+		"MARION HOSP,147.300,147.900,,ctcss:131.8,,\n" // adds a tone: new
+	parse := func() Batch {
+		b, err := ParseGenericCSV(strings.NewReader(radio))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	if sum := mustApply(t, s, parse(), Options{DryRun: true}); sum.Created != 2 {
+		t.Fatalf("exact: %+v", sum)
+	}
+	if sum := mustApply(t, s, parse(), Options{Match: MatchProgrammed}); sum.Created != 1 || sum.Skipped != 1 {
+		t.Fatalf("programmed: %+v", sum)
+	}
+	if _, err := ParseMatchRule("name"); err == nil {
+		t.Fatal("unknown match rule accepted")
 	}
 }
 

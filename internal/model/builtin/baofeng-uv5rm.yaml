@@ -1,0 +1,12 @@
+name: baofeng-uv5rm
+description: Baofeng UV-5RM
+format: chirp
+chirp_model: Baofeng 5RM
+memories: {first: 1, last: 1000}
+names: {max_length: 12, charset: alnum, extra: "!@#$%^&*()+-=[]:\";'<>?,./"}
+power:
+  - {label: Low, watts: 1, intent: low}
+  - {label: Medium, watts: 5, intent: medium}
+  - {label: High, watts: 8, intent: high}
+bands_mhz: [[108, 136], [136, 174], [200, 260], [350, 390], [400, 520]]
+source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/baofeng_uv17Pro.py (BF5RM)

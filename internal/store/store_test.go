@@ -56,8 +56,9 @@ func TestMigrateV1CTCSSValues(t *testing.T) {
 	_, err = s.db.ExecContext(ctx, `
 CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
 INSERT INTO schema_migrations(version) VALUES (1);
-CREATE TABLE channels (receive_ctcss_hz REAL, transmit_ctcss_hz REAL);
-INSERT INTO channels(receive_ctcss_hz, transmit_ctcss_hz) VALUES (69.3, 100.0);`)
+CREATE TABLE groups (id TEXT PRIMARY KEY);
+CREATE TABLE channels (id TEXT PRIMARY KEY, power TEXT NOT NULL DEFAULT '', receive_ctcss_hz REAL, transmit_ctcss_hz REAL);
+INSERT INTO channels(id, power, receive_ctcss_hz, transmit_ctcss_hz) VALUES ('a', 'HIGH', 69.3, 100.0), ('b', '50W', 0, 0);`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,11 +66,18 @@ INSERT INTO channels(receive_ctcss_hz, transmit_ctcss_hz) VALUES (69.3, 100.0);`
 		t.Fatal(err)
 	}
 	var receive, transmit int64
-	if err := s.db.QueryRowContext(ctx, `SELECT receive_ctcss_millihz, transmit_ctcss_millihz FROM channels`).Scan(&receive, &transmit); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT receive_ctcss_millihz, transmit_ctcss_millihz FROM channels WHERE id='a'`).Scan(&receive, &transmit); err != nil {
 		t.Fatal(err)
 	}
 	if receive != 69300 || transmit != 100000 {
 		t.Fatalf("migrated values = %d, %d", receive, transmit)
+	}
+	var powers string
+	if err := s.db.QueryRowContext(ctx, `SELECT group_concat(power, ',' ORDER BY id) FROM channels`).Scan(&powers); err != nil {
+		t.Fatal(err)
+	}
+	if powers != "high," {
+		t.Fatalf("migrated power = %q, want level names mapped and watts dropped", powers)
 	}
 }
 
@@ -190,5 +198,85 @@ func TestShortNamesKeepOrderAndCascade(t *testing.T) {
 	var left int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM channel_short_names`).Scan(&left); err != nil || left != 0 {
 		t.Fatalf("orphaned short names: %d, %v", left, err)
+	}
+}
+
+func TestRadioChannelsOrderAndOverrides(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	none := domain.Tone{Kind: domain.ToneNone}
+	var ids []string
+	for i, name := range []string{"A", "B", "C", "D"} {
+		c, err := s.CreateChannel(ctx, domain.Channel{Name: name, ReceiveHz: int64(146_520_000 + i*15_000), Mode: "FM", ReceiveTone: none, TransmitTone: none})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, c.ID)
+	}
+	r, err := s.CreateRadio(ctx, domain.Radio{Name: "Truck", Model: "yaesu-ftm150", DefaultPower: domain.PowerMedium})
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := func() string {
+		t.Helper()
+		es, err := s.RadioEntries(ctx, r.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for i, e := range es {
+			if e.Position != i {
+				t.Fatalf("positions not contiguous: %+v", es)
+			}
+			names = append(names, e.Channel.Name)
+		}
+		return strings.Join(names, "")
+	}
+
+	if n, err := s.AddRadioChannels(ctx, r.ID, []string{ids[2], ids[0], ids[1]}); err != nil || n != 3 {
+		t.Fatalf("add: %d, %v", n, err)
+	}
+	if n, _ := s.AddRadioChannels(ctx, r.ID, []string{ids[0], ids[3]}); n != 1 || order() != "CABD" {
+		t.Fatalf("append skips existing: %d, %s", n, order())
+	}
+	if err := s.MoveRadioChannel(ctx, r.ID, ids[3], 0); err != nil || order() != "DCAB" {
+		t.Fatalf("move to top: %v, %s", err, order())
+	}
+	if err := s.MoveRadioChannel(ctx, r.ID, ids[3], 99); err != nil || order() != "CABD" {
+		t.Fatalf("move past end: %v, %s", err, order())
+	}
+
+	fifty, skip := 50, true
+	if err := s.SetRadioEntry(ctx, r.ID, domain.RadioEntry{Channel: domain.Channel{ID: ids[1]}, SectionStart: &fifty, Name: " Bee ", Power: domain.PowerLow, Skip: &skip}); err != nil {
+		t.Fatal(err)
+	}
+	es, _ := s.RadioEntries(ctx, r.ID)
+	b := es[2]
+	if b.Channel.Name != "B" || b.SectionStart == nil || *b.SectionStart != 50 || b.Name != "Bee" || b.Power != domain.PowerLow || b.Skip == nil || !*b.Skip {
+		t.Fatalf("overrides = %+v", b)
+	}
+	if es[0].Skip != nil || es[0].SectionStart != nil {
+		t.Fatalf("unset overrides should stay nil: %+v", es[0])
+	}
+
+	// Deleting a channel removes it from the radio; the list still reads in order.
+	if err := s.DeleteChannel(ctx, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if order() != "CBD" {
+		t.Fatalf("after channel delete: %s", order())
+	}
+	if n, _ := s.RemoveRadioChannels(ctx, r.ID, []string{ids[2], "missing"}); n != 1 || order() != "BD" {
+		t.Fatalf("remove: %d, %s", n, order())
+	}
+	if err := s.MoveRadioChannel(ctx, r.ID, ids[0], 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("moving a channel not on the radio: %v", err)
+	}
+	if err := s.DeleteRadio(ctx, "Truck"); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM radio_channels`).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("radio delete left %d entries: %v", left, err)
 	}
 }

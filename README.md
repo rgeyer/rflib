@@ -12,7 +12,7 @@ make build    # or: go build -o rflib ./cmd/rflib
 
 Every command takes `--db PATH`. When it is omitted, `rflib` uses `$RFLIB_DB`, then `$XDG_DATA_HOME/rflib/library.db` (`~/.local/share/rflib/library.db` by default). The examples below set `RFLIB_DB` once instead of repeating `--db`.
 
-The CLI only creates a database when you explicitly initialize one. After upgrading `rflib`, commands may report that the library schema is out of date; re-run `init` to upgrade it in place.
+The CLI only creates a database when you explicitly initialize one. After upgrading `rflib`, commands may report that the library schema is out of date; re-run `init` to upgrade it in place. Back up the database file first, since upgrades can convert data (for example, power text becoming [power intents](#power)).
 
 ```sh
 export RFLIB_DB=./radio-library.db
@@ -31,7 +31,7 @@ Groups are optional geographic collections. Provide latitude and longitude toget
 ./rflib group list
 ```
 
-Groups can be referenced by ID or by their unique name anywhere a group is expected. Deleting a group keeps its channels and leaves them ungrouped.
+Groups can be referenced by ID or by their unique name anywhere a group is expected. Deleting a group keeps its channels and leaves them ungrouped. `--power` sets a default power for the group's channels (see [Power](#power)).
 
 ## Channels
 
@@ -61,7 +61,7 @@ Tone syntax is normalized and exporter-neutral:
 Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--group`, or `--tags` clears that field, and boolean flags can be turned off explicitly (`--skip=false`).
 
 ```sh
-./rflib channel update --id <channel-id> --power 25W
+./rflib channel update --id <channel-id> --power low
 ./rflib channel delete --id <channel-id> --yes
 ```
 
@@ -84,7 +84,7 @@ To label channels you already imported, re-import the same file with `--on-dupli
 
 ### Band plan checks
 
-Saving or importing a channel warns, without failing, when it doesn't fit its service's US (FCC) channel plan. That covers amateur transmit frequencies outside the amateur bands, off-plan FRS, GMRS, MURS, CB, and NOAA frequencies, repeater splits on simplex-only services, and transmitting NOAA or public safety channels. `rflib check` reports every such channel in the library and exits non-zero when it finds any.
+Saving or importing a channel warns, without failing, when it doesn't fit its service's US (FCC) channel plan. That covers amateur transmit frequencies outside the amateur bands, off-plan FRS, GMRS, MURS, CB, and NOAA frequencies, repeater splits on simplex-only services, transmitting NOAA or public safety channels, and channels with no service that transmit outside the frequencies radios may transmit on (see [Where radios transmit](#where-radios-transmit)). `rflib check` reports every such channel in the library and exits non-zero when it finds any.
 
 ## Built-in channel lists
 
@@ -104,6 +104,104 @@ Saving or importing a channel warns, without failing, when it doesn't fit its se
 | `us-ham-calling` | Amateur FM and SSB simplex calling frequencies, 10 m through 70 cm |
 
 Installing a list again skips the channels already added. `install` takes the same `--group`, `--tags`, `--on-duplicate`, and `--dry-run` flags as `import`.
+
+## Radios
+
+A radio is one of your own radios: a model, the channels programmed into it in your order, and per-radio choices. Build each radio from the shared library, then export its programming file.
+
+```sh
+./rflib model list
+./rflib radio add Truck --model yaesu-ftm150 --default-power medium
+./rflib radio channels add Truck --tag mobile --sort freq
+./rflib radio channels add Truck --id <channel-id>
+./rflib radio channels list Truck
+./rflib radio export Truck --output truck.csv
+```
+
+### Models
+
+| Model | Programmed with | Memories | Name length | Power levels |
+|---|---|---|---|---|
+| `yaesu-ftm150` | ADMS-17 (`yaesu-ftm150` profile) | 1-999 | 16 | LOW 5 W, MID 25 W, HIGH 50 W |
+| `yaesu-ftm6000` | ADMS-13 (`yaesu-ftm6000` profile) | 1-999 | 6 | LOW 5 W, MID 25 W, HIGH 50 W |
+| `yaesu-ft857` | CHIRP: Yaesu FT-857/897 (US) | 1-200 | 8 | set from the radio's menu |
+| `tidradio-tdh3-gmrs` | CHIRP: TIDRADIO TD-H3-GMRS | 1-199 | 8 | Low 2 W, High 5 W |
+| `baofeng-uv5rm` | CHIRP: Baofeng 5RM | 1-1000 | 12 | Low 1 W, Medium 5 W, High 8 W |
+| `explorer-qrz1` | CHIRP: Explorer QRZ-1 | 1-200 | 10 | Low 0.5 W, Mid 2.5 W, High 5 W |
+| `tyt-th9800` | CHIRP: TYT TH-9800 | 1-800 | 6, upper case | Low 5 W, Mid2 10 W, Mid1 20 W, High 50 W |
+| `radioddity-uv5g` | CHIRP: Radioddity UV-5G | 0-127 | 7, upper case | Low 1 W, High 4 W |
+
+`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, and where the facts came from: CHIRP's driver source, or the radio's operating manual.
+
+### Channel order and memory numbers
+
+`radio channels add` appends to the end of the list, by `--id` or by filter (`--tag`, `--group`, `--service`). Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
+
+```sh
+./rflib radio channels move Truck --id <id> --before <other-id>   # or --after, --to N, --top, --bottom
+./rflib radio channels remove Truck --id <id>
+```
+
+Memory numbers follow the list from the model's first memory. To lay a radio out in banks, start a section at a chosen memory number; the channels after it continue from there:
+
+```sh
+./rflib radio channels set Truck --id <first-gmrs-id> --section-start 100
+```
+
+A section start can't go backwards, and the list must fit the model's memories. Deleting a channel from the library takes it off every radio.
+
+### Per-radio settings
+
+`radio channels set` overrides a channel on one radio only. An empty value removes the override, so the channel's own setting applies again.
+
+| Flag | Overrides |
+|---|---|
+| `--name` | The name on this radio (still fitted to its display) |
+| `--power low\|medium\|high\|max` | The power on this radio |
+| `--scan yes\|no\|default` | Whether this radio scans the channel. The channel's `--skip` is the default. |
+| `--section-start N` | Starts a section at memory N |
+
+`radio channels list Truck` shows every memory as it will be programmed: number, name on the radio and how it was fitted, power level, scan, and frequency. `§` marks a section start, and `*` marks a radio override. Warnings, such as a power cap or a frequency outside the radio's bands, go to stderr, and `radio export` repeats them.
+
+Each radio has its own `--dedupe` (`none`, `index`, or `freq`) for duplicate names; see [Names on radio displays](#names-on-radio-displays).
+
+### Where radios transmit
+
+A radio's memories transmit only where a ham or personal-radio user may: the US amateur bands, FRS and GMRS channels (plus GMRS repeater inputs), MURS, and CB. Any other channel is programmed receive-only, with a warning, whatever its service or receive-only setting says. A public safety repeater pair imported without `--service` can therefore never transmit on its input.
+
+On CHIRP radios, receive-only means duplex `off`. The Yaesu FTM-150 and FTM-6000 have no per-memory transmit inhibit, so those memories are written as simplex, and the radios themselves refuse to transmit outside 2 m and 70 cm.
+
+### Keeping radios up to date
+
+Give a radio a saved filter, and `radio sync` appends any matching channels it doesn't have yet. It never removes or reorders anything.
+
+```sh
+./rflib radio update Truck --sync-tag mobile
+./rflib radio sync Truck --dry-run
+./rflib radio sync Truck
+```
+
+## Power
+
+Power is an intent rather than a number: `low`, `medium`, `high`, or `max`. Each radio model maps it to its own levels, so "high" is 50 W on the FTM-150 and 5 W on the QRZ-1.
+
+For each memory, the first of these that is set wins:
+
+1. the radio's override for that channel (`radio channels set --power`)
+2. the channel's power (`channel add/update --power`)
+3. its group's power (`group add/update --power`)
+4. the radio's default (`radio add/update --default-power`)
+
+If a model has no level for the intent, `low` takes its lowest level, and `medium`, `high`, and `max` take its high level. A missing middle level errs toward being heard.
+
+**Service limits.** FRS, GMRS, MURS, and CB channels are held to their US limits: FRS 2 W (0.5 W on channels 8-14), GMRS 5 W on channels 1-7, 0.5 W on 8-14, and 50 W otherwise, MURS 2 W, and CB 4 W. The radio's highest level within the limit is used, even when no power is set. When even the lowest level is over the limit, or the model doesn't know its watts, the export warns.
+
+**In the files:**
+- **CHIRP radios** get the level's watts in CHIRP's Power column, which is the only form CHIRP accepts, and CHIRP picks the radio's nearest level.
+- **ADMS radios** get the level name (`HIGH`, `MID`, `LOW`).
+- **Exports without a radio** (`export chirp`, `export profile`) have no model to map through. CHIRP's Power column is left blank, so CHIRP uses its default, and profiles map the intent name.
+
+**Older power text.** Power written as text before this version is migrated: HIGH, MID, LOW, and similar become intents, and anything else, such as `50W`, is dropped. Imports read power the same way. Watts in a RadioReference or CHIRP file describe the source's radio, not yours.
 
 ## Export
 
@@ -134,7 +232,7 @@ Exports write to stdout unless `--output PATH` is given, and accept the same fil
 
 - **All or nothing:** any invalid row is reported with its line number and nothing is imported. Use `--skip-invalid` to import the valid rows anyway. A failure partway through also writes nothing.
 - **`--dry-run`** runs the whole import and then discards it, so its summary is exactly what a real import would do.
-- **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, tone squelch, and group. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
+- **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, tone squelch, and group. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `--match programmed` drops the name and group from the comparison and matches on frequencies, tones, and tone squelch alone. Use it for a file read from a radio, where names are shortened and there are no groups. With `--on-duplicate update`, the matched channel takes the file's name. Two rows in the same file with the same programming also match each other. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
 - **Groups:** channels are attached to groups by ID, then by name. Groups that don't exist yet are created and listed in the summary. `--group NAME` puts every imported channel in an existing group instead.
 - **`--tags`** adds tags to every imported channel.
 
@@ -197,7 +295,7 @@ Some radios are programmed with the manufacturer's software rather than CHIRP. A
 
 In ADMS, open the *Memories* tab and use *File > Import* on the exported file. As ADMS's own exports do, the file holds all 999 memories: your channels first, then empty ones.
 
-- **Power:** `HIGH`, `MID`, and `LOW` pass through. Any other label, such as `50W` from a CHIRP or RadioReference import, becomes `HIGH`.
+- **Power:** exporting a radio writes its level (`HIGH`, `MID`, `LOW`; see [Power](#power)). Exporting channels directly maps their power intent, and channels without one get `HIGH`.
 - **Scan:** skipped channels are written with scan `NO`.
 - **Narrow:** NFM channels are written as FM with *Narrow* on.
 - **Repeaters:** written as `+RPT`/`-RPT` with the offset, and cross-band as `-/+`. The transmit frequency is always written as well.
@@ -257,7 +355,7 @@ columns:
 | `tone_mode` | `none`, `tone`, `tsql`, `dcs`, `dcs_enc`, `tone_dcs`, `dcs_tone`, `tone_tone`, `dcs_dcs`, `rx_tone`, or `rx_dcs` |
 | `ctcss_hz`, `tx_ctcss_hz`, `rx_ctcss_hz` | CTCSS tones in Hz |
 | `dcs_code`, `tx_dcs_code`, `rx_dcs_code`, `dcs_polarity` | DCS codes, and polarity as `NN`/`NR`/`RN`/`RR`. Without a polarity column, inverted DCS can't be exported. |
-| `power`, `skip` | Power label (upper-cased); `true` when skipped |
+| `power`, `skip` | When exporting a radio, its power level label; otherwise the power intent (`LOW`, `MEDIUM`, `HIGH`, `MAX`). `skip` is `true` when skipped. |
 | `step_khz` | First of the column's `steps_khz` that the frequency fits |
 | `const` | The column's `value` |
 
@@ -266,6 +364,8 @@ columns:
 ```sh
 ./rflib export chirp --tag ham --sort freq --max-name-len 8 --output ft60.csv
 ```
+
+For your own radios, `radio export` is simpler: it knows the model, your order, power, and name length. `export chirp` exports a filtered set of channels without a radio.
 
 Open the radio's image in CHIRP, then use *File > Import* on the exported file. Memories are numbered from `--start` (default 1) in `--sort` order: `name` (the default), `freq`, or `group`. Use `--max-name-len` to fit names to the radio's display (see [Names on radio displays](#names-on-radio-displays)).
 
@@ -282,6 +382,7 @@ How library channels map to CHIRP:
 | Same DCS code both ways, tone squelch on | Tone `DTCS`, with polarity |
 | Any other pair | Tone `Cross` with the matching cross mode |
 | Skip | Skip `S` |
+| Power | Watts of the radio's level when exporting a radio, otherwise blank (see [Power](#power)) |
 | Notes | Comment |
 
 The receive tone is only programmed when tone squelch is on, since that is what makes the radio use it.

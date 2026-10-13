@@ -1,0 +1,13 @@
+name: tyt-th9800
+description: TYT TH-9800 quad-band mobile
+format: chirp
+chirp_model: TYT TH-9800
+memories: {first: 1, last: 800}
+names: {max_length: 6, charset: upper_numeric, extra: "#*-+"}
+power:
+  - {label: Low, watts: 5, intent: low}
+  - {label: Mid2, watts: 10}
+  - {label: Mid1, watts: 20, intent: medium}
+  - {label: High, watts: 50, intent: high}
+bands_mhz: [[26, 33], [47, 54], [108, 180], [220, 260], [350, 399.995], [400, 512], [750, 950]]
+source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/th9800.py (TYTTH9800Base)

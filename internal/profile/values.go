@@ -118,7 +118,10 @@ func (r row) raw(p Profile, col Column) (string, error) {
 		}
 		return pol(r.tx) + pol(r.rx), nil
 	case "power":
-		return strings.ToUpper(strings.TrimSpace(c.Power)), nil
+		if c.ProgrammedPower != nil {
+			return strings.ToUpper(c.ProgrammedPower.Label), nil
+		}
+		return strings.ToUpper(string(c.Power)), nil
 	case "skip":
 		return strconv.FormatBool(c.Skip), nil
 	case "notes":

@@ -22,6 +22,9 @@ type CHIRP struct {
 	Start int
 	// MaxNameLen truncates names to the radio's display width; 0 keeps them.
 	MaxNameLen int
+	// Locations, when set, gives each channel's memory number instead of
+	// numbering from Start (radio exports use it for section starts).
+	Locations []int
 }
 
 func (x CHIRP) Validate(c domain.Channel) error {
@@ -35,7 +38,11 @@ func (x CHIRP) Export(w io.Writer, channels []domain.Channel) error {
 	rows := make([][]string, 0, len(channels))
 	var errs []error
 	for i, c := range channels {
-		m, err := chirp.FromChannel(c, x.Start+i, x.MaxNameLen)
+		loc := x.Start + i
+		if x.Locations != nil {
+			loc = x.Locations[i]
+		}
+		m, err := chirp.FromChannel(c, loc, x.MaxNameLen)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("channel %q (%s MHz): %w", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), err))
 			continue
