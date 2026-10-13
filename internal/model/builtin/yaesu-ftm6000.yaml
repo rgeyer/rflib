@@ -7,4 +7,5 @@ power:
   - {label: LOW, watts: 5, intent: low}
   - {label: MID, watts: 25, intent: medium}
   - {label: HIGH, watts: 50, intent: high}
-source: Yaesu FTM-6000R/E operating manual (EH079M200), RF power output specification
+bands_mhz: [[108, 999.99]]
+source: Yaesu FTM-6000R/E operating manual (EH079M200), RF power output and frequency range specifications (receive 108-999.99 MHz, US cellular blocked)

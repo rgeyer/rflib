@@ -172,6 +172,12 @@ var testEnv = Env{
 		}
 		return nil, fmt.Errorf("no radio %q", ref)
 	},
+	Tunes: func(ref string) (func(int64) bool, error) {
+		if ref != "ht" {
+			return nil, fmt.Errorf("no radio %q", ref)
+		}
+		return func(hz int64) bool { return hz >= 136_000_000 && hz <= 174_000_000 }, nil
+	},
 }
 
 func TestMatch(t *testing.T) {
@@ -237,6 +243,8 @@ func TestMatch(t *testing.T) {
 		{"@local", "marian"},
 		{"@ham", "call uhf"},
 		{"id:wx", "wx"},
+		{"tunes:ht", "call marian wx xband"},
+		{"-tunes:ht", "uhf sheriff gmrs"},
 		{"tag:ham (is:repeater OR band:70cm) -group:far", "marian"},
 	} {
 		m, err := CompileText(tc.q, testEnv)
@@ -275,6 +283,7 @@ func TestCompileErrors(t *testing.T) {
 		{"created:yesterday", "dates are YYYY-MM-DD"},
 		{"group:nowhere", `no group "nowhere"`},
 		{"radio:car", `no radio "car"`},
+		{"tunes:car", `no radio "car"`},
 		{"mode:dmr", `unknown mode "dmr"`},
 		{"power:loud", "use none, low"},
 		{"@nope", `no saved search named "nope"`},

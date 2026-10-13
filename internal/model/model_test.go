@@ -96,7 +96,10 @@ func TestTunes(t *testing.T) {
 	if !q.Tunes(146_520_000) || q.Tunes(162_550_000+400_000_000) || q.Tunes(27_185_000) {
 		t.Error("QRZ-1 bands")
 	}
-	if !mustFind(t, "yaesu-ftm150").Tunes(27_000_000) {
+	if ftm := mustFind(t, "yaesu-ftm150"); !ftm.Tunes(162_550_000) || !ftm.Tunes(118_000_000) || ftm.Tunes(27_185_000) || ftm.Tunes(902_000_000) {
+		t.Error("FTM-150 bands")
+	}
+	if !(Model{}).Tunes(27_000_000) {
 		t.Error("models without bands accept anything")
 	}
 }

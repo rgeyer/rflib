@@ -8,4 +8,5 @@ power:
   - {label: MID, watts: 25, intent: medium}
   - {label: HIGH, watts: 50, intent: high}
 notes: HIGH is 55 W on 2 m and 50 W on 70 cm; 50 W is recorded so service caps are never under-estimated.
-source: Yaesu FTM-150R/E operating manual (EH086M201), TX power specification
+bands_mhz: [[108, 550]]
+source: Yaesu FTM-150R/E operating manual (EH086M201), TX power and frequency range specifications (receive 108-550 MHz)
