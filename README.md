@@ -115,6 +115,7 @@ Exports write to stdout unless `--output PATH` is given, and accept the same fil
 
 - **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, and group coordinates. New columns are only ever added at the end.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
+- **`export profile NAME`** writes a radio programming tool's own CSV format, such as Yaesu ADMS. See [Export profiles](#export-profiles) below.
 - **`export json`** is a full-fidelity backup, including IDs, timestamps, and group details that the CSV leaves out. Without filters it includes every group, even empty ones. With filters it includes only the groups the exported channels use.
 
 ## Import
@@ -134,6 +135,87 @@ Exports write to stdout unless `--output PATH` is given, and accept the same fil
 - **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, tone squelch, and group. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
 - **Groups:** channels are attached to groups by ID, then by name. Groups that don't exist yet are created and listed in the summary. `--group NAME` puts every imported channel in an existing group instead.
 - **`--tags`** adds tags to every imported channel.
+
+## Export profiles
+
+Some radios are programmed with the manufacturer's software rather than CHIRP. An export profile describes such a tool's CSV memory format, and the same profile reads that format back in, so the files you already have become a starting library.
+
+```sh
+./rflib profile list
+./rflib import profile yaesu-ftm150 "FTM-150 Software Programming.csv"
+./rflib export profile yaesu-ftm150 --tag mobile --sort freq --output ftm150.csv
+```
+
+### Yaesu FTM-150 and FTM-6000
+
+| Profile | Software | Names |
+|---|---|---|
+| `yaesu-ftm150` | ADMS-17 | 16 characters |
+| `yaesu-ftm6000` | ADMS-13 | 6 characters |
+
+In ADMS, open the *Memories* tab and use *File > Import* on the exported file. As ADMS's own exports do, the file holds all 999 memories: your channels first, then empty ones.
+
+- **Power:** `HIGH`, `MID`, and `LOW` pass through. Any other label, such as `50W` from a CHIRP or RadioReference import, becomes `HIGH`.
+- **Scan:** skipped channels are written with scan `NO`.
+- **Narrow:** NFM channels are written as FM with *Narrow* on.
+- **Repeaters:** written as `+RPT`/`-RPT` with the offset, and cross-band as `-/+`. The transmit frequency is always written as well.
+- **Receive only:** these radios have no per-memory transmit inhibit, so receive-only channels are written as simplex. Both radios only transmit on 2 m and 70 cm.
+- **Step:** the coarsest of 25, 5, 6.25, or 12.5 kHz that the frequency fits.
+- **Tone modes:** only `OFF`, `TONE` (encode), and `DCS` are mapped, because those are the only spellings confirmed in ADMS exports. Tone squelch and split-tone channels fail the export (or are left out with `--skip-invalid`) until their ADMS spelling is confirmed. Override the profile, as below, to add them sooner.
+
+Importing reads every non-empty memory. Unnamed memories are named after their frequency, and unused tone columns are ignored.
+
+### Writing your own profile
+
+Profiles are YAML. Start from a built-in:
+
+```sh
+./rflib profile show yaesu-ftm150 > my-radio.yaml
+./rflib profile validate my-radio.yaml
+./rflib export profile my-radio.yaml
+```
+
+To use a profile by name, put it in the directory `rflib profile list` prints (`~/.config/rflib/profiles` on Linux). A profile there with a built-in's name replaces the built-in, which is how to fix a format locally.
+
+Each column names a `source` (a library value) and how to write it:
+
+```yaml
+name: my-radio
+header: true            # write column names as the first row
+line_ending: crlf       # or lf (default)
+start: 0                # first memory number (default 1)
+slots: 0                # pad to this many memories (0: channels only)
+max_name_length: 8
+name_case: upper
+standard_tones_only: true
+columns:
+  - {name: Ch, source: location}
+  - {name: RX, source: rx_mhz, decimals: 4}
+  - name: Squelch
+    source: tone_mode
+    map: {none: "", tone: T, tsql: T-SQL, dcs: D, tone_dcs: "T>D"}
+  - {name: Tone, source: ctcss_hz, decimals: 1, suffix: " Hz", default: 88.5 Hz}
+  - {name: Pwr, source: power, map: {HIGH: H, LOW: L, "*": H}}
+  - {name: Fixed, source: const, value: "0"}
+```
+
+- **`map`** translates library values to the tool's text. `"*"` catches values that aren't listed. With a map, an unlisted value fails the export instead of passing through.
+- **`default`** fills a column whose source is empty.
+- **`empty`** fills padding rows.
+
+| Source | Value |
+|---|---|
+| `location` | Memory number |
+| `name`, `notes`, `service`, `tags`, `group` | Channel fields (notes on one line, tags joined with `;`) |
+| `rx_mhz`, `tx_mhz`, `offset_mhz` | Frequencies in MHz. `tx_mhz` is the receive frequency for receive-only channels. |
+| `duplex` | `none`, `plus`, `minus`, `split`, or `off` |
+| `mode`, `narrow` | `FM`/`NFM`/`AM`/`USB`/`LSB`; `true` for NFM |
+| `tone_mode` | `none`, `tone`, `tsql`, `dcs`, `dcs_enc`, `tone_dcs`, `dcs_tone`, `tone_tone`, `dcs_dcs`, `rx_tone`, or `rx_dcs` |
+| `ctcss_hz`, `tx_ctcss_hz`, `rx_ctcss_hz` | CTCSS tones in Hz |
+| `dcs_code`, `tx_dcs_code`, `rx_dcs_code`, `dcs_polarity` | DCS codes, and polarity as `NN`/`NR`/`RN`/`RR`. Without a polarity column, inverted DCS can't be exported. |
+| `power`, `skip` | Power label (upper-cased); `true` when skipped |
+| `step_khz` | First of the column's `steps_khz` that the frequency fits |
+| `const` | The column's `value` |
 
 ## CHIRP
 
