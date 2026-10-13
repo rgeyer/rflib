@@ -20,7 +20,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite library path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
-	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand())
+	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand())
 	return root
 }
 
@@ -336,54 +336,22 @@ func newChannelAddCommand() *cobra.Command {
 	return cmd
 }
 
-func filterFields(cmd *cobra.Command) {
-	cmd.Flags().String("group", "", "Group ID or name")
-	cmd.Flags().String("tag", "", "Tag")
-	cmd.Flags().String("service", "", "Radio service")
-	cmd.Flags().String("lat", "", "Latitude")
-	cmd.Flags().String("lon", "", "Longitude")
-	cmd.Flags().String("radius-km", "", "Radius in kilometers")
-}
-
-func channelFilter(cmd *cobra.Command, s *store.Store) (store.ChannelFilter, error) {
-	f := store.ChannelFilter{Tag: getString(cmd, "tag")}
-	var err error
-	if f.Service, err = domain.ParseService(getString(cmd, "service")); err != nil {
-		return f, err
-	}
-	if ref := getString(cmd, "group"); ref != "" {
-		g, err := s.GetGroup(ctx(cmd), ref)
-		if err != nil {
-			return f, err
-		}
-		f.GroupID = g.ID
-	}
-	for _, x := range []struct {
-		name string
-		dst  **float64
-	}{{"lat", &f.Latitude}, {"lon", &f.Longitude}, {"radius-km", &f.RadiusKM}} {
-		if *x.dst, err = parseOptionalFloat(x.name, getString(cmd, x.name)); err != nil {
-			return f, err
-		}
-	}
-	return f, nil
-}
-
 func newChannelListCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "list", Short: "List channels", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "list [QUERY...]", Short: "List or search channels",
+		Long: "List channels, or the channels matching a query given as arguments or --query.\n\n" + queryHelp}
 	filterFields(cmd)
 	formatFlag(cmd)
-	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		format, err := getFormat(cmd)
 		if err != nil {
 			return err
 		}
+		n, err := channelQuery(cmd, args)
+		if err != nil {
+			return err
+		}
 		return withStore(cmd, func(s *store.Store) error {
-			filter, err := channelFilter(cmd, s)
-			if err != nil {
-				return err
-			}
-			cs, err := s.ListChannels(ctx(cmd), filter)
+			cs, err := findChannels(cmd, s, n)
 			if err != nil {
 				return err
 			}

@@ -280,3 +280,72 @@ func TestRadioChannelsOrderAndOverrides(t *testing.T) {
 		t.Fatalf("radio delete left %d entries: %v", left, err)
 	}
 }
+
+// A v5 radio's sync filter becomes its first source.
+func TestMigrateV6SyncFilterToSource(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "v5.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	stmts := []string{`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`, baselineSchema}
+	for _, m := range migrations {
+		if m.version > baselineVersion && m.version <= 5 {
+			stmts = append(stmts, m.sql)
+		}
+	}
+	stmts = append(stmts, `INSERT INTO schema_migrations(version) VALUES (5);
+INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'Metro', '', '');
+INSERT INTO radios (id, name, model, sync_tag, sync_group_id, sync_service, created_at, updated_at) VALUES
+	('r1', 'HT', 'baofeng-uv5rm', 'my "ham"', 'g1', 'amateur', '', ''),
+	('r2', 'Truck', 'yaesu-ftm150', '', NULL, '', '', '');`)
+	for _, q := range stmts {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ht, err := s.RadioSources(ctx, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ht) != 1 || ht[0].Query != `tag:"my \"ham\"" group:g1 service:amateur` || ht[0].Sort != "name" || ht[0].Position != 0 || len(ht[0].ID) != 36 {
+		t.Fatalf("HT sources = %+v", ht)
+	}
+	if truck, _ := s.RadioSources(ctx, "r2"); len(truck) != 0 {
+		t.Fatalf("Truck had no filter but got sources %+v", truck)
+	}
+}
+
+func TestSavedSearchCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	x, err := s.CreateSearch(ctx, domain.SavedSearch{Name: " Local ", Query: "tag:local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x.Name != "local" {
+		t.Fatalf("name = %q", x.Name)
+	}
+	if _, err := s.CreateSearch(ctx, domain.SavedSearch{Name: "local", Query: "tag:x"}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate: %v", err)
+	}
+	for _, ref := range []string{"local", "@local", "LOCAL", x.ID} {
+		if got, err := s.GetSearch(ctx, ref); err != nil || got.ID != x.ID {
+			t.Fatalf("GetSearch(%q) = %v, %v", ref, got, err)
+		}
+	}
+	x.Query = "tag:home"
+	if _, err := s.UpdateSearch(ctx, x); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteSearch(ctx, x.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetSearch(ctx, "local"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after delete: %v", err)
+	}
+}

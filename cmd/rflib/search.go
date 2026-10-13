@@ -1,0 +1,380 @@
+package main
+
+import (
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/query"
+	"github.com/ryan/rflib/internal/store"
+	"github.com/spf13/cobra"
+)
+
+const queryHelp = `Queries use field:value terms. A space means AND, OR binds tighter than
+AND, and a leading - (or NOT) negates. Parentheses group, and quotes keep
+spaces in a value. Bare words match names, short names, notes, and group
+names. @name uses a saved search.
+
+  name:TEXT notes:TEXT      text, ignoring case
+  service:SVC|none          tag:TAG          group:NAME|none
+  freq: rx: tx:             MHz: 146.52, 144..148, >=420, ..30
+  band:2m|70cm|gmrs|noaa|…  duplex:+|-|split|simplex|off
+  tone: txtone: rxtone:     131.8, dcs:023, ctcss, dcs, or none (as programmed)
+  mode:FM|NFM|AM|USB|LSB    power:low|medium|high|max|none
+  squelch:yes|no            skip:yes|no
+  is:repeater|simplex|rxonly|transmit|skip
+  has:location|service|group|tag|tone|power|notes|shortname|radio
+  near:LAT,LON,KM           within KM plus the group's radius; channels
+                            without a location never match
+  radio:NAME|any|none       created: updated:  YYYY-MM-DD, >=, <, ranges
+  id:ID
+
+Examples:
+  service:none freq:144..148 -tag:hf is:repeater
+  tag:ham (near:34.64,-120.46,40 OR -has:location)
+  band:2m OR band:70cm
+
+As arguments, a query starting with - needs -- before it so it isn't read as
+a flag: rflib channel list -- -tag:hf. Quoting it or using -q also works.`
+
+// filterFields adds --query and its shorthand flags to a command that
+// selects channels.
+func filterFields(cmd *cobra.Command) {
+	cmd.Flags().StringP("query", "q", "", "Search query (see rflib help search)")
+	cmd.Flags().String("group", "", "Shorthand for group:NAME")
+	cmd.Flags().String("tag", "", "Shorthand for tag:TAG")
+	cmd.Flags().String("service", "", "Shorthand for service:SVC")
+	cmd.Flags().String("lat", "", "With --lon and --radius-km, shorthand for near:LAT,LON,KM")
+	cmd.Flags().String("lon", "", "Longitude")
+	cmd.Flags().String("radius-km", "", "Radius in kilometers")
+}
+
+func filtered(cmd *cobra.Command) bool {
+	for _, name := range []string{"query", "group", "tag", "service", "lat", "lon", "radius-km"} {
+		if cmd.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// channelQuery combines --query, extra query words, and the shorthand
+// flags into one query.
+func channelQuery(cmd *cobra.Command, words []string) (query.Node, error) {
+	var nodes []query.Node
+	for _, text := range []string{getString(cmd, "query"), strings.Join(words, " ")} {
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		n, err := query.Parse(text)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, n)
+	}
+	for _, field := range []string{"group", "tag", "service"} {
+		if v := strings.TrimSpace(getString(cmd, field)); v != "" {
+			nodes = append(nodes, query.Term{Field: field, Value: v})
+		}
+	}
+	lat, lon, km := getString(cmd, "lat"), getString(cmd, "lon"), getString(cmd, "radius-km")
+	if lat != "" || lon != "" || km != "" {
+		if lat == "" || lon == "" || km == "" {
+			return nil, fmt.Errorf("--lat, --lon, and --radius-km must be supplied together")
+		}
+		nodes = append(nodes, query.Term{Field: "near", Value: lat + "," + lon + "," + km})
+	}
+	return query.Join(nodes...), nil
+}
+
+// queryEnv resolves saved searches, groups, and radios from the library.
+func queryEnv(cmd *cobra.Command, s *store.Store) query.Env {
+	return query.Env{
+		Search: func(name string) (string, error) {
+			x, err := s.GetSearch(ctx(cmd), name)
+			return x.Query, err
+		},
+		Group: func(ref string) (string, error) {
+			g, err := s.GetGroup(ctx(cmd), ref)
+			return g.ID, err
+		},
+		RadioChannels: func(ref string) (map[string]bool, error) { return s.RadioChannelIDs(ctx(cmd), ref) },
+	}
+}
+
+// findChannels returns the library's channels matching a query, in name
+// order.
+func findChannels(cmd *cobra.Command, s *store.Store, n query.Node) ([]domain.Channel, error) {
+	m, err := query.Compile(n, queryEnv(cmd, s))
+	if err != nil {
+		return nil, err
+	}
+	all, err := s.ListChannels(ctx(cmd), store.ChannelFilter{})
+	if err != nil {
+		return nil, err
+	}
+	out := all[:0]
+	for _, c := range all {
+		if m(c) {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// filteredChannels returns the channels a command's filter flags select.
+func filteredChannels(cmd *cobra.Command, s *store.Store) ([]domain.Channel, error) {
+	n, err := channelQuery(cmd, nil)
+	if err != nil {
+		return nil, err
+	}
+	return findChannels(cmd, s, n)
+}
+
+// checkQuery parses and compiles text, so a saved query is known to work.
+// override, when set, stands in for that saved search, so a search being
+// saved can't end up using itself.
+func checkQuery(cmd *cobra.Command, s *store.Store, text string, override *domain.SavedSearch) (query.Node, error) {
+	n, err := query.Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	env := queryEnv(cmd, s)
+	compile := n
+	if override != nil {
+		base := env.Search
+		env.Search = func(name string) (string, error) {
+			if name == override.Name {
+				return override.Query, nil
+			}
+			return base(name)
+		}
+		// Compiling @name reports a cycle starting from this search.
+		compile = query.Ref{Name: override.Name}
+	}
+	if _, err := query.Compile(compile, env); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// --- saved searches ---
+
+func newSearchCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "search", Short: "Save named searches for use as @name",
+		Long: "Save named searches. Use one in any query as @name, including in other\nsearches and radio sources.\n\n" + queryHelp}
+	cmd.AddCommand(newSearchAddCommand(), newSearchListCommand(), newSearchShowCommand(), newSearchUpdateCommand(), newSearchDeleteCommand())
+	return cmd
+}
+
+func newSearchAddCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "add NAME QUERY...", Short: "Save a search", Args: cobra.MinimumNArgs(2)}
+	cmd.Flags().String("notes", "", "Notes")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		x := domain.SavedSearch{Name: strings.ToLower(strings.TrimPrefix(args[0], "@")), Query: strings.Join(args[1:], " "), Notes: getString(cmd, "notes")}
+		return withStore(cmd, func(s *store.Store) error {
+			if err := domain.ValidateSavedSearch(x); err != nil {
+				return err
+			}
+			if _, err := checkQuery(cmd, s, x.Query, &x); err != nil {
+				return err
+			}
+			x, err := s.CreateSearch(ctx(cmd), x)
+			if err == nil {
+				fmt.Fprintln(cmd.OutOrStdout(), x.ID)
+			}
+			return err
+		})
+	}
+	return cmd
+}
+
+// countMatches compiles and runs a query, returning -1 when it no longer
+// works (a group or saved search it names is gone).
+func countMatches(cmd *cobra.Command, s *store.Store, text string) (int, error) {
+	n, err := query.Parse(text)
+	if err != nil {
+		return -1, err
+	}
+	cs, err := findChannels(cmd, s, n)
+	if err != nil {
+		return -1, err
+	}
+	return len(cs), nil
+}
+
+func newSearchListCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "list", Short: "List saved searches and how many channels each matches", Args: cobra.NoArgs}
+	formatFlag(cmd)
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		format, err := getFormat(cmd)
+		if err != nil {
+			return err
+		}
+		return withStore(cmd, func(s *store.Store) error {
+			xs, err := s.ListSearches(ctx(cmd))
+			if err != nil {
+				return err
+			}
+			type row struct {
+				ID      string `json:"id"`
+				Name    string `json:"name"`
+				Query   string `json:"query"`
+				Matches int    `json:"matches"`
+				Error   string `json:"error,omitempty"`
+				Notes   string `json:"notes"`
+			}
+			rows := make([]row, len(xs))
+			for i, x := range xs {
+				rows[i] = row{ID: x.ID, Name: x.Name, Query: x.Query, Notes: x.Notes}
+				if rows[i].Matches, err = countMatches(cmd, s, x.Query); err != nil {
+					rows[i].Error = err.Error()
+				}
+			}
+			if format == "json" {
+				return writeJSON(cmd.OutOrStdout(), rows)
+			}
+			for _, r := range rows {
+				matches := strconv.Itoa(r.Matches)
+				if r.Error != "" {
+					matches = "error: " + r.Error
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "@%s\t%s\t%s\n", r.Name, matches, r.Query)
+			}
+			return nil
+		})
+	}
+	return cmd
+}
+
+// searchUsers lists what uses a saved search: other searches and radio
+// sources.
+func searchUsers(cmd *cobra.Command, s *store.Store, name string) ([]string, error) {
+	var users []string
+	uses := func(text string) bool {
+		n, err := query.Parse(text)
+		return err == nil && slices.Contains(query.Refs(n), name)
+	}
+	xs, err := s.ListSearches(ctx(cmd))
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range xs {
+		if x.Name != name && uses(x.Query) {
+			users = append(users, "@"+x.Name)
+		}
+	}
+	radios, err := s.ListRadios(ctx(cmd))
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	for _, r := range radios {
+		names[r.ID] = r.Name
+	}
+	sources, err := s.AllRadioSources(ctx(cmd))
+	if err != nil {
+		return nil, err
+	}
+	for _, src := range sources {
+		if uses(src.Query) {
+			users = append(users, fmt.Sprintf("radio %s source %d", names[src.RadioID], src.Position+1))
+		}
+	}
+	return users, nil
+}
+
+func newSearchShowCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "show NAME", Short: "Show a saved search and what uses it", Args: cobra.ExactArgs(1)}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return withStore(cmd, func(s *store.Store) error {
+			x, err := s.GetSearch(ctx(cmd), args[0])
+			if err != nil {
+				return err
+			}
+			users, err := searchUsers(cmd, s, x.Name)
+			if err != nil {
+				return err
+			}
+			n, err := countMatches(cmd, s, x.Query)
+			matches := strconv.Itoa(n)
+			if err != nil {
+				matches = "error: " + err.Error()
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\nname: @%s\nquery: %s\nmatches: %s\nused by: %s\nnotes: %s\n",
+				x.ID, x.Name, x.Query, matches, orDefault(strings.Join(users, ", "), "nothing"), x.Notes)
+			return nil
+		})
+	}
+	return cmd
+}
+
+func newSearchUpdateCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "update NAME", Short: "Change a saved search; only supplied flags change", Args: cobra.ExactArgs(1)}
+	cmd.Flags().String("name", "", "New name (not while something uses the search)")
+	cmd.Flags().String("query", "", "New query")
+	cmd.Flags().String("notes", "", "Notes")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return withStore(cmd, func(s *store.Store) error {
+			x, err := s.GetSearch(ctx(cmd), args[0])
+			if err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("name") {
+				name := strings.ToLower(strings.TrimPrefix(getString(cmd, "name"), "@"))
+				if name != x.Name {
+					users, err := searchUsers(cmd, s, x.Name)
+					if err != nil {
+						return err
+					}
+					if len(users) > 0 {
+						return fmt.Errorf("@%s is used by %s; change those first", x.Name, strings.Join(users, ", "))
+					}
+				}
+				x.Name = name
+			}
+			if cmd.Flags().Changed("query") {
+				x.Query = getString(cmd, "query")
+			}
+			if cmd.Flags().Changed("notes") {
+				x.Notes = getString(cmd, "notes")
+			}
+			if err := domain.ValidateSavedSearch(x); err != nil {
+				return err
+			}
+			if _, err := checkQuery(cmd, s, x.Query, &x); err != nil {
+				return err
+			}
+			_, err = s.UpdateSearch(ctx(cmd), x)
+			return err
+		})
+	}
+	return cmd
+}
+
+func newSearchDeleteCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "delete NAME", Short: "Delete a saved search (not while something uses it)", Args: cobra.ExactArgs(1)}
+	cmd.Flags().Bool("yes", false, "Confirm deletion")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := requireYes(cmd, "saved search"); err != nil {
+			return err
+		}
+		return withStore(cmd, func(s *store.Store) error {
+			x, err := s.GetSearch(ctx(cmd), args[0])
+			if err != nil {
+				return err
+			}
+			users, err := searchUsers(cmd, s, x.Name)
+			if err != nil {
+				return err
+			}
+			if len(users) > 0 {
+				return fmt.Errorf("@%s is used by %s; change those first", x.Name, strings.Join(users, ", "))
+			}
+			return s.DeleteSearch(ctx(cmd), x.ID)
+		})
+	}
+	return cmd
+}
