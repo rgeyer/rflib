@@ -20,7 +20,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite library path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
-	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand())
+	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand())
 	return root
 }
 
@@ -216,6 +216,7 @@ func channelFields(cmd *cobra.Command) {
 	cmd.Flags().Bool("skip", false, "Skip when scanning")
 	cmd.Flags().String("notes", "", "Notes")
 	cmd.Flags().String("tags", "", "Comma-separated tags (empty clears on update)")
+	cmd.Flags().String("short-names", "", "Comma-separated abbreviations of the name for narrow radio displays, such as \"Metro Rpt,MtRpt\" (empty clears on update)")
 }
 
 // applyChannelFlags copies flags onto c. With all=false only flags the user
@@ -281,6 +282,9 @@ func applyChannelFlags(cmd *cobra.Command, s *store.Store, c *domain.Channel, al
 	}
 	if set("tags") {
 		c.Tags = splitTags(getString(cmd, "tags"))
+	}
+	if set("short-names") {
+		c.ShortNames = splitTags(getString(cmd, "short-names"))
 	}
 	if set("group") {
 		c.GroupID, c.Group = nil, nil

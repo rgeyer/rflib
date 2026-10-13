@@ -59,9 +59,12 @@ type Channel struct {
 	Skip         bool
 	Notes        string
 	Tags         []string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	Group        *Group
+	// ShortNames are the user's own abbreviations of Name, for radios with
+	// narrow displays (see package naming).
+	ShortNames []string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	Group      *Group
 }
 
 func NewID() (string, error) {
@@ -191,6 +194,21 @@ func NormalizeTags(tags []string) []string {
 		if tag != "" && !seen[tag] {
 			seen[tag] = true
 			out = append(out, tag)
+		}
+	}
+	return out
+}
+
+// NormalizeShortNames trims and collapses whitespace, and drops empty
+// entries, duplicates (ignoring case), and copies of the full name.
+func NormalizeShortNames(name string, shortNames []string) []string {
+	seen := map[string]bool{strings.ToLower(strings.TrimSpace(name)): true}
+	out := make([]string, 0, len(shortNames))
+	for _, s := range shortNames {
+		s = strings.Join(strings.Fields(s), " ")
+		if k := strings.ToLower(s); s != "" && !seen[k] {
+			seen[k] = true
+			out = append(out, s)
 		}
 	}
 	return out

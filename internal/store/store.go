@@ -100,6 +100,8 @@ UPDATE channels SET receive_ctcss_millihz = CAST(ROUND(receive_ctcss_hz * 1000) 
 ALTER TABLE channels ADD COLUMN service TEXT NOT NULL DEFAULT '';
 ALTER TABLE channels ADD COLUMN rx_only INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX idx_channels_service ON channels(service);`},
+	{4, `
+CREATE TABLE channel_short_names (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, PRIMARY KEY(channel_id, position));`},
 }
 
 func latestVersion() int64 {
@@ -276,11 +278,15 @@ func (s *Store) CreateChannel(ctx context.Context, c domain.Channel) (domain.Cha
 		return c, err
 	}
 	c.Tags = domain.NormalizeTags(c.Tags)
+	c.ShortNames = domain.NormalizeShortNames(c.Name, c.ShortNames)
 	err := s.inTx(ctx, func(tx execer) error {
 		if err := writeChannel(ctx, tx, `INSERT INTO channels (id,group_id,name,receive_hz,transmit_hz,mode,service,rx_only,receive_tone_kind,receive_ctcss_millihz,receive_dcs_code,receive_dcs_inverted,transmit_tone_kind,transmit_ctcss_millihz,transmit_dcs_code,transmit_dcs_inverted,tone_squelch,power,bandwidth,skip,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c); err != nil {
 			return err
 		}
-		return replaceTags(ctx, tx, c.ID, c.Tags)
+		if err := replaceTags(ctx, tx, c.ID, c.Tags); err != nil {
+			return err
+		}
+		return replaceShortNames(ctx, tx, c.ID, c.ShortNames)
 	})
 	if err != nil {
 		return c, fmt.Errorf("create channel: %w", err)
@@ -293,12 +299,16 @@ func (s *Store) UpdateChannel(ctx context.Context, c domain.Channel) (domain.Cha
 		return c, err
 	}
 	c.Tags = domain.NormalizeTags(c.Tags)
+	c.ShortNames = domain.NormalizeShortNames(c.Name, c.ShortNames)
 	c.UpdatedAt = time.Now().UTC()
 	err := s.inTx(ctx, func(tx execer) error {
 		if err := writeChannel(ctx, tx, `UPDATE channels SET group_id=?,name=?,receive_hz=?,transmit_hz=?,mode=?,service=?,rx_only=?,receive_tone_kind=?,receive_ctcss_millihz=?,receive_dcs_code=?,receive_dcs_inverted=?,transmit_tone_kind=?,transmit_ctcss_millihz=?,transmit_dcs_code=?,transmit_dcs_inverted=?,tone_squelch=?,power=?,bandwidth=?,skip=?,notes=?,updated_at=? WHERE id=?`, c); err != nil {
 			return err
 		}
-		return replaceTags(ctx, tx, c.ID, c.Tags)
+		if err := replaceTags(ctx, tx, c.ID, c.Tags); err != nil {
+			return err
+		}
+		return replaceShortNames(ctx, tx, c.ID, c.ShortNames)
 	})
 	if err != nil {
 		return c, fmt.Errorf("update channel: %w", err)
@@ -342,6 +352,20 @@ func toneArgs(t domain.Tone) toneArg {
 	}
 	return a
 }
+
+// replaceShortNames stores short names in the user's order.
+func replaceShortNames(ctx context.Context, ex execer, id string, names []string) error {
+	if _, err := ex.ExecContext(ctx, `DELETE FROM channel_short_names WHERE channel_id=?`, id); err != nil {
+		return err
+	}
+	for i, name := range names {
+		if _, err := ex.ExecContext(ctx, `INSERT INTO channel_short_names(channel_id,position,name) VALUES(?,?,?)`, id, i, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func replaceTags(ctx context.Context, ex execer, id string, tags []string) error {
 	if _, err := ex.ExecContext(ctx, `DELETE FROM channel_tags WHERE channel_id=?`, id); err != nil {
 		return err
@@ -411,7 +435,7 @@ func (s *Store) ListChannels(ctx context.Context, f ChannelFilter) ([]domain.Cha
 const tagSeparator = "\x1f"
 
 func (s *Store) listChannels(ctx context.Context, where string, args []any) ([]domain.Channel, error) {
-	q := `SELECT c.id,c.group_id,c.name,c.receive_hz,c.transmit_hz,c.mode,c.service,c.rx_only,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.created_at,c.updated_at,g.id,g.name,g.description,g.latitude,g.longitude,g.radius_km,g.notes,g.created_at,g.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id) FROM channels c LEFT JOIN groups g ON c.group_id=g.id` + where + ` ORDER BY c.name,c.receive_hz`
+	q := `SELECT c.id,c.group_id,c.name,c.receive_hz,c.transmit_hz,c.mode,c.service,c.rx_only,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.created_at,c.updated_at,g.id,g.name,g.description,g.latitude,g.longitude,g.radius_km,g.notes,g.created_at,g.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id),(SELECT group_concat(n.name, char(31) ORDER BY n.position) FROM channel_short_names n WHERE n.channel_id=c.id) FROM channels c LEFT JOIN groups g ON c.group_id=g.id` + where + ` ORDER BY c.name,c.receive_hz`
 	rows, err := s.q.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
@@ -449,9 +473,9 @@ func scanChannel(r scanner) (domain.Channel, error) {
 	var created, updated string
 	var gid sql.NullString
 	var g domain.Group
-	var groupID, gn, gd, gnote, gc, gu, tags sql.NullString
+	var groupID, gn, gd, gnote, gc, gu, tags, shortNames sql.NullString
 	var glat, glon, grad sql.NullFloat64
-	err := r.Scan(&c.ID, &gid, &c.Name, &c.ReceiveHz, &c.TransmitHz, &c.Mode, &c.Service, &c.RXOnly, &c.ReceiveTone.Kind, &rtCT, &rtD, &rtInv, &c.TransmitTone.Kind, &ttCT, &ttD, &ttInv, &ts, &c.Power, &c.Bandwidth, &skip, &c.Notes, &created, &updated, &groupID, &gn, &gd, &glat, &glon, &grad, &gnote, &gc, &gu, &tags)
+	err := r.Scan(&c.ID, &gid, &c.Name, &c.ReceiveHz, &c.TransmitHz, &c.Mode, &c.Service, &c.RXOnly, &c.ReceiveTone.Kind, &rtCT, &rtD, &rtInv, &c.TransmitTone.Kind, &ttCT, &ttD, &ttInv, &ts, &c.Power, &c.Bandwidth, &skip, &c.Notes, &created, &updated, &groupID, &gn, &gd, &glat, &glon, &grad, &gnote, &gc, &gu, &tags, &shortNames)
 	if err != nil {
 		return c, err
 	}
@@ -478,6 +502,9 @@ func scanChannel(r scanner) (domain.Channel, error) {
 	c.Skip = skip
 	c.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	c.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	if shortNames.Valid && shortNames.String != "" {
+		c.ShortNames = strings.Split(shortNames.String, tagSeparator)
+	}
 	if tags.Valid && tags.String != "" {
 		c.Tags = strings.Split(tags.String, tagSeparator)
 	}

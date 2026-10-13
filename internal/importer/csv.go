@@ -105,6 +105,9 @@ func channelFromCSV(get func(string) string) (domain.Channel, error) {
 	if v := get("tags"); v != "" {
 		c.Tags = strings.Split(v, ";")
 	}
+	if v := get("short_names"); v != "" {
+		c.ShortNames = strings.Split(v, ";")
+	}
 	if id, name := get("group_id"), get("group_name"); id != "" || name != "" {
 		g := domain.Group{ID: id, Name: name}
 		if g.Latitude, err = parseOptionalFloat(get("group_latitude")); err != nil {

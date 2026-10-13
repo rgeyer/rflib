@@ -54,6 +54,7 @@ type ChannelRecord struct {
 	Bandwidth    string    `json:"bandwidth"`
 	Skip         bool      `json:"skip"`
 	Tags         []string  `json:"tags"`
+	ShortNames   []string  `json:"short_names,omitempty"`
 	Notes        string    `json:"notes"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -73,7 +74,7 @@ func WriteJSON(w io.Writer, groups []domain.Group, channels []domain.Channel) er
 		doc.Channels = append(doc.Channels, ChannelRecord{
 			ID: c.ID, GroupID: c.GroupID, Name: c.Name, ReceiveHz: c.ReceiveHz, TransmitHz: c.TransmitHz, Mode: c.Mode, Service: string(c.Service), RXOnly: c.RXOnly,
 			ReceiveTone: domain.FormatTone(c.ReceiveTone), TransmitTone: domain.FormatTone(c.TransmitTone),
-			ToneSquelch: c.ToneSquelch, Power: c.Power, Bandwidth: c.Bandwidth, Skip: c.Skip, Tags: tags, Notes: c.Notes,
+			ToneSquelch: c.ToneSquelch, Power: c.Power, Bandwidth: c.Bandwidth, Skip: c.Skip, Tags: tags, ShortNames: c.ShortNames, Notes: c.Notes,
 			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 		})
 	}

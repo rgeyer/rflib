@@ -1,0 +1,106 @@
+# Built-in abbreviations for shortening channel names: "Long form = Short".
+# Matching is whole words, case-insensitive; multi-word phrases are allowed.
+# Applied only as far as needed to fit a radio's display, largest saving
+# first. Keep entries general to radio use; place names belong in a
+# channel's own short names.
+
+# Agencies and services
+Sheriff's Office = SO
+Sheriffs Office = SO
+Sheriff = Sher
+Police Department = PD
+Police = Pol
+Fire Department = FD
+Fire Protection District = FPD
+Highway Patrol = HP
+Search and Rescue = SAR
+Emergency Medical Services = EMS
+Emergency Operations Center = EOC
+Emergency = Emer
+Public Works = PW
+Department = Dept
+Division = Div
+District = Dist
+County = Co
+City = Cty
+Regional = Reg
+University = Univ
+College = Col
+School = Sch
+Hospital = Hosp
+Medical = Med
+Ambulance = Amb
+Security = Sec
+Maintenance = Mnt
+Transportation = Trans
+Transit = Trnst
+Utilities = Util
+Water = Wtr
+Animal Control = AC
+
+# Radio operations
+Repeater = Rpt
+Simplex = Splx
+Dispatch = Disp
+Tactical = Tac
+Talkaround = TA
+Operations = Ops
+Command = Cmd
+Control = Ctl
+Primary = Pri
+Secondary = Sec
+Channel = Ch
+National = Natl
+Calling = Call
+Weather = WX
+Information = Info
+Service = Svc
+Services = Svcs
+Mutual Aid = MA
+Interoperability = Interop
+Network = Net
+Link = Lnk
+Digital = Dig
+Amateur = Ham
+
+# Aviation
+Airport = Arpt
+Tower = Twr
+Ground = Gnd
+Approach = App
+Departure = Dep
+Clearance = Clnc
+Center = Ctr
+Traffic = Trfc
+Common Traffic Advisory Frequency = CTAF
+Unicom = Unicm
+
+# Places and directions
+Mountain = Mtn
+Mount = Mt
+Peak = Pk
+Hill = Hl
+Valley = Vly
+Canyon = Cyn
+Lake = Lk
+River = Rvr
+Beach = Bch
+Island = Isl
+Harbor = Hbr
+Point = Pt
+Fort = Ft
+Saint = St
+Junction = Jct
+Highway = Hwy
+Road = Rd
+Street = St
+North = N
+South = S
+East = E
+West = W
+Northern = N
+Southern = S
+Eastern = E
+Western = W
+Upper = Up
+Lower = Lo

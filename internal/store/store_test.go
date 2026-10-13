@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ryan/rflib/internal/domain"
@@ -157,5 +158,37 @@ func TestMigrateIsIdempotentAndReady(t *testing.T) {
 	}
 	if err := s.Ready(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestShortNamesKeepOrderAndCascade(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	none := domain.Tone{Kind: domain.ToneNone}
+	c, err := s.CreateChannel(ctx, domain.Channel{Name: "Metro Repeater", ReceiveHz: 146940000, Mode: "FM", ReceiveTone: none, TransmitTone: none,
+		ShortNames: []string{"Metro Rpt", " MtRpt ", "metro rpt", "Metro Repeater", ""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetChannel(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.ShortNames, "|") != "Metro Rpt|MtRpt" {
+		t.Fatalf("short names = %q", got.ShortNames)
+	}
+	got.ShortNames = []string{"Z", "A"}
+	if _, err := s.UpdateChannel(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := s.GetChannel(ctx, c.ID); strings.Join(again.ShortNames, "|") != "Z|A" {
+		t.Fatalf("updated short names = %q", again.ShortNames)
+	}
+	if err := s.DeleteChannel(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM channel_short_names`).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("orphaned short names: %d, %v", left, err)
 	}
 }

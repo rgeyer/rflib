@@ -304,7 +304,7 @@ func TestExportCHIRP(t *testing.T) {
 	if got := names("--sort", "freq", "--start", "0"); got != "0:Zulu 1:Alpha Rpt 2:Mike" {
 		t.Errorf("freq sort = %s", got)
 	}
-	if got := names("--sort", "group", "--max-name-len", "4"); got != "1:Zulu 2:Alph 3:Mike" {
+	if got := names("--sort", "group", "--max-name-len", "4"); got != "1:Zulu 2:ARpt 3:Mike" {
 		t.Errorf("group sort = %s", got)
 	}
 	c.fails("unknown sort", "export", "chirp", "--sort", "power")
@@ -409,7 +409,7 @@ func TestProfileCommands(t *testing.T) {
 		t.Fatalf("err = %v, stderr = %q", err, stderr)
 	}
 	first := strings.SplitN(out, "\n", 2)[0]
-	if first != "5,146.94000,146.34000,0.60,-RPT,FM,ON,Metro,TONE,127.3 Hz,023,1500 Hz,LOW,YES,5.0KHz,OFF,OFF,,0" {
+	if first != "5,146.94000,146.34000,0.60,-RPT,FM,ON,MtrRpt,TONE,127.3 Hz,023,1500 Hz,LOW,YES,5.0KHz,OFF,OFF,,0" {
 		t.Fatalf("first row = %q", first)
 	}
 
@@ -417,8 +417,55 @@ func TestProfileCommands(t *testing.T) {
 	if got := other.ok("import", "profile", "yaesu-ftm6000", writeFile(t, out)); !strings.Contains(got, "created 1") {
 		t.Fatalf("import = %q", got)
 	}
-	if got := other.ok("channel", "list"); !strings.Contains(got, "Metro\t146.940000") {
+	if got := other.ok("channel", "list"); !strings.Contains(got, "MtrRpt\t146.940000") {
 		t.Fatalf("imported channels = %q", got)
 	}
 	c.fails("unknown profile", "export", "profile", "kenwood")
+}
+
+func TestNamesAndShortNames(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	c := newCLI(t)
+	id := c.ok("channel", "add", "--name", "Santa Barbara Sheriff Dispatch", "--rx", "460.275", "--short-names", "SB Sheriff Disp, SBSO Disp")
+	for _, hz := range []string{"464.650", "464.750"} {
+		c.ok("channel", "add", "--name", "RitzCarlton Ops", "--rx", hz)
+	}
+	if ch := c.channel(id); strings.Join(ch.ShortNames, "|") != "SB Sheriff Disp|SBSO Disp" {
+		t.Fatalf("short names = %q", ch.ShortNames)
+	}
+
+	out, stderr, err := c.exec("names", "--max-len", "10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"RtCrltnOps\tshortened\tRitzCarlton Ops", "SBSO Disp\tvariant\tSanta Barbara Sheriff Dispatch"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("names output missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(stderr, `duplicate names on the radio: "RtCrltnOps" (2)`) {
+		t.Errorf("stderr = %q", stderr)
+	}
+
+	out = c.ok("names", "--profile", "yaesu-ftm6000", "--dedupe", "freq")
+	if !strings.Contains(out, "RCOp65\tshortened+") || !strings.Contains(out, "RCOp75\tshortened+") || !strings.Contains(out, "SBSODs\tshortened") {
+		t.Errorf("profile names = %s", out)
+	}
+
+	csv, stderr, err := c.exec("export", "chirp", "--max-name-len", "8", "--dedupe", "index")
+	if err != nil || strings.Contains(stderr, "duplicate") {
+		t.Fatalf("err = %v, stderr = %q", err, stderr)
+	}
+	for _, want := range []string{",RCrlOps1,", ",RCrlOps2,", ",SBSODisp,"} {
+		if !strings.Contains(csv, want) {
+			t.Errorf("CHIRP export missing %q:\n%s", want, csv)
+		}
+	}
+
+	c.ok("channel", "update", "--id", id, "--short-names", "")
+	if ch := c.channel(id); len(ch.ShortNames) != 0 {
+		t.Fatalf("short names not cleared: %q", ch.ShortNames)
+	}
+	c.fails("unknown dedupe", "names", "--dedupe", "suffix")
+	c.fails("--charset", "names", "--charset", "Z-A")
 }
