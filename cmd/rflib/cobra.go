@@ -3,11 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
-	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -22,7 +20,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite library path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
-	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newExportCommand())
+	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand())
 	return root
 }
 
@@ -407,51 +405,4 @@ func newChannelDeleteCommand() *cobra.Command {
 		return withStore(cmd, func(s *store.Store) error { return s.DeleteChannel(ctx(cmd), getString(cmd, "id")) })
 	}
 	return cmd
-}
-
-// --- export ---
-
-func newExportCommand() *cobra.Command {
-	exp := &cobra.Command{Use: "export", Short: "Export library records"}
-	csv := &cobra.Command{Use: "csv", Short: "Export normalized generic CSV", Args: cobra.NoArgs}
-	csv.Flags().String("output", "-", "Output CSV path, or - for stdout")
-	filterFields(csv)
-	csv.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			filter, err := channelFilter(cmd, s)
-			if err != nil {
-				return err
-			}
-			cs, err := s.ListChannels(ctx(cmd), filter)
-			if err != nil {
-				return err
-			}
-			return writeExport(cmd, getString(cmd, "output"), export.GenericCSV{}, cs)
-		})
-	}
-	exp.AddCommand(csv)
-	return exp
-}
-
-// writeExport writes to stdout or a file. A failed file export is removed so
-// it can't be mistaken for a complete one. The summary goes to stderr so it
-// never mixes with exported data on stdout.
-func writeExport(cmd *cobra.Command, path string, ex export.Exporter, cs []domain.Channel) error {
-	if path == "" || path == "-" {
-		return ex.Export(cmd.OutOrStdout(), cs)
-	}
-	file, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	err = ex.Export(file, cs)
-	if cerr := file.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-	fmt.Fprintln(cmd.ErrOrStderr(), "Exported", len(cs), "channels to", path)
-	return nil
 }

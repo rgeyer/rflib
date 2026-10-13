@@ -16,7 +16,13 @@ import (
 // ErrNotFound is returned (wrapped) when a group or channel lookup matches nothing.
 var ErrNotFound = errors.New("not found")
 
-type Store struct{ db *sql.DB }
+// Store is a SQLite library. A Store returned to an InTx callback is bound to
+// that transaction; all other Stores run each call on the shared pool.
+type Store struct {
+	db *sql.DB
+	q  querier
+	tx *sql.Tx
+}
 
 type ChannelFilter struct {
 	GroupID   string
@@ -26,9 +32,15 @@ type ChannelFilter struct {
 	RadiusKM  *float64
 }
 
-// execer is satisfied by both *sql.DB and *sql.Tx.
+// execer and querier are satisfied by both *sql.DB and *sql.Tx.
 type execer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+type querier interface {
+	execer
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 // Open opens a SQLite library. Pragmas are set in the DSN so every pooled
@@ -43,7 +55,7 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, q: db}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -101,7 +113,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	if !version.Valid {
-		if err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := s.inTx(ctx, func(tx execer) error {
 			if _, err := tx.ExecContext(ctx, baselineSchema); err != nil {
 				return err
 			}
@@ -116,7 +128,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if m.version <= version.Int64 {
 			continue
 		}
-		if err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := s.inTx(ctx, func(tx execer) error {
 			if _, err := tx.ExecContext(ctx, m.sql); err != nil {
 				return err
 			}
@@ -129,7 +141,29 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
+// InTx runs fn with a Store bound to a single transaction, committing when fn
+// returns nil and rolling back otherwise. Only the Store passed to fn may be
+// used inside it: the pool has one connection, which the transaction holds.
+func (s *Store) InTx(ctx context.Context, fn func(*Store) error) error {
+	if s.tx != nil {
+		return fn(s)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(&Store{db: s.db, q: tx, tx: tx}); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// inTx runs fn in the Store's transaction, or in a new one when unbound.
+func (s *Store) inTx(ctx context.Context, fn func(execer) error) error {
+	if s.tx != nil {
+		return fn(s.tx)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -141,19 +175,34 @@ func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
+// assignIdentity fills in an ID and timestamps that the caller left empty.
+// Imports supply them so a restored backup keeps its original identity.
+func assignIdentity(id *string, created, updated *time.Time) error {
+	if *id == "" {
+		v, err := domain.NewID()
+		if err != nil {
+			return err
+		}
+		*id = v
+	}
+	now := time.Now().UTC()
+	if created.IsZero() {
+		*created = now
+	}
+	if updated.IsZero() {
+		*updated = now
+	}
+	return nil
+}
+
 func (s *Store) CreateGroup(ctx context.Context, g domain.Group) (domain.Group, error) {
 	if err := domain.ValidateGroup(g); err != nil {
 		return g, err
 	}
-	id, err := domain.NewID()
-	if err != nil {
+	if err := assignIdentity(&g.ID, &g.CreatedAt, &g.UpdatedAt); err != nil {
 		return g, err
 	}
-	now := time.Now().UTC()
-	g.ID = id
-	g.CreatedAt = now
-	g.UpdatedAt = now
-	_, err = s.db.ExecContext(ctx, `INSERT INTO groups (id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`, g.ID, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, g.Notes, g.CreatedAt.Format(time.RFC3339Nano), g.UpdatedAt.Format(time.RFC3339Nano))
+	_, err := s.q.ExecContext(ctx, `INSERT INTO groups (id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`, g.ID, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, g.Notes, g.CreatedAt.Format(time.RFC3339Nano), g.UpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return g, fmt.Errorf("create group: %w", err)
 	}
@@ -162,14 +211,14 @@ func (s *Store) CreateGroup(ctx context.Context, g domain.Group) (domain.Group, 
 
 // GetGroup looks a group up by ID or by its unique name.
 func (s *Store) GetGroup(ctx context.Context, idOrName string) (domain.Group, error) {
-	g, err := scanGroup(s.db.QueryRowContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups WHERE id=? OR name=?`, idOrName, idOrName))
+	g, err := scanGroup(s.q.QueryRowContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups WHERE id=? OR name=?`, idOrName, idOrName))
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, fmt.Errorf("group %q: %w", idOrName, ErrNotFound)
 	}
 	return g, err
 }
 func (s *Store) ListGroups(ctx context.Context) ([]domain.Group, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups ORDER BY name`)
+	rows, err := s.q.QueryContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +238,7 @@ func (s *Store) UpdateGroup(ctx context.Context, g domain.Group) (domain.Group, 
 		return g, err
 	}
 	g.UpdatedAt = time.Now().UTC()
-	r, err := s.db.ExecContext(ctx, `UPDATE groups SET name=?,description=?,latitude=?,longitude=?,radius_km=?,notes=?,updated_at=? WHERE id=?`, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, g.Notes, g.UpdatedAt.Format(time.RFC3339Nano), g.ID)
+	r, err := s.q.ExecContext(ctx, `UPDATE groups SET name=?,description=?,latitude=?,longitude=?,radius_km=?,notes=?,updated_at=? WHERE id=?`, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, g.Notes, g.UpdatedAt.Format(time.RFC3339Nano), g.ID)
 	if err != nil {
 		return g, fmt.Errorf("update group: %w", err)
 	}
@@ -202,7 +251,7 @@ func (s *Store) UpdateGroup(ctx context.Context, g domain.Group) (domain.Group, 
 // DeleteGroup deletes a group by ID or name. Its channels are kept and
 // become ungrouped.
 func (s *Store) DeleteGroup(ctx context.Context, idOrName string) error {
-	r, err := s.db.ExecContext(ctx, `DELETE FROM groups WHERE id=? OR name=?`, idOrName, idOrName)
+	r, err := s.q.ExecContext(ctx, `DELETE FROM groups WHERE id=? OR name=?`, idOrName, idOrName)
 	if err != nil {
 		return fmt.Errorf("delete group: %w", err)
 	}
@@ -217,16 +266,11 @@ func (s *Store) CreateChannel(ctx context.Context, c domain.Channel) (domain.Cha
 	if err := domain.ValidateChannel(c); err != nil {
 		return c, err
 	}
-	id, err := domain.NewID()
-	if err != nil {
+	if err := assignIdentity(&c.ID, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return c, err
 	}
-	c.ID = id
 	c.Tags = domain.NormalizeTags(c.Tags)
-	now := time.Now().UTC()
-	c.CreatedAt = now
-	c.UpdatedAt = now
-	err = s.inTx(ctx, func(tx *sql.Tx) error {
+	err := s.inTx(ctx, func(tx execer) error {
 		if err := writeChannel(ctx, tx, `INSERT INTO channels (id,group_id,name,receive_hz,transmit_hz,mode,receive_tone_kind,receive_ctcss_millihz,receive_dcs_code,receive_dcs_inverted,transmit_tone_kind,transmit_ctcss_millihz,transmit_dcs_code,transmit_dcs_inverted,tone_squelch,power,bandwidth,skip,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c); err != nil {
 			return err
 		}
@@ -244,7 +288,7 @@ func (s *Store) UpdateChannel(ctx context.Context, c domain.Channel) (domain.Cha
 	}
 	c.Tags = domain.NormalizeTags(c.Tags)
 	c.UpdatedAt = time.Now().UTC()
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
+	err := s.inTx(ctx, func(tx execer) error {
 		if err := writeChannel(ctx, tx, `UPDATE channels SET group_id=?,name=?,receive_hz=?,transmit_hz=?,mode=?,receive_tone_kind=?,receive_ctcss_millihz=?,receive_dcs_code=?,receive_dcs_inverted=?,transmit_tone_kind=?,transmit_ctcss_millihz=?,transmit_dcs_code=?,transmit_dcs_inverted=?,tone_squelch=?,power=?,bandwidth=?,skip=?,notes=?,updated_at=? WHERE id=?`, c); err != nil {
 			return err
 		}
@@ -304,7 +348,7 @@ func replaceTags(ctx context.Context, ex execer, id string, tags []string) error
 	return nil
 }
 func (s *Store) DeleteChannel(ctx context.Context, id string) error {
-	r, err := s.db.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, id)
+	r, err := s.q.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, id)
 	if err != nil {
 		return fmt.Errorf("delete channel: %w", err)
 	}
@@ -358,7 +402,7 @@ const tagSeparator = "\x1f"
 
 func (s *Store) listChannels(ctx context.Context, where string, args []any) ([]domain.Channel, error) {
 	q := `SELECT c.id,c.group_id,c.name,c.receive_hz,c.transmit_hz,c.mode,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.created_at,c.updated_at,g.id,g.name,g.description,g.latitude,g.longitude,g.radius_km,g.notes,g.created_at,g.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id) FROM channels c LEFT JOIN groups g ON c.group_id=g.id` + where + ` ORDER BY c.name,c.receive_hz`
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.q.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
 	}

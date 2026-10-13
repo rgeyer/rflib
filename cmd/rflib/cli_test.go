@@ -203,3 +203,68 @@ func TestDBPathFromEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func writeFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "input")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestImportCSV(t *testing.T) {
+	c := newCLI(t)
+	file := writeFile(t, "name,receive_mhz,group_name\nCalling,146.520,Metro\nBroken,not-a-number,\n")
+
+	_, stderr, err := c.exec("import", "csv", file)
+	if err == nil || !strings.Contains(err.Error(), "1 invalid rows; nothing imported") || !strings.Contains(stderr, "row 3") {
+		t.Fatalf("err = %v, stderr = %q", err, stderr)
+	}
+	if out := c.ok("channel", "list"); out != "" {
+		t.Fatalf("aborted import wrote channels: %q", out)
+	}
+
+	out := c.ok("import", "csv", file, "--skip-invalid", "--dry-run")
+	if !strings.Contains(out, "Dry run") || !strings.Contains(out, "created 1") || !strings.Contains(out, "New groups: Metro") {
+		t.Fatalf("dry run output = %q", out)
+	}
+	if got := c.ok("group", "list"); got != "" {
+		t.Fatalf("dry run created groups: %q", got)
+	}
+
+	out = c.ok("import", "csv", file, "--skip-invalid", "--tags", "imported")
+	if !strings.Contains(out, "created 1, updated 0, skipped 0 duplicates, skipped 1 invalid") {
+		t.Fatalf("import output = %q", out)
+	}
+	if got := c.ok("channel", "list", "--tag", "imported", "--group", "Metro"); !strings.Contains(got, "Calling") {
+		t.Fatalf("imported channel missing: %q", got)
+	}
+
+	c.fails("unknown duplicate policy", "import", "csv", file, "--on-duplicate", "merge")
+}
+
+func TestExportJSONFiltersGroups(t *testing.T) {
+	c := newCLI(t)
+	c.ok("group", "add", "--name", "Metro")
+	c.ok("group", "add", "--name", "Unused")
+	c.ok("channel", "add", "--name", "Calling", "--rx", "146.520", "--group", "Metro", "--tags", "ham")
+
+	all := c.ok("export", "json")
+	if !strings.Contains(all, `"Unused"`) {
+		t.Fatalf("unfiltered backup should include every group: %s", all)
+	}
+	filtered := c.ok("export", "json", "--tag", "ham")
+	if strings.Contains(filtered, `"Unused"`) || !strings.Contains(filtered, `"Metro"`) {
+		t.Fatalf("filtered backup should include only referenced groups: %s", filtered)
+	}
+
+	restored := newCLI(t)
+	out := restored.ok("import", "json", writeFile(t, all))
+	if !strings.Contains(out, "created 1") {
+		t.Fatalf("restore output = %q", out)
+	}
+	if got := restored.ok("export", "json"); got != all {
+		t.Fatalf("restore is not identical:\n%s\n---\n%s", all, got)
+	}
+}
