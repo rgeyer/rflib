@@ -1,0 +1,9 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+10m FM Call,29.600,29.600,FM,amateur,false,ham;calling,National FM simplex calling
+6m SSB Call,50.125,50.125,USB,amateur,false,ham;calling,SSB calling
+6m FM Call,52.525,52.525,FM,amateur,false,ham;calling,National FM simplex calling
+2m SSB Call,144.200,144.200,USB,amateur,false,ham;calling,SSB calling
+2m FM Call,146.520,146.520,FM,amateur,false,ham;calling,National FM simplex calling
+1.25m FM Call,223.500,223.500,FM,amateur,false,ham;calling,National FM simplex calling
+70cm SSB Call,432.100,432.100,USB,amateur,false,ham;calling,SSB calling
+70cm FM Call,446.000,446.000,FM,amateur,false,ham;calling,National FM simplex calling

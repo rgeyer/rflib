@@ -37,13 +37,22 @@ type Options struct {
 	// channel is assigned to, overriding the source's groups.
 	Group string
 	// Tags are added to every imported channel.
-	Tags   []string
+	Tags []string
+	// Service, when set, replaces every imported channel's service.
+	Service domain.Service
+	// RXOnly, when set, replaces every imported channel's receive-only flag.
+	// When nil and Service is set, the service's default applies (see
+	// domain.DefaultRXOnly).
+	RXOnly *bool
 	DryRun bool
 }
 
 type Summary struct {
 	Created, Updated, Skipped int
 	GroupsCreated             []string
+	// Warnings are band-plan problems in written channels (see
+	// domain.CheckBandPlan). They don't stop the import.
+	Warnings []RowError
 }
 
 var errDryRun = errors.New("dry run")
@@ -68,7 +77,7 @@ func Apply(ctx context.Context, s *store.Store, b Batch, opts Options) (Summary,
 			}
 		}
 		for _, r := range b.Records {
-			if err := a.channel(r.Channel); err != nil {
+			if err := a.channel(r); err != nil {
 				return RowError{Row: r.Row, Err: err}
 			}
 		}
@@ -167,7 +176,15 @@ func (a *applier) group(g domain.Group) (domain.Group, error) {
 	return created, nil
 }
 
-func (a *applier) channel(c domain.Channel) error {
+func (a *applier) channel(r Record) error {
+	c := r.Channel
+	if a.opts.Service != domain.ServiceUnspecified {
+		c.Service = a.opts.Service
+		c.RXOnly = c.RXOnly || domain.DefaultRXOnly(c.Service)
+	}
+	if a.opts.RXOnly != nil {
+		c.RXOnly = *a.opts.RXOnly
+	}
 	switch {
 	case a.target != nil:
 		c.GroupID = &a.target.ID
@@ -200,6 +217,7 @@ func (a *applier) channel(c domain.Channel) error {
 			}
 			a.addChannel(updated)
 			a.sum.Updated++
+			a.warn(r.Row, updated)
 			return nil
 		}
 	}
@@ -212,5 +230,12 @@ func (a *applier) channel(c domain.Channel) error {
 	}
 	a.addChannel(created)
 	a.sum.Created++
+	a.warn(r.Row, created)
 	return nil
+}
+
+func (a *applier) warn(row int, c domain.Channel) {
+	for _, w := range domain.CheckBandPlan(c) {
+		a.sum.Warnings = append(a.sum.Warnings, RowError{Row: row, Err: fmt.Errorf("%s: %s", c.Name, w)})
+	}
 }

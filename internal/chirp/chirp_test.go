@@ -135,3 +135,14 @@ func TestToChannelErrors(t *testing.T) {
 		t.Fatalf("unnamed memory: %+v, %v", c, err)
 	}
 }
+
+func TestFromChannelRXOnlyKeepsTXOffTheAir(t *testing.T) {
+	c := domain.Channel{Name: "Dispatch", ReceiveHz: 460275000, TransmitHz: hz("465.275"), RXOnly: true, Mode: "FM", TransmitTone: tone(t, "ctcss:110.9"), ReceiveTone: tone(t, "ctcss:110.9"), ToneSquelch: true}
+	m, err := FromChannel(c, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Duplex != "off" || m.ToneMode != "TSQL" {
+		t.Fatalf("duplex = %q, tone = %q", m.Duplex, m.ToneMode)
+	}
+}

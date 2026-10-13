@@ -48,9 +48,9 @@ func seed(t *testing.T, s *store.Store) {
 	tx := int64(146340000)
 	simplex := int64(146520000)
 	for _, c := range []domain.Channel{
-		{Name: "Repeater, Main", GroupID: &metro.ID, ReceiveHz: 146940000, TransmitHz: &tx, Mode: "FM", ReceiveTone: tone("ctcss:69.3"), TransmitTone: tone("ctcss:69.3"), ToneSquelch: true, Power: "25W", Bandwidth: "25kHz", Tags: []string{"ham", "repeater"}, Notes: "quoted \"note\""},
+		{Name: "Repeater, Main", GroupID: &metro.ID, ReceiveHz: 146940000, TransmitHz: &tx, Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: tone("ctcss:69.3"), TransmitTone: tone("ctcss:69.3"), ToneSquelch: true, Power: "25W", Bandwidth: "25kHz", Tags: []string{"ham", "repeater"}, Notes: "quoted \"note\""},
 		{Name: "Calling", ReceiveHz: 146520000, TransmitHz: &simplex, Mode: "NFM", ReceiveTone: tone("none"), TransmitTone: tone("dcs:023:inverted"), Skip: true},
-		{Name: "Air", ReceiveHz: 121500000, Mode: "AM", ReceiveTone: tone("dcs:754"), TransmitTone: tone("none")},
+		{Name: "Air", ReceiveHz: 121500000, Mode: "AM", Service: domain.ServiceOther, RXOnly: true, ReceiveTone: tone("dcs:754"), TransmitTone: tone("none")},
 	} {
 		if _, err := s.CreateChannel(ctx, c); err != nil {
 			t.Fatal(err)
@@ -296,5 +296,31 @@ func TestParseJSONRejectsOtherFormats(t *testing.T) {
 	}
 	if len(b.Errors) != 1 || !strings.Contains(b.Errors[0].Error(), "not in the backup") {
 		t.Fatalf("errors = %v", b.Errors)
+	}
+}
+
+func TestServiceOverrideAndWarnings(t *testing.T) {
+	s := newStore(t)
+	// A RadioReference-style public safety repeater with a known input.
+	csv := "name,receive_mhz,transmit_mhz\nDispatch,460.275,465.275\nCalling,146.520,146.520\n"
+	b, err := ParseGenericCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := mustApply(t, s, b, Options{Service: domain.ServicePublicSafety})
+	if len(sum.Warnings) != 0 {
+		t.Fatalf("public safety defaults to receive only, so no warnings expected: %v", sum.Warnings)
+	}
+	cs, _ := s.ListChannels(context.Background(), store.ChannelFilter{Service: domain.ServicePublicSafety})
+	if len(cs) != 2 || !cs[0].RXOnly || cs[0].TransmitHz == nil {
+		t.Fatalf("channels = %+v", cs)
+	}
+
+	// Relabelling with update: service and rx_only aren't part of the
+	// duplicate key, so the same rows update in place.
+	transmit := false
+	sum = mustApply(t, s, b, Options{OnDuplicate: UpdateDuplicates, Service: domain.ServiceAmateur, RXOnly: &transmit})
+	if sum.Updated != 2 || len(sum.Warnings) != 1 || sum.Warnings[0].Row != 2 || !strings.Contains(sum.Warnings[0].Error(), "Dispatch") {
+		t.Fatalf("summary = %+v", sum)
 	}
 }

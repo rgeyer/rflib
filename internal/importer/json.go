@@ -35,6 +35,11 @@ func ParseJSON(r io.Reader) (Batch, error) {
 		row := i + 1
 		c := domain.Channel{ID: rec.ID, Name: rec.Name, ReceiveHz: rec.ReceiveHz, TransmitHz: rec.TransmitHz, Mode: rec.Mode, ToneSquelch: rec.ToneSquelch, Power: rec.Power, Bandwidth: rec.Bandwidth, Skip: rec.Skip, Tags: rec.Tags, Notes: rec.Notes, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt}
 		var err error
+		if c.Service, err = domain.ParseService(rec.Service); err != nil {
+			b.fail(row, "%v", err)
+			continue
+		}
+		c.RXOnly = rec.RXOnly
 		if c.ReceiveTone, err = domain.ParseTone(rec.ReceiveTone); err != nil {
 			b.fail(row, "receive_tone: %v", err)
 			continue

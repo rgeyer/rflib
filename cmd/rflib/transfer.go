@@ -142,7 +142,7 @@ func filteredChannels(cmd *cobra.Command, s *store.Store) ([]domain.Channel, err
 }
 
 func filtered(cmd *cobra.Command) bool {
-	for _, name := range []string{"group", "tag", "lat", "lon", "radius-km"} {
+	for _, name := range []string{"group", "tag", "service", "lat", "lon", "radius-km"} {
 		if cmd.Flags().Changed(name) {
 			return true
 		}
@@ -216,20 +216,23 @@ same name, frequencies, tones, tone squelch, and group. Unknown groups are
 created.`,
 		Args: cobra.MaximumNArgs(1),
 	}
-	cmd.Flags().Bool("dry-run", false, "Report what would change without writing")
-	cmd.Flags().String("on-duplicate", "skip", "What to do with duplicates: skip, update, or create")
-	cmd.Flags().String("group", "", "Assign every imported channel to this existing group (ID or name)")
-	cmd.Flags().String("tags", "", "Comma-separated tags added to every imported channel")
+	importFlags(cmd)
+	cmd.Flags().String("service", "", "Set every imported channel's service (noaa and public_safety also default to --rx-only)")
+	cmd.Flags().Bool("rx-only", false, "Set every imported channel's receive-only flag")
 	cmd.Flags().Bool("skip-invalid", false, "Import valid rows even when some rows are invalid")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		policy, err := importer.ParseDuplicatePolicy(getString(cmd, "on-duplicate"))
+		opts, err := importOptions(cmd)
 		if err != nil {
 			return err
 		}
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if opts.Service, err = domain.ParseService(getString(cmd, "service")); err != nil {
+			return err
+		}
+		if cmd.Flags().Changed("rx-only") {
+			v, _ := cmd.Flags().GetBool("rx-only")
+			opts.RXOnly = &v
+		}
 		skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
-		opts := importer.Options{OnDuplicate: policy, Group: getString(cmd, "group"), Tags: splitTags(getString(cmd, "tags")), DryRun: dryRun}
-
 		return withStore(cmd, func(s *store.Store) error {
 			batch, err := parseInput(cmd, args, parse)
 			if err != nil {
@@ -241,15 +244,36 @@ created.`,
 			if len(batch.Errors) > 0 && !skipInvalid {
 				return fmt.Errorf("%d invalid rows; nothing imported (fix them, or use --skip-invalid to import the rest)", len(batch.Errors))
 			}
-			sum, err := importer.Apply(ctx(cmd), s, batch, opts)
-			if err != nil {
-				return err
-			}
-			printSummary(cmd.OutOrStdout(), sum, len(batch.Errors), dryRun)
-			return nil
+			return applyImport(cmd, s, batch, opts, len(batch.Errors))
 		})
 	}
 	return cmd
+}
+
+// importFlags adds the flags shared by every command that imports channels.
+func importFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("dry-run", false, "Report what would change without writing")
+	cmd.Flags().String("on-duplicate", "skip", "What to do with duplicates: skip, update, or create")
+	cmd.Flags().String("group", "", "Assign every imported channel to this existing group (ID or name)")
+	cmd.Flags().String("tags", "", "Comma-separated tags added to every imported channel")
+}
+
+func importOptions(cmd *cobra.Command) (importer.Options, error) {
+	policy, err := importer.ParseDuplicatePolicy(getString(cmd, "on-duplicate"))
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	return importer.Options{OnDuplicate: policy, Group: getString(cmd, "group"), Tags: splitTags(getString(cmd, "tags")), DryRun: dryRun}, err
+}
+
+func applyImport(cmd *cobra.Command, s *store.Store, batch importer.Batch, opts importer.Options, invalid int) error {
+	sum, err := importer.Apply(ctx(cmd), s, batch, opts)
+	if err != nil {
+		return err
+	}
+	for _, w := range sum.Warnings {
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning", w)
+	}
+	printSummary(cmd.OutOrStdout(), sum, invalid, opts.DryRun)
+	return nil
 }
 
 func parseInput(cmd *cobra.Command, args []string, parse func(io.Reader) (importer.Batch, error)) (importer.Batch, error) {
@@ -279,5 +303,8 @@ func printSummary(out io.Writer, sum importer.Summary, invalid int, dryRun bool)
 	fmt.Fprintln(out)
 	if len(sum.GroupsCreated) > 0 {
 		fmt.Fprintf(out, "New groups: %s\n", strings.Join(sum.GroupsCreated, ", "))
+	}
+	if len(sum.Warnings) > 0 {
+		fmt.Fprintf(out, "%d band plan warnings (see above; rflib check lists them again)\n", len(sum.Warnings))
 	}
 }

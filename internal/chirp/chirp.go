@@ -5,11 +5,16 @@ package chirp
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
 )
+
+// Modes are the library modes CHIRP export and import support: all of them,
+// since CHIRP uses the same names.
+var Modes = domain.Modes
 
 // Columns is CHIRP's generic CSV header, in CHIRP's order.
 var Columns = []string{"Location", "Name", "Frequency", "Duplex", "Offset", "Tone", "rToneFreq", "cToneFreq", "DtcsCode", "DtcsPolarity", "RxDtcsCode", "CrossMode", "Mode", "TStep", "Skip", "Power", "Comment", "URCALL", "RPT1CALL", "RPT2CALL", "DVCODE"}
@@ -74,27 +79,29 @@ func FromChannel(c domain.Channel, location, maxNameLen int) (Memory, error) {
 		DTCSPolarity: defaultPolarity, CrossMode: defaultCrossMode, Mode: c.Mode, TStep: defaultTStep,
 		Power: c.Power, Comment: strings.Join(strings.Fields(c.Notes), " "),
 	}
-	switch c.Mode {
-	case "FM", "NFM", "AM":
-	default:
+	if !slices.Contains(Modes, c.Mode) {
 		return m, fmt.Errorf("mode %s is not supported by CHIRP export", c.Mode)
 	}
 	if c.Skip {
 		m.Skip = "S"
 	}
-	m.Duplex, m.OffsetHz = duplex(c.ReceiveHz, c.TransmitHz)
-
-	tx := c.TransmitTone
-	rx := domain.Tone{Kind: domain.ToneNone}
-	if c.ToneSquelch {
-		rx = c.ReceiveTone
+	tx := c.TransmitHz
+	if c.RXOnly {
+		tx = nil
 	}
-	for _, t := range []domain.Tone{tx, rx} {
+	m.Duplex, m.OffsetHz = duplex(c.ReceiveHz, tx)
+
+	txTone := c.TransmitTone
+	rxTone := domain.Tone{Kind: domain.ToneNone}
+	if c.ToneSquelch {
+		rxTone = c.ReceiveTone
+	}
+	for _, t := range []domain.Tone{txTone, rxTone} {
 		if !domain.IsStandardTone(t) {
 			return m, fmt.Errorf("tone %s is not a standard CTCSS/DCS tone CHIRP accepts", domain.FormatTone(t))
 		}
 	}
-	setTones(&m, tx, rx)
+	setTones(&m, txTone, rxTone)
 	return m, nil
 }
 
@@ -172,9 +179,7 @@ func ToChannel(m Memory) (domain.Channel, error) {
 	if strings.TrimSpace(c.Name) == "" {
 		c.Name = domain.FormatFrequencyMHz(m.FrequencyHz)
 	}
-	switch m.Mode {
-	case "FM", "NFM", "AM":
-	default:
+	if !slices.Contains(Modes, m.Mode) {
 		return c, fmt.Errorf("mode %q is not supported yet", m.Mode)
 	}
 	switch m.Duplex {

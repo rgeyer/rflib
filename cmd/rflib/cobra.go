@@ -20,7 +20,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite library path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
-	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand())
+	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand())
 	return root
 }
 
@@ -205,7 +205,9 @@ func channelFields(cmd *cobra.Command) {
 	cmd.Flags().String("group", "", "Group ID or name (empty clears on update)")
 	cmd.Flags().String("rx", "", "Receive frequency in MHz")
 	cmd.Flags().String("tx", "", "Transmit frequency in MHz; omit for receive-only (empty clears on update)")
-	cmd.Flags().String("mode", "FM", "FM, NFM, or AM")
+	cmd.Flags().String("mode", "FM", "FM, NFM, AM, USB, or LSB")
+	cmd.Flags().String("service", "", "Radio service: amateur, gmrs, frs, cb, murs, marine, noaa, public_safety, other (empty clears on update)")
+	cmd.Flags().Bool("rx-only", false, "Never transmit; exports program the channel receive only (default on for noaa and public_safety)")
 	cmd.Flags().String("rx-tone", "none", "none, ctcss:<Hz>, or dcs:<code>[:inverted]")
 	cmd.Flags().String("tx-tone", "none", "none, ctcss:<Hz>, or dcs:<code>[:inverted]")
 	cmd.Flags().Bool("tone-squelch", false, "Enable receive tone squelch")
@@ -264,6 +266,19 @@ func applyChannelFlags(cmd *cobra.Command, s *store.Store, c *domain.Channel, al
 	if set("skip") {
 		c.Skip, _ = cmd.Flags().GetBool("skip")
 	}
+	if set("service") {
+		svc, err := domain.ParseService(getString(cmd, "service"))
+		if err != nil {
+			return err
+		}
+		c.Service = svc
+		// A listen-only service turns rx-only on unless --rx-only says
+		// otherwise; it never turns it off.
+		c.RXOnly = c.RXOnly || domain.DefaultRXOnly(svc)
+	}
+	if cmd.Flags().Changed("rx-only") {
+		c.RXOnly, _ = cmd.Flags().GetBool("rx-only")
+	}
 	if set("tags") {
 		c.Tags = splitTags(getString(cmd, "tags"))
 	}
@@ -294,6 +309,7 @@ func newChannelAddCommand() *cobra.Command {
 			c, err := s.CreateChannel(ctx(cmd), c)
 			if err == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), c.ID)
+				warnBandPlan(cmd, c)
 			}
 			return err
 		})
@@ -304,6 +320,7 @@ func newChannelAddCommand() *cobra.Command {
 func filterFields(cmd *cobra.Command) {
 	cmd.Flags().String("group", "", "Group ID or name")
 	cmd.Flags().String("tag", "", "Tag")
+	cmd.Flags().String("service", "", "Radio service")
 	cmd.Flags().String("lat", "", "Latitude")
 	cmd.Flags().String("lon", "", "Longitude")
 	cmd.Flags().String("radius-km", "", "Radius in kilometers")
@@ -311,6 +328,10 @@ func filterFields(cmd *cobra.Command) {
 
 func channelFilter(cmd *cobra.Command, s *store.Store) (store.ChannelFilter, error) {
 	f := store.ChannelFilter{Tag: getString(cmd, "tag")}
+	var err error
+	if f.Service, err = domain.ParseService(getString(cmd, "service")); err != nil {
+		return f, err
+	}
 	if ref := getString(cmd, "group"); ref != "" {
 		g, err := s.GetGroup(ctx(cmd), ref)
 		if err != nil {
@@ -318,7 +339,6 @@ func channelFilter(cmd *cobra.Command, s *store.Store) (store.ChannelFilter, err
 		}
 		f.GroupID = g.ID
 	}
-	var err error
 	for _, x := range []struct {
 		name string
 		dst  **float64
@@ -387,7 +407,9 @@ func newChannelUpdateCommand() *cobra.Command {
 			if err := applyChannelFlags(cmd, s, &c, false); err != nil {
 				return err
 			}
-			_, err = s.UpdateChannel(ctx(cmd), c)
+			if _, err = s.UpdateChannel(ctx(cmd), c); err == nil {
+				warnBandPlan(cmd, c)
+			}
 			return err
 		})
 	}
@@ -405,4 +427,11 @@ func newChannelDeleteCommand() *cobra.Command {
 		return withStore(cmd, func(s *store.Store) error { return s.DeleteChannel(ctx(cmd), getString(cmd, "id")) })
 	}
 	return cmd
+}
+
+// warnBandPlan prints band-plan warnings for a saved channel to stderr.
+func warnBandPlan(cmd *cobra.Command, c domain.Channel) {
+	for _, w := range domain.CheckBandPlan(c) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s: %s\n", c.Name, w)
+	}
 }
