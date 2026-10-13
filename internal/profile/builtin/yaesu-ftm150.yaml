@@ -1,0 +1,56 @@
+name: yaesu-ftm150
+description: Yaesu FTM-150 memory channels for ADMS-17 (File > Import on the Memories tab)
+notes: |
+  Every memory is written, as ADMS-17 exports them: channels first, then
+  empty memories up to 999. Names are cut to 16 characters.
+
+  Power labels HIGH, MID, and LOW pass through; any other label (such as
+  "50W") becomes HIGH.
+
+  Receive-only channels are written as simplex: the FTM-150 has no
+  per-memory transmit inhibit, and it only transmits on 2 m and 70 cm.
+
+  Only the tone modes seen in ADMS-17 exports are mapped (OFF, TONE, DCS).
+  Tone squelch and split tones fail the export until their ADMS spelling is
+  confirmed; a copy of this profile in your profile directory can add them.
+header: false
+line_ending: lf
+start: 1
+slots: 999
+max_name_length: 16
+standard_tones_only: true
+columns:
+  - {name: Channel No, source: location}
+  - {name: Receive Frequency, source: rx_mhz, decimals: 5}
+  - {name: Transmit Frequency, source: tx_mhz, decimals: 5}
+  - {name: Offset Frequency, source: offset_mhz, decimals: 2}
+  - name: Offset Direction
+    source: duplex
+    map: {none: "OFF", "off": "OFF", plus: +RPT, minus: -RPT, split: -/+}
+  - name: Operating Mode
+    source: mode
+    map: {FM: FM, NFM: FM, AM: AM}
+  - {name: Name, source: name}
+  - name: Tone Mode
+    source: tone_mode
+    map: {none: "OFF", tone: TONE, dcs: DCS}
+  - {name: CTCSS Frequency, source: ctcss_hz, decimals: 1, suffix: " Hz", default: 100.0 Hz}
+  - {name: DCS Code, source: dcs_code, default: "023"}
+  - {name: User CTCSS, source: const, value: 1500 Hz}
+  - name: Tx Power
+    source: power
+    map: {HIGH: HIGH, MID: MID, LOW: LOW, "*": HIGH}
+  - {name: M-GRP, source: const, value: "OFF"}
+  - name: Scan
+    source: skip
+    map: {"true": "NO", "false": "YES"}
+  - name: Step
+    source: step_khz
+    steps_khz: ["25", "5", "6.25", "12.5"]
+    map: {"25": 25.0KHz, "20": 20.0KHz, "5": 5.0KHz, "6.25": 6.25KHz, "12.5": 12.5KHz}
+  - name: Narrow
+    source: narrow
+    map: {"true": "ON", "false": "OFF"}
+  - {name: Clock Shift, source: const, value: "OFF"}
+  - {name: Comment, source: notes}
+  - {name: Check, source: const, value: "0", empty: "0"}

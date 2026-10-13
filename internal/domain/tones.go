@@ -40,3 +40,17 @@ func IsStandardTone(t Tone) bool {
 	}
 	return true
 }
+
+// ProgrammedTones returns the tones a radio is programmed with: the transmit
+// tone, and the receive tone only when tone squelch is on (otherwise the
+// radio ignores it).
+func ProgrammedTones(c Channel) (tx, rx Tone) {
+	tx, rx = c.TransmitTone, Tone{Kind: ToneNone}
+	if tx.Kind == "" {
+		tx.Kind = ToneNone
+	}
+	if c.ToneSquelch {
+		rx = c.ReceiveTone
+	}
+	return tx, rx
+}

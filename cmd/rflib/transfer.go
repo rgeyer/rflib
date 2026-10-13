@@ -11,6 +11,7 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/importer"
+	"github.com/ryan/rflib/internal/profile"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -54,7 +55,7 @@ func newExportCommand() *cobra.Command {
 		})
 	}
 
-	exp.AddCommand(csv, js, newExportCHIRPCommand())
+	exp.AddCommand(csv, js, newExportCHIRPCommand(), newExportProfileCommand())
 	return exp
 }
 
@@ -75,26 +76,65 @@ programmed when tone squelch is on.`}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		start, _ := cmd.Flags().GetInt("start")
 		maxLen, _ := cmd.Flags().GetInt("max-name-len")
-		skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
 		if start < 0 || maxLen < 0 {
 			return fmt.Errorf("--start and --max-name-len must not be negative")
 		}
-		ex := export.CHIRP{Start: start, MaxNameLen: maxLen}
-		return withStore(cmd, func(s *store.Store) error {
-			cs, err := filteredChannels(cmd, s)
-			if err != nil {
-				return err
-			}
-			if err := sortChannels(cs, getString(cmd, "sort")); err != nil {
-				return err
-			}
-			if skipInvalid {
-				cs = validChannels(cmd.ErrOrStderr(), ex, cs)
-			}
-			return writeOutput(cmd, len(cs), func(w io.Writer) error { return ex.Export(w, cs) })
-		})
+		return exportNumbered(cmd, export.CHIRP{Start: start, MaxNameLen: maxLen})
 	}
 	return cmd
+}
+
+func newExportProfileCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "profile PROFILE", Short: "Export channels in a profile's format, such as a radio's programming software", Args: cobra.ExactArgs(1),
+		Long: `Export channels in an export profile's format. PROFILE is a profile name
+(see rflib profile list) or a .yaml file.
+
+Memories are numbered from the profile's first location, or --start, in --sort
+order. Channels the profile can't represent fail the export unless
+--skip-invalid is given.`}
+	cmd.Flags().String("output", "-", "Output path, or - for stdout")
+	cmd.Flags().Int("start", 1, "First memory location (default: the profile's)")
+	cmd.Flags().String("sort", "name", "Memory order: name, freq, or group")
+	cmd.Flags().Bool("skip-invalid", false, "Leave out channels the profile can't represent instead of failing")
+	filterFields(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		e, err := profile.Find(args[0])
+		if err != nil {
+			return err
+		}
+		ex := profile.Exporter{Profile: e.Profile}
+		if cmd.Flags().Changed("start") {
+			start, _ := cmd.Flags().GetInt("start")
+			if start < 0 {
+				return fmt.Errorf("--start must not be negative")
+			}
+			ex.Start = &start
+		}
+		return exportNumbered(cmd, ex)
+	}
+	return cmd
+}
+
+// exportNumbered runs an export that numbers memories: filter, sort,
+// optionally drop invalid channels, then write.
+func exportNumbered(cmd *cobra.Command, ex interface {
+	export.Exporter
+	export.Validator
+}) error {
+	skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
+	return withStore(cmd, func(s *store.Store) error {
+		cs, err := filteredChannels(cmd, s)
+		if err != nil {
+			return err
+		}
+		if err := sortChannels(cs, getString(cmd, "sort")); err != nil {
+			return err
+		}
+		if skipInvalid {
+			cs = validChannels(cmd.ErrOrStderr(), ex, cs)
+		}
+		return writeOutput(cmd, len(cs), func(w io.Writer) error { return ex.Export(w, cs) })
+	})
 }
 
 // sortChannels orders channels for exporters that number memories. The store
@@ -198,56 +238,73 @@ func newImportCommand() *cobra.Command {
 		newImportFormatCommand("csv", "Import the generic CSV format written by export csv", importer.ParseGenericCSV),
 		newImportFormatCommand("json", "Restore a JSON backup written by export json", importer.ParseJSON),
 		newImportFormatCommand("chirp", "Import a CHIRP CSV file (File > Export in CHIRP)", importer.ParseCHIRP),
+		newImportProfileCommand(),
 	)
 	return imp
 }
 
 func newImportFormatCommand(name, short string, parse func(io.Reader) (importer.Batch, error)) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   name + " [FILE]",
-		Short: short,
-		Long: short + `.
+	cmd := &cobra.Command{Use: name + " [FILE]", Short: short, Long: short + ".\n\n" + importHelp, Args: cobra.MaximumNArgs(1)}
+	fileImportFlags(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error { return runFileImport(cmd, args, parse) }
+	return cmd
+}
 
-Reads FILE, or stdin when FILE is omitted or "-". The import is all-or-nothing:
+func newImportProfileCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "profile PROFILE [FILE]", Short: "Import a file in an export profile's format",
+		Long: "Import a file in an export profile's format, such as one saved by a radio's\nprogramming software. PROFILE is a profile name (see rflib profile list) or\na .yaml file.\n\n" + importHelp,
+		Args: cobra.RangeArgs(1, 2)}
+	fileImportFlags(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		e, err := profile.Find(args[0])
+		if err != nil {
+			return err
+		}
+		return runFileImport(cmd, args[1:], profile.Parser{Profile: e.Profile}.Parse)
+	}
+	return cmd
+}
+
+const importHelp = `Reads FILE, or stdin when FILE is omitted or "-". The import is all-or-nothing:
 any invalid row aborts it unless --skip-invalid is given.
 
 A channel is a duplicate when it has the same ID as an existing channel, or the
 same name, frequencies, tones, tone squelch, and group. Unknown groups are
-created.`,
-		Args: cobra.MaximumNArgs(1),
-	}
+created.`
+
+func fileImportFlags(cmd *cobra.Command) {
 	importFlags(cmd)
 	cmd.Flags().String("service", "", "Set every imported channel's service (noaa and public_safety also default to --rx-only)")
 	cmd.Flags().Bool("rx-only", false, "Set every imported channel's receive-only flag")
 	cmd.Flags().Bool("skip-invalid", false, "Import valid rows even when some rows are invalid")
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		opts, err := importOptions(cmd)
+}
+
+func runFileImport(cmd *cobra.Command, args []string, parse func(io.Reader) (importer.Batch, error)) error {
+	opts, err := importOptions(cmd)
+	if err != nil {
+		return err
+	}
+	if opts.Service, err = domain.ParseService(getString(cmd, "service")); err != nil {
+		return err
+	}
+	if cmd.Flags().Changed("rx-only") {
+		v, _ := cmd.Flags().GetBool("rx-only")
+		opts.RXOnly = &v
+	}
+	skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
+	return withStore(cmd, func(s *store.Store) error {
+		batch, err := parseInput(cmd, args, parse)
 		if err != nil {
 			return err
 		}
-		if opts.Service, err = domain.ParseService(getString(cmd, "service")); err != nil {
-			return err
+		for _, e := range batch.Errors {
+			fmt.Fprintln(cmd.ErrOrStderr(), "invalid", e)
 		}
-		if cmd.Flags().Changed("rx-only") {
-			v, _ := cmd.Flags().GetBool("rx-only")
-			opts.RXOnly = &v
+		if len(batch.Errors) > 0 && !skipInvalid {
+			return fmt.Errorf("%d invalid rows; nothing imported (fix them, or use --skip-invalid to import the rest)", len(batch.Errors))
 		}
-		skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
-		return withStore(cmd, func(s *store.Store) error {
-			batch, err := parseInput(cmd, args, parse)
-			if err != nil {
-				return err
-			}
-			for _, e := range batch.Errors {
-				fmt.Fprintln(cmd.ErrOrStderr(), "invalid", e)
-			}
-			if len(batch.Errors) > 0 && !skipInvalid {
-				return fmt.Errorf("%d invalid rows; nothing imported (fix them, or use --skip-invalid to import the rest)", len(batch.Errors))
-			}
-			return applyImport(cmd, s, batch, opts, len(batch.Errors))
-		})
-	}
-	return cmd
+		return applyImport(cmd, s, batch, opts, len(batch.Errors))
+	})
 }
 
 // importFlags adds the flags shared by every command that imports channels.

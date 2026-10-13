@@ -52,3 +52,12 @@ func (b *Batch) finish(row int, c domain.Channel) {
 	}
 	b.Records = append(b.Records, Record{Row: row, Channel: c})
 }
+
+// Add validates c and records it as a Record or a RowError. Parsers outside
+// this package use it so every source normalizes channels the same way.
+func (b *Batch) Add(row int, c domain.Channel) { b.finish(row, c) }
+
+// Fail records a row that could not be parsed.
+func (b *Batch) Fail(row int, err error) {
+	b.Errors = append(b.Errors, RowError{Row: row, Err: err})
+}

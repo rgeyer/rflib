@@ -384,3 +384,41 @@ func TestImportWithService(t *testing.T) {
 		t.Fatalf("imported public safety channel not rx-only: %+v", ch)
 	}
 }
+
+func TestProfileCommands(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	c := newCLI(t)
+	if out := c.ok("profile", "list"); !strings.Contains(out, "yaesu-ftm150\t") || !strings.Contains(out, "(built-in)") {
+		t.Fatalf("profile list = %q", out)
+	}
+	if out := c.ok("profile", "show", "yaesu-ftm6000"); !strings.Contains(out, "max_name_length: 6") {
+		t.Fatalf("profile show = %q", out)
+	}
+	bad := writeFile(t, "name: x\ncolumns: [{name: A, source: nope}]\n")
+	c.fails("unknown source", "profile", "validate", bad)
+
+	c.ok("channel", "add", "--name", "Metro Repeater", "--rx", "146.94", "--tx", "146.34", "--tx-tone", "ctcss:127.3", "--power", "low")
+	c.ok("channel", "add", "--name", "Club TSQL", "--rx", "147.00", "--tx", "147.60", "--tx-tone", "ctcss:100", "--rx-tone", "ctcss:100", "--tone-squelch")
+
+	_, _, err := c.exec("export", "profile", "yaesu-ftm6000")
+	if err == nil || !strings.Contains(err.Error(), "tone squelch") {
+		t.Fatalf("err = %v", err)
+	}
+	out, stderr, err := c.exec("export", "profile", "yaesu-ftm6000", "--skip-invalid", "--start", "5")
+	if err != nil || !strings.Contains(stderr, `skipped "Club TSQL"`) {
+		t.Fatalf("err = %v, stderr = %q", err, stderr)
+	}
+	first := strings.SplitN(out, "\n", 2)[0]
+	if first != "5,146.94000,146.34000,0.60,-RPT,FM,ON,Metro,TONE,127.3 Hz,023,1500 Hz,LOW,YES,5.0KHz,OFF,OFF,,0" {
+		t.Fatalf("first row = %q", first)
+	}
+
+	other := newCLI(t)
+	if got := other.ok("import", "profile", "yaesu-ftm6000", writeFile(t, out)); !strings.Contains(got, "created 1") {
+		t.Fatalf("import = %q", got)
+	}
+	if got := other.ok("channel", "list"); !strings.Contains(got, "Metro\t146.940000") {
+		t.Fatalf("imported channels = %q", got)
+	}
+	c.fails("unknown profile", "export", "profile", "kenwood")
+}

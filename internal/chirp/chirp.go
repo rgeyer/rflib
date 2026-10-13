@@ -91,11 +91,7 @@ func FromChannel(c domain.Channel, location, maxNameLen int) (Memory, error) {
 	}
 	m.Duplex, m.OffsetHz = duplex(c.ReceiveHz, tx)
 
-	txTone := c.TransmitTone
-	rxTone := domain.Tone{Kind: domain.ToneNone}
-	if c.ToneSquelch {
-		rxTone = c.ReceiveTone
-	}
+	txTone, rxTone := domain.ProgrammedTones(c)
 	for _, t := range []domain.Tone{txTone, rxTone} {
 		if !domain.IsStandardTone(t) {
 			return m, fmt.Errorf("tone %s is not a standard CTCSS/DCS tone CHIRP accepts", domain.FormatTone(t))
