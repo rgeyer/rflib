@@ -242,6 +242,7 @@ func TestImportCSV(t *testing.T) {
 	}
 
 	c.fails("unknown duplicate policy", "import", "csv", file, "--on-duplicate", "merge")
+	c.fails("unknown match rule", "import", "csv", file, "--match", "name")
 }
 
 func TestExportJSONFiltersGroups(t *testing.T) {

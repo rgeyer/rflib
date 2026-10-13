@@ -23,7 +23,10 @@ func TestCheckBandPlan(t *testing.T) {
 		{"noaa transmitting", Channel{Service: ServiceNOAA, ReceiveHz: 162_550_000, TransmitHz: hz(162_550_000)}, "receive only"},
 		{"noaa rx only flag", Channel{Service: ServiceNOAA, ReceiveHz: 162_550_000, TransmitHz: hz(162_550_000), RXOnly: true}, ""},
 		{"public safety transmitting", Channel{Service: ServicePublicSafety, ReceiveHz: 460_275_000, TransmitHz: hz(465_275_000)}, "--rx-only"},
-		{"unspecified is unchecked", Channel{ReceiveHz: 1}, ""},
+		{"unspecified receive only", Channel{ReceiveHz: 460_275_000}, ""},
+		{"unspecified ham repeater", Channel{ReceiveHz: 147_300_000, TransmitHz: hz(147_900_000)}, ""},
+		{"unspecified gmrs input", Channel{ReceiveHz: 462_550_000, TransmitHz: hz(467_550_000)}, ""},
+		{"unspecified public safety transmitting", Channel{ReceiveHz: 460_275_000, TransmitHz: hz(465_275_000)}, "receive-only"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := CheckBandPlan(tc.c)

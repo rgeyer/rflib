@@ -12,8 +12,7 @@ import (
 )
 
 // DuplicatePolicy decides what happens when an imported channel matches an
-// existing one, first by ID and then by every programmed field (see
-// duplicateKey). Update therefore changes metadata such as power, notes,
+// existing one, first by ID and then by the Match rule (see duplicateKey). Update therefore changes metadata such as power, notes,
 // skip, and tags; a changed tone or frequency makes a new channel.
 type DuplicatePolicy string
 
@@ -31,8 +30,31 @@ func ParseDuplicatePolicy(v string) (DuplicatePolicy, error) {
 	return "", fmt.Errorf("unknown duplicate policy %q; use skip, update, or create", v)
 }
 
+// MatchRule chooses which fields make two channels duplicates.
+type MatchRule string
+
+const (
+	// MatchExact compares the name, frequencies, tones, tone squelch, and
+	// group.
+	MatchExact MatchRule = "exact"
+	// MatchProgrammed compares only what reaches the air: frequencies,
+	// tones, and tone squelch. Use it for files from a radio, where names
+	// are shortened and there are no groups.
+	MatchProgrammed MatchRule = "programmed"
+)
+
+func ParseMatchRule(v string) (MatchRule, error) {
+	switch m := MatchRule(v); m {
+	case MatchExact, MatchProgrammed:
+		return m, nil
+	}
+	return "", fmt.Errorf("unknown match rule %q; use exact or programmed", v)
+}
+
 type Options struct {
 	OnDuplicate DuplicatePolicy
+	// Match defaults to MatchExact.
+	Match MatchRule
 	// Group, when set, is an existing group ID or name that every imported
 	// channel is assigned to, overriding the source's groups.
 	Group string
@@ -64,6 +86,9 @@ var errDryRun = errors.New("dry run")
 func Apply(ctx context.Context, s *store.Store, b Batch, opts Options) (Summary, error) {
 	if opts.OnDuplicate == "" {
 		opts.OnDuplicate = SkipDuplicates
+	}
+	if opts.Match == "" {
+		opts.Match = MatchExact
 	}
 	var sum Summary
 	err := s.InTx(ctx, func(tx *store.Store) error {
@@ -136,15 +161,21 @@ func (a *applier) addGroup(g domain.Group) {
 	a.groupByName[g.Name] = g
 }
 
+// addChannel indexes c. When another channel already has c's key, the
+// first one keeps it, so matches don't depend on what was imported last.
 func (a *applier) addChannel(c domain.Channel) {
 	a.chanByID[c.ID] = c
-	a.chanByKey[duplicateKey(c)] = c
+	k := duplicateKey(c, a.opts.Match)
+	if existing, ok := a.chanByKey[k]; !ok || existing.ID == c.ID {
+		a.chanByKey[k] = c
+	}
 }
 
 // duplicateKey covers everything programmed into a radio, so channels that
 // only share a name and frequency (RadioReference lists often reuse short
-// names across sites with different tones) are kept apart.
-func duplicateKey(c domain.Channel) string {
+// names across sites with different tones) are kept apart. MatchProgrammed
+// leaves out the name and group.
+func duplicateKey(c domain.Channel, m MatchRule) string {
 	gid, tx := "", "rx-only"
 	if c.GroupID != nil {
 		gid = *c.GroupID
@@ -152,7 +183,11 @@ func duplicateKey(c domain.Channel) string {
 	if c.TransmitHz != nil {
 		tx = strconv.FormatInt(*c.TransmitHz, 10)
 	}
-	return strings.Join([]string{c.Name, strconv.FormatInt(c.ReceiveHz, 10), tx,
+	name := c.Name
+	if m == MatchProgrammed {
+		name, gid = "", ""
+	}
+	return strings.Join([]string{name, strconv.FormatInt(c.ReceiveHz, 10), tx,
 		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), strconv.FormatBool(c.ToneSquelch), gid}, "\x00")
 }
 
@@ -202,7 +237,7 @@ func (a *applier) channel(r Record) error {
 
 	match, found := a.chanByID[c.ID]
 	if !found || c.ID == "" {
-		match, found = a.chanByKey[duplicateKey(c)]
+		match, found = a.chanByKey[duplicateKey(c, a.opts.Match)]
 	}
 	if found {
 		switch a.opts.OnDuplicate {

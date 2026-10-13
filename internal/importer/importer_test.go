@@ -184,6 +184,39 @@ func TestDuplicatesMatchEveryProgrammedField(t *testing.T) {
 	}
 }
 
+// A radio's own file shortens names and has no groups; matching on what is
+// programmed still finds the library's channels.
+func TestMatchProgrammedIgnoresNameAndGroup(t *testing.T) {
+	s := newStore(t)
+	library := "name,receive_mhz,transmit_mhz,receive_tone,transmit_tone,tone_squelch,group_name\n" +
+		"2m FM Call,146.520,,,,,Calling\n" +
+		"Marian,147.300,147.900,,,,Repeaters\n"
+	b, err := ParseGenericCSV(strings.NewReader(library))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, s, b, Options{})
+	radio := "name,receive_mhz,transmit_mhz,receive_tone,transmit_tone,tone_squelch,group_name\n" +
+		"VHF Call,146.520,,,,,\n" + // same programming, different name and group
+		"MARION HOSP,147.300,147.900,,ctcss:131.8,,\n" // adds a tone: new
+	parse := func() Batch {
+		b, err := ParseGenericCSV(strings.NewReader(radio))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	if sum := mustApply(t, s, parse(), Options{DryRun: true}); sum.Created != 2 {
+		t.Fatalf("exact: %+v", sum)
+	}
+	if sum := mustApply(t, s, parse(), Options{Match: MatchProgrammed}); sum.Created != 1 || sum.Skipped != 1 {
+		t.Fatalf("programmed: %+v", sum)
+	}
+	if _, err := ParseMatchRule("name"); err == nil {
+		t.Fatal("unknown match rule accepted")
+	}
+}
+
 // Regression: RadioReference exports reuse a name and frequency for sites
 // that differ only by tone; both must survive import.
 func TestCHIRPSameNameDifferentToneIsNotDuplicate(t *testing.T) {

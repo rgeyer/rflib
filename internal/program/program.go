@@ -37,6 +37,8 @@ type Plan struct {
 
 // Build plans a radio's memories. It fails when the list doesn't fit the
 // model's memories; everything else that can't be honored is a warning.
+// Memories transmit only where domain.PersonalTransmitAllowed; any other
+// channel is programmed receive-only, whatever its service.
 func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, error) {
 	p := Plan{Radio: r, Model: m}
 	locs, err := domain.MemoryNumbers(entries, m.Memories.First)
@@ -69,6 +71,10 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, er
 		}
 		intent := domain.ResolvePower(e.Power, c.Power, groupPower, r.DefaultPower)
 		c.ProgrammedPower = choosePower(m, c, intent, warn)
+		if c.TransmitHz != nil && !c.RXOnly && !domain.PersonalTransmitAllowed(*c.TransmitHz) {
+			c.RXOnly = true
+			warn("programmed receive-only: transmit %s MHz is outside the amateur bands and FRS, GMRS, MURS, and CB channels", domain.FormatFrequencyMHz(*c.TransmitHz))
+		}
 		if !m.Tunes(c.ReceiveHz) {
 			warn("%s MHz is outside the radio's bands", domain.FormatFrequencyMHz(c.ReceiveHz))
 		}

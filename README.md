@@ -84,7 +84,7 @@ To label channels you already imported, re-import the same file with `--on-dupli
 
 ### Band plan checks
 
-Saving or importing a channel warns, without failing, when it doesn't fit its service's US (FCC) channel plan. That covers amateur transmit frequencies outside the amateur bands, off-plan FRS, GMRS, MURS, CB, and NOAA frequencies, repeater splits on simplex-only services, and transmitting NOAA or public safety channels. `rflib check` reports every such channel in the library and exits non-zero when it finds any.
+Saving or importing a channel warns, without failing, when it doesn't fit its service's US (FCC) channel plan. That covers amateur transmit frequencies outside the amateur bands, off-plan FRS, GMRS, MURS, CB, and NOAA frequencies, repeater splits on simplex-only services, transmitting NOAA or public safety channels, and channels with no service that transmit outside the frequencies radios may transmit on (see [Where radios transmit](#where-radios-transmit)). `rflib check` reports every such channel in the library and exits non-zero when it finds any.
 
 ## Built-in channel lists
 
@@ -165,6 +165,12 @@ A section start can't go backwards, and the list must fit the model's memories. 
 
 Each radio has its own `--dedupe` (`none`, `index`, or `freq`) for duplicate names; see [Names on radio displays](#names-on-radio-displays).
 
+### Where radios transmit
+
+A radio's memories transmit only where a ham or personal-radio user may: the US amateur bands, FRS and GMRS channels (plus GMRS repeater inputs), MURS, and CB. Any other channel is programmed receive-only, with a warning, whatever its service or receive-only setting says. A public safety repeater pair imported without `--service` can therefore never transmit on its input.
+
+On CHIRP radios, receive-only means duplex `off`. The Yaesu FTM-150 and FTM-6000 have no per-memory transmit inhibit, so those memories are written as simplex, and the radios themselves refuse to transmit outside 2 m and 70 cm.
+
 ### Keeping radios up to date
 
 Give a radio a saved filter, and `radio sync` appends any matching channels it doesn't have yet. It never removes or reorders anything.
@@ -226,7 +232,7 @@ Exports write to stdout unless `--output PATH` is given, and accept the same fil
 
 - **All or nothing:** any invalid row is reported with its line number and nothing is imported. Use `--skip-invalid` to import the valid rows anyway. A failure partway through also writes nothing.
 - **`--dry-run`** runs the whole import and then discards it, so its summary is exactly what a real import would do.
-- **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, tone squelch, and group. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
+- **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, tone squelch, and group. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `--match programmed` drops the name and group from the comparison and matches on frequencies, tones, and tone squelch alone. Use it for a file read from a radio, where names are shortened and there are no groups. With `--on-duplicate update`, the matched channel takes the file's name. Two rows in the same file with the same programming also match each other. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
 - **Groups:** channels are attached to groups by ID, then by name. Groups that don't exist yet are created and listed in the summary. `--group NAME` puts every imported channel in an existing group instead.
 - **`--tags`** adds tags to every imported channel.
 

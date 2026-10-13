@@ -172,3 +172,32 @@ func TestWriteCHIRPAndProfile(t *testing.T) {
 		t.Fatalf("profile export rows 1, 2, 20:\n%s\n%s\n%s", rows[0], rows[1], rows[19])
 	}
 }
+
+// Channels transmit only where a ham or personal-radio user may, whatever
+// their service says; everything else is programmed receive-only.
+func TestTransmitOnlyWhereAllowed(t *testing.T) {
+	m := mustModel(t, "baofeng-uv5rm")
+	sheriff := ch("SBCoSO Ops 1D", 460_275_000, 465_275_000, domain.ServiceUnspecified)
+	labelled := ch("Fire", 154_430_000, 158_955_000, domain.ServiceAmateur) // mislabelled
+	repeater := ch("Marian", 147_300_000, 147_900_000, domain.ServiceUnspecified)
+	gmrs := ch("GMRS 15R", 462_550_000, 467_550_000, domain.ServiceGMRS)
+	p, err := Build(domain.Radio{Name: "HT"}, m, entries(sheriff, labelled, repeater, gmrs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []bool{true, true, false, false} {
+		if got := p.Memories[i].Channel.RXOnly; got != want {
+			t.Errorf("memory %d rx-only = %v, want %v", i, got, want)
+		}
+	}
+	if w := strings.Join(p.Warnings, "\n"); strings.Count(w, "programmed receive-only") != 2 {
+		t.Errorf("warnings = %q", w)
+	}
+	var out bytes.Buffer
+	if _, err := Write(&out, p, false, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "1,SBCoSOOps1D,460.275000,off,") {
+		t.Errorf("sheriff not transmit-inhibited in CHIRP:\n%s", out.String())
+	}
+}
