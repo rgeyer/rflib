@@ -103,6 +103,7 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--gro
 | `has:` | `location`, `service`, `group`, `tag`, `tone`, `power`, `notes`, `shortname`, `radio` |
 | `near:` | `LAT,LON,KM`, see below |
 | `radio:` | A radio's name, `any`, or `none` |
+| `tunes:` | A radio or model name: channels whose receive frequency it can tune |
 | `created:`, `updated:` | `YYYY-MM-DD`, with comparisons and ranges like `freq:` |
 | `id:` | A channel ID |
 
@@ -190,7 +191,7 @@ A radio is one of your own radios: a model, the channels programmed into it in y
 
 ### Channel order and memory numbers
 
-`radio channels add` appends to the end of the list, by `--id` or by `--query`. Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
+`radio channels add` appends to the end of the list, by `--id` or by `--query`. Channels the radio can't receive, going by its model's bands, are skipped and listed on stderr; `--any-band` adds them anyway. `channel list tunes:Truck` previews what fits. Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
 
 ```sh
 ./rflib radio channels move Truck --id <id> --before <other-id>   # or --after, --to N, --top, --bottom
@@ -241,6 +242,7 @@ A radio's **sources** are searches that `radio sync` adds new matching channels 
 
 - **Placement:** each source's new channels go after the last channel that source added. A source with none yet goes after the channels of earlier sources and before those of later ones.
 - **Order and claims:** sources are numbered from 1. An earlier source claims a channel first, and `radio sources move HT 3 --to 1` changes the order.
+- **Bands:** like `radio channels add`, sync skips channels outside the radio's bands, reports how many, and takes `--any-band`.
 - **What sync leaves alone:** it never removes or reorders anything. Channels you add by hand stay where you put them, and so do channels you move.
 - **Changing a source:** `radio sources set HT 2 --query ... --sort ... --section-start ...` changes a source. A new section start moves to the source's first channel right away.
 - **Removing a source:** `radio sources remove HT 2` removes a source and leaves its channels on the radio. Add `--with-channels` to take them off too.

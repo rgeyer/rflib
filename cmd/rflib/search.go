@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/model"
 	"github.com/ryan/rflib/internal/query"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
@@ -28,7 +30,8 @@ names. @name uses a saved search.
   has:location|service|group|tag|tone|power|notes|shortname|radio
   near:LAT,LON,KM           within KM plus the group's radius; channels
                             without a location never match
-  radio:NAME|any|none       created: updated:  YYYY-MM-DD, >=, <, ranges
+  radio:NAME|any|none       tunes:RADIO|MODEL  receive frequency in its bands
+  created: updated:         YYYY-MM-DD, >=, <, ranges
   id:ID
 
 Examples:
@@ -101,7 +104,29 @@ func queryEnv(cmd *cobra.Command, s *store.Store) query.Env {
 			return g.ID, err
 		},
 		RadioChannels: func(ref string) (map[string]bool, error) { return s.RadioChannelIDs(ctx(cmd), ref) },
+		Tunes: func(ref string) (func(int64) bool, error) {
+			m, err := radioOrModel(cmd, s, ref)
+			if err != nil {
+				return nil, err
+			}
+			return m.Tunes, nil
+		},
 	}
+}
+
+// radioOrModel returns a radio's model, or the model named ref.
+func radioOrModel(cmd *cobra.Command, s *store.Store, ref string) (model.Model, error) {
+	r, err := s.GetRadio(ctx(cmd), ref)
+	if err == nil {
+		return model.Find(r.Model)
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return model.Model{}, err
+	}
+	if m, err := model.Find(ref); err == nil {
+		return m, nil
+	}
+	return model.Model{}, fmt.Errorf("no radio or radio model named %q", ref)
 }
 
 // findChannels returns the library's channels matching a query, in name

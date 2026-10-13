@@ -328,10 +328,12 @@ func newRadioChannelsAddCommand() *cobra.Command {
 		Long: `Append channels to the end of a radio's list, by --id or by --query (or the
 shorthand --tag, --group, --service, --lat/--lon/--radius-km), in --sort
 order. Channels already on the radio are skipped, so the existing order never
-changes. To keep adding a query's new matches, make it a source instead:
-rflib radio sources add.`}
+changes, and so are channels outside the radio's bands unless --any-band. To
+keep adding a query's new matches, make it a source instead: rflib radio
+sources add.`}
 	cmd.Flags().StringSlice("id", nil, "Channel IDs (repeat or comma-separate)")
 	cmd.Flags().String("sort", "name", "Order for channels added by filter: name, freq, or group")
+	anyBandFlag(cmd)
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ids, _ := cmd.Flags().GetStringSlice("id")
@@ -339,30 +341,39 @@ rflib radio sources add.`}
 			return fmt.Errorf("give channels with --id or --query")
 		}
 		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
+			r, m, err := radioModel(cmd, s, args[0])
 			if err != nil {
 				return err
 			}
+			var cs []domain.Channel
 			for _, id := range ids {
-				if _, err := s.GetChannel(ctx(cmd), id); err != nil {
-					return err
-				}
-			}
-			if filtered(cmd) {
-				cs, err := filteredChannels(cmd, s)
+				c, err := s.GetChannel(ctx(cmd), id)
 				if err != nil {
 					return err
 				}
-				if err := sortChannels(cs, getString(cmd, "sort")); err != nil {
+				cs = append(cs, c)
+			}
+			if filtered(cmd) {
+				found, err := filteredChannels(cmd, s)
+				if err != nil {
 					return err
 				}
-				for _, c := range cs {
-					ids = append(ids, c.ID)
+				if err := sortChannels(found, getString(cmd, "sort")); err != nil {
+					return err
 				}
+				cs = append(cs, found...)
+			}
+			cs, skipped := inBand(cmd, m, cs)
+			for _, c := range skipped {
+				fmt.Fprintf(cmd.ErrOrStderr(), "skipped %q (%s MHz): %s can't receive it\n", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), r.Name)
+			}
+			ids = ids[:0]
+			for _, c := range cs {
+				ids = append(ids, c.ID)
 			}
 			n, err := s.AddRadioChannels(ctx(cmd), r.ID, ids)
 			if err == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Added %d channels to %s\n", n, r.Name)
+				fmt.Fprintf(cmd.OutOrStdout(), "Added %d channels to %s%s\n", n, r.Name, skippedNote(len(skipped)))
 			}
 			return err
 		})
@@ -532,13 +543,15 @@ func newRadioSyncCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "sync RADIO", Short: "Add new channels matching the radio's sources", Args: cobra.ExactArgs(1),
 		Long: `Add channels matching each of the radio's sources that aren't on it yet.
 Each source's new channels go after the last channel it added, in the
-source's sort order; an earlier source claims a channel first. Nothing is
-removed or reordered.`}
+source's sort order; an earlier source claims a channel first. Channels
+outside the radio's bands are skipped unless --any-band. Nothing is removed
+or reordered.`}
 	cmd.Flags().Bool("dry-run", false, "List what would be added without changing the radio")
+	anyBandFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
+			r, m, err := radioModel(cmd, s, args[0])
 			if err != nil {
 				return err
 			}
@@ -571,6 +584,18 @@ removed or reordered.`}
 				if err := sortChannels(cs, src.Sort); err != nil {
 					return err
 				}
+				var skipped []domain.Channel
+				cs, skipped = inBand(cmd, m, cs)
+				nSkipped := 0
+				for _, c := range skipped {
+					if claimed[c.ID] {
+						continue
+					}
+					nSkipped++
+					if dryRun {
+						fmt.Fprintf(out, "would skip\tsource %d\t%s\t%s\toutside the radio's bands\n", src.Position+1, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
+					}
+				}
 				var ids []string
 				for _, c := range cs {
 					if !claimed[c.ID] {
@@ -581,14 +606,14 @@ removed or reordered.`}
 						}
 					}
 				}
-				if dryRun || len(ids) == 0 {
+				if dryRun || len(ids) == 0 && nSkipped == 0 {
 					continue
 				}
 				added, err := s.AddSourceChannels(ctx(cmd), src, ids)
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(out, "Source %d (%s): added %d\n", src.Position+1, src.Query, added)
+				fmt.Fprintf(out, "Source %d (%s): added %d%s\n", src.Position+1, src.Query, added, skippedNote(nSkipped))
 				total += added
 			}
 			if dryRun {
@@ -602,6 +627,45 @@ removed or reordered.`}
 		})
 	}
 	return cmd
+}
+
+func anyBandFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("any-band", false, "Add channels even when their receive frequency is outside the radio's bands")
+}
+
+// radioModel finds a radio and its model.
+func radioModel(cmd *cobra.Command, s *store.Store, ref string) (domain.Radio, model.Model, error) {
+	r, err := s.GetRadio(ctx(cmd), ref)
+	if err != nil {
+		return r, model.Model{}, err
+	}
+	m, err := model.Find(r.Model)
+	return r, m, err
+}
+
+// inBand splits channels by whether the model can tune their receive
+// frequency. With --any-band everything is kept. A transmit frequency
+// outside the bands only warns (see program.Build), since the radio can
+// still listen.
+func inBand(cmd *cobra.Command, m model.Model, cs []domain.Channel) (kept, skipped []domain.Channel) {
+	if anyBand, _ := cmd.Flags().GetBool("any-band"); anyBand {
+		return cs, nil
+	}
+	for _, c := range cs {
+		if m.Tunes(c.ReceiveHz) {
+			kept = append(kept, c)
+		} else {
+			skipped = append(skipped, c)
+		}
+	}
+	return kept, skipped
+}
+
+func skippedNote(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; skipped %d outside its bands", n)
 }
 
 // --- a radio's sources ---

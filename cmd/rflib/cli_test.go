@@ -723,3 +723,40 @@ func TestRadioSources(t *testing.T) {
 		t.Errorf("channels kept after removing a source: %q", out)
 	}
 }
+
+func TestRadioSkipsOutOfBandChannels(t *testing.T) {
+	c := newCLI(t)
+	c.ok("seed", "install", "us-cb", "us-noaa")
+	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g") // 130-176 and 400-520 MHz
+	if n := len(strings.Split(c.ok("channel", "list", "tunes:HT"), "\n")); n != 7 {
+		t.Errorf("tunes:HT = %d channels", n)
+	}
+	if n := len(strings.Split(c.ok("channel", "list", "tunes:yaesu-ftm150"), "\n")); n != 7 {
+		t.Errorf("tunes:yaesu-ftm150 = %d channels", n)
+	}
+	c.fails("no radio or radio model", "channel", "list", "tunes:nothing")
+
+	out, stderr, err := c.exec("radio", "channels", "add", "HT", "-q", "service:cb OR service:noaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out = strings.TrimSpace(out); out != "Added 7 channels to HT; skipped 40 outside its bands" {
+		t.Errorf("add = %q", out)
+	}
+	if !strings.Contains(stderr, `skipped "CB 19" (27.185000 MHz): HT can't receive it`) {
+		t.Errorf("stderr = %q", stderr)
+	}
+	cb19 := strings.Split(c.ok("channel", "list", "name:\"CB 19\""), "\t")[0]
+	if out := c.ok("radio", "channels", "add", "HT", "--id", cb19, "--any-band"); out != "Added 1 channels to HT" {
+		t.Errorf("--any-band = %q", out)
+	}
+
+	c.ok("radio", "add", "Base", "--model", "radioddity-uv5g")
+	c.ok("radio", "sources", "add", "Base", "service:cb OR service:noaa")
+	if out := c.ok("radio", "sync", "Base", "--dry-run"); strings.Count(out, "would skip") != 40 || strings.Count(out, "would add") != 7 {
+		t.Errorf("dry run = %q", out)
+	}
+	if out := c.ok("radio", "sync", "Base"); !strings.Contains(out, "added 7; skipped 40 outside its bands") {
+		t.Errorf("sync = %q", out)
+	}
+}
