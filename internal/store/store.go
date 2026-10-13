@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -11,6 +12,9 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 	_ "modernc.org/sqlite"
 )
+
+// ErrNotFound is returned (wrapped) when a group or channel lookup matches nothing.
+var ErrNotFound = errors.New("not found")
 
 type Store struct{ db *sql.DB }
 
@@ -22,15 +26,22 @@ type ChannelFilter struct {
 	RadiusKM  *float64
 }
 
+// execer is satisfied by both *sql.DB and *sql.Tx.
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+// Open opens a SQLite library. Pragmas are set in the DSN so every pooled
+// connection enforces foreign keys, not just the first one.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("configure SQLite busy timeout: %w", err)
+		return nil, fmt.Errorf("open database: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -38,14 +49,47 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Ready(ctx context.Context) error {
-	var version int
+	var version sql.NullInt64
 	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
-		return fmt.Errorf("library is not initialized; run rflib init --db <path>: %w", err)
+		return fmt.Errorf("library is not initialized; run rflib init: %w", err)
 	}
-	if version < 2 {
-		return fmt.Errorf("library is not initialized; run rflib init --db <path>")
+	if !version.Valid || version.Int64 < latestVersion() {
+		return fmt.Errorf("library schema is out of date; run rflib init to upgrade it")
 	}
 	return nil
+}
+
+type migration struct {
+	version int64
+	sql     string
+}
+
+// baselineVersion is the schema version that baselineSchema creates directly
+// on a fresh database.
+const baselineVersion = 2
+
+const baselineSchema = `
+CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', latitude REAL, longitude REAL, radius_km REAL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE channels (id TEXT PRIMARY KEY, group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, name TEXT NOT NULL, receive_hz INTEGER NOT NULL, transmit_hz INTEGER, mode TEXT NOT NULL, receive_tone_kind TEXT NOT NULL, receive_ctcss_millihz INTEGER, receive_dcs_code INTEGER, receive_dcs_inverted INTEGER NOT NULL DEFAULT 0, transmit_tone_kind TEXT NOT NULL, transmit_ctcss_millihz INTEGER, transmit_dcs_code INTEGER, transmit_dcs_inverted INTEGER NOT NULL DEFAULT 0, tone_squelch INTEGER NOT NULL DEFAULT 0, power TEXT NOT NULL DEFAULT '', bandwidth TEXT NOT NULL DEFAULT '', skip INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE channel_tags (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY(channel_id, tag));
+CREATE INDEX idx_channels_group ON channels(group_id);
+CREATE INDEX idx_channel_tags_tag ON channel_tags(tag);`
+
+// migrations upgrade existing databases. Append new steps in version order;
+// each runs in its own transaction together with its schema_migrations row.
+var migrations = []migration{
+	{2, `
+ALTER TABLE channels ADD COLUMN receive_ctcss_millihz INTEGER;
+ALTER TABLE channels ADD COLUMN transmit_ctcss_millihz INTEGER;
+UPDATE channels SET receive_ctcss_millihz = CAST(ROUND(receive_ctcss_hz * 1000) AS INTEGER), transmit_ctcss_millihz = CAST(ROUND(transmit_ctcss_hz * 1000) AS INTEGER);`},
+}
+
+func latestVersion() int64 {
+	v := int64(baselineVersion)
+	for _, m := range migrations {
+		v = max(v, m.version)
+	}
+	return v
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
@@ -57,29 +101,44 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	if !version.Valid {
-		_, err := s.db.ExecContext(ctx, `
-CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', latitude REAL, longitude REAL, radius_km REAL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE channels (id TEXT PRIMARY KEY, group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, name TEXT NOT NULL, receive_hz INTEGER NOT NULL, transmit_hz INTEGER, mode TEXT NOT NULL, receive_tone_kind TEXT NOT NULL, receive_ctcss_millihz INTEGER, receive_dcs_code INTEGER, receive_dcs_inverted INTEGER NOT NULL DEFAULT 0, transmit_tone_kind TEXT NOT NULL, transmit_ctcss_millihz INTEGER, transmit_dcs_code INTEGER, transmit_dcs_inverted INTEGER NOT NULL DEFAULT 0, tone_squelch INTEGER NOT NULL DEFAULT 0, power TEXT NOT NULL DEFAULT '', bandwidth TEXT NOT NULL DEFAULT '', skip INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE channel_tags (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY(channel_id, tag));
-CREATE INDEX idx_channels_group ON channels(group_id);
-CREATE INDEX idx_channel_tags_tag ON channel_tags(tag);
-INSERT INTO schema_migrations(version) VALUES (2);`)
-		if err != nil {
+		if err := s.inTx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, baselineSchema); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES (?)`, baselineVersion)
+			return err
+		}); err != nil {
 			return fmt.Errorf("create schema: %w", err)
 		}
-		return nil
+		version = sql.NullInt64{Int64: baselineVersion, Valid: true}
 	}
-	if version.Int64 == 1 {
-		_, err := s.db.ExecContext(ctx, `
-ALTER TABLE channels ADD COLUMN receive_ctcss_millihz INTEGER;
-ALTER TABLE channels ADD COLUMN transmit_ctcss_millihz INTEGER;
-UPDATE channels SET receive_ctcss_millihz = CAST(ROUND(receive_ctcss_hz * 1000) AS INTEGER), transmit_ctcss_millihz = CAST(ROUND(transmit_ctcss_hz * 1000) AS INTEGER);
-INSERT INTO schema_migrations(version) VALUES (2);`)
-		if err != nil {
-			return fmt.Errorf("migrate CTCSS frequencies to millihertz: %w", err)
+	for _, m := range migrations {
+		if m.version <= version.Int64 {
+			continue
+		}
+		if err := s.inTx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, m.sql); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES (?)`, m.version)
+			return err
+		}); err != nil {
+			return fmt.Errorf("migrate schema to version %d: %w", m.version, err)
 		}
 	}
 	return nil
+}
+
+func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CreateGroup(ctx context.Context, g domain.Group) (domain.Group, error) {
@@ -101,8 +160,13 @@ func (s *Store) CreateGroup(ctx context.Context, g domain.Group) (domain.Group, 
 	return g, nil
 }
 
-func (s *Store) GetGroup(ctx context.Context, id string) (domain.Group, error) {
-	return scanGroup(s.db.QueryRowContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups WHERE id=? OR name=?`, id, id))
+// GetGroup looks a group up by ID or by its unique name.
+func (s *Store) GetGroup(ctx context.Context, idOrName string) (domain.Group, error) {
+	g, err := scanGroup(s.db.QueryRowContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups WHERE id=? OR name=?`, idOrName, idOrName))
+	if errors.Is(err, sql.ErrNoRows) {
+		return g, fmt.Errorf("group %q: %w", idOrName, ErrNotFound)
+	}
+	return g, err
 }
 func (s *Store) ListGroups(ctx context.Context) ([]domain.Group, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups ORDER BY name`)
@@ -127,22 +191,23 @@ func (s *Store) UpdateGroup(ctx context.Context, g domain.Group) (domain.Group, 
 	g.UpdatedAt = time.Now().UTC()
 	r, err := s.db.ExecContext(ctx, `UPDATE groups SET name=?,description=?,latitude=?,longitude=?,radius_km=?,notes=?,updated_at=? WHERE id=?`, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, g.Notes, g.UpdatedAt.Format(time.RFC3339Nano), g.ID)
 	if err != nil {
-		return g, err
+		return g, fmt.Errorf("update group: %w", err)
 	}
-	n, _ := r.RowsAffected()
-	if n == 0 {
-		return g, sql.ErrNoRows
+	if n, _ := r.RowsAffected(); n == 0 {
+		return g, fmt.Errorf("group %q: %w", g.ID, ErrNotFound)
 	}
 	return g, nil
 }
-func (s *Store) DeleteGroup(ctx context.Context, id string) error {
-	r, err := s.db.ExecContext(ctx, `DELETE FROM groups WHERE id=?`, id)
+
+// DeleteGroup deletes a group by ID or name. Its channels are kept and
+// become ungrouped.
+func (s *Store) DeleteGroup(ctx context.Context, idOrName string) error {
+	r, err := s.db.ExecContext(ctx, `DELETE FROM groups WHERE id=? OR name=?`, idOrName, idOrName)
 	if err != nil {
-		return err
+		return fmt.Errorf("delete group: %w", err)
 	}
-	n, _ := r.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
+	if n, _ := r.RowsAffected(); n == 0 {
+		return fmt.Errorf("group %q: %w", idOrName, ErrNotFound)
 	}
 	return nil
 }
@@ -161,10 +226,16 @@ func (s *Store) CreateChannel(ctx context.Context, c domain.Channel) (domain.Cha
 	now := time.Now().UTC()
 	c.CreatedAt = now
 	c.UpdatedAt = now
-	if err = s.writeChannel(ctx, `INSERT INTO channels (id,group_id,name,receive_hz,transmit_hz,mode,receive_tone_kind,receive_ctcss_millihz,receive_dcs_code,receive_dcs_inverted,transmit_tone_kind,transmit_ctcss_millihz,transmit_dcs_code,transmit_dcs_inverted,tone_squelch,power,bandwidth,skip,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c); err != nil {
-		return c, err
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := writeChannel(ctx, tx, `INSERT INTO channels (id,group_id,name,receive_hz,transmit_hz,mode,receive_tone_kind,receive_ctcss_millihz,receive_dcs_code,receive_dcs_inverted,transmit_tone_kind,transmit_ctcss_millihz,transmit_dcs_code,transmit_dcs_inverted,tone_squelch,power,bandwidth,skip,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c); err != nil {
+			return err
+		}
+		return replaceTags(ctx, tx, c.ID, c.Tags)
+	})
+	if err != nil {
+		return c, fmt.Errorf("create channel: %w", err)
 	}
-	return c, s.replaceTags(ctx, c.ID, c.Tags)
+	return c, nil
 }
 func (s *Store) UpdateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error) {
 	c.Mode = strings.ToUpper(strings.TrimSpace(c.Mode))
@@ -173,26 +244,35 @@ func (s *Store) UpdateChannel(ctx context.Context, c domain.Channel) (domain.Cha
 	}
 	c.Tags = domain.NormalizeTags(c.Tags)
 	c.UpdatedAt = time.Now().UTC()
-	err := s.writeChannel(ctx, `UPDATE channels SET group_id=?,name=?,receive_hz=?,transmit_hz=?,mode=?,receive_tone_kind=?,receive_ctcss_millihz=?,receive_dcs_code=?,receive_dcs_inverted=?,transmit_tone_kind=?,transmit_ctcss_millihz=?,transmit_dcs_code=?,transmit_dcs_inverted=?,tone_squelch=?,power=?,bandwidth=?,skip=?,notes=?,updated_at=? WHERE id=?`, c)
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := writeChannel(ctx, tx, `UPDATE channels SET group_id=?,name=?,receive_hz=?,transmit_hz=?,mode=?,receive_tone_kind=?,receive_ctcss_millihz=?,receive_dcs_code=?,receive_dcs_inverted=?,transmit_tone_kind=?,transmit_ctcss_millihz=?,transmit_dcs_code=?,transmit_dcs_inverted=?,tone_squelch=?,power=?,bandwidth=?,skip=?,notes=?,updated_at=? WHERE id=?`, c); err != nil {
+			return err
+		}
+		return replaceTags(ctx, tx, c.ID, c.Tags)
+	})
 	if err != nil {
-		return c, err
-	}
-	if err = s.replaceTags(ctx, c.ID, c.Tags); err != nil {
-		return c, err
+		return c, fmt.Errorf("update channel: %w", err)
 	}
 	return c, nil
 }
-func (s *Store) writeChannel(ctx context.Context, q string, c domain.Channel) error {
+func writeChannel(ctx context.Context, ex execer, q string, c domain.Channel) error {
 	rt, tt := toneArgs(c.ReceiveTone), toneArgs(c.TransmitTone)
 	args := []any{c.GroupID, c.Name, c.ReceiveHz, c.TransmitHz, c.Mode, rt.kind, rt.ctcss, rt.dcs, rt.inv, tt.kind, tt.ctcss, tt.dcs, tt.inv, c.ToneSquelch, c.Power, c.Bandwidth, c.Skip, c.Notes}
-	if strings.HasPrefix(q, "INSERT") {
+	insert := strings.HasPrefix(q, "INSERT")
+	if insert {
 		args = append([]any{c.ID}, args...)
 		args = append(args, c.CreatedAt.Format(time.RFC3339Nano), c.UpdatedAt.Format(time.RFC3339Nano))
 	} else {
 		args = append(args, c.UpdatedAt.Format(time.RFC3339Nano), c.ID)
 	}
-	_, err := s.db.ExecContext(ctx, q, args...)
-	return err
+	r, err := ex.ExecContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := r.RowsAffected(); !insert && n == 0 {
+		return fmt.Errorf("channel %q: %w", c.ID, ErrNotFound)
+	}
+	return nil
 }
 
 type toneArg struct {
@@ -212,41 +292,43 @@ func toneArgs(t domain.Tone) toneArg {
 	}
 	return a
 }
-func (s *Store) replaceTags(ctx context.Context, id string, tags []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
+func replaceTags(ctx context.Context, ex execer, id string, tags []string) error {
+	if _, err := ex.ExecContext(ctx, `DELETE FROM channel_tags WHERE channel_id=?`, id); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM channel_tags WHERE channel_id=?`, id); err == nil {
-		for _, tag := range tags {
-			_, err = tx.ExecContext(ctx, `INSERT INTO channel_tags(channel_id,tag) VALUES(?,?)`, id, tag)
-			if err != nil {
-				break
-			}
+	for _, tag := range tags {
+		if _, err := ex.ExecContext(ctx, `INSERT INTO channel_tags(channel_id,tag) VALUES(?,?)`, id, tag); err != nil {
+			return err
 		}
 	}
-	if err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
+	return nil
 }
 func (s *Store) DeleteChannel(ctx context.Context, id string) error {
 	r, err := s.db.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("delete channel: %w", err)
 	}
-	n, _ := r.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
+	if n, _ := r.RowsAffected(); n == 0 {
+		return fmt.Errorf("channel %q: %w", id, ErrNotFound)
 	}
 	return nil
 }
 
 func (s *Store) GetChannel(ctx context.Context, id string) (domain.Channel, error) {
-	return s.listChannels(ctx, ` WHERE c.id=?`, []any{id})
+	chs, err := s.listChannels(ctx, ` WHERE c.id=?`, []any{id})
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if len(chs) == 0 {
+		return domain.Channel{}, fmt.Errorf("channel %q: %w", id, ErrNotFound)
+	}
+	return chs[0], nil
 }
 func (s *Store) ListChannels(ctx context.Context, f ChannelFilter) ([]domain.Channel, error) {
+	geo := f.Latitude != nil || f.Longitude != nil || f.RadiusKM != nil
+	if geo && (f.Latitude == nil || f.Longitude == nil || f.RadiusKM == nil) {
+		return nil, fmt.Errorf("latitude, longitude, and radius must be supplied together")
+	}
 	q := ` WHERE 1=1`
 	args := []any{}
 	if f.GroupID != "" {
@@ -255,82 +337,41 @@ func (s *Store) ListChannels(ctx context.Context, f ChannelFilter) ([]domain.Cha
 	}
 	if f.Tag != "" {
 		q += ` AND EXISTS (SELECT 1 FROM channel_tags ft WHERE ft.channel_id=c.id AND ft.tag=?)`
-		args = append(args, strings.ToLower(f.Tag))
+		args = append(args, strings.ToLower(strings.TrimSpace(f.Tag)))
 	}
-	chs, err := s.listChannelsMany(ctx, q, args)
-	if err != nil {
-		return nil, err
+	chs, err := s.listChannels(ctx, q, args)
+	if err != nil || !geo {
+		return chs, err
 	}
-	if f.Latitude != nil || f.Longitude != nil || f.RadiusKM != nil {
-		if f.Latitude == nil || f.Longitude == nil || f.RadiusKM == nil {
-			return nil, fmt.Errorf("latitude, longitude, and radius must be supplied together")
+	out := chs[:0]
+	for _, c := range chs {
+		if c.Group != nil && c.Group.Latitude != nil && distanceKM(*f.Latitude, *f.Longitude, *c.Group.Latitude, *c.Group.Longitude) <= *f.RadiusKM {
+			out = append(out, c)
 		}
-		out := chs[:0]
-		for _, c := range chs {
-			if c.Group != nil && c.Group.Latitude != nil && distanceKM(*f.Latitude, *f.Longitude, *c.Group.Latitude, *c.Group.Longitude) <= *f.RadiusKM {
-				out = append(out, c)
-			}
-		}
-		chs = out
 	}
-	return chs, nil
+	return out, nil
 }
-func (s *Store) listChannels(ctx context.Context, where string, args []any) (domain.Channel, error) {
-	chs, err := s.listChannelsMany(ctx, where, args)
-	if err != nil {
-		return domain.Channel{}, err
-	}
-	if len(chs) == 0 {
-		return domain.Channel{}, sql.ErrNoRows
-	}
-	return chs[0], nil
-}
-func (s *Store) listChannelsMany(ctx context.Context, where string, args []any) ([]domain.Channel, error) {
-	q := `SELECT c.id,c.group_id,c.name,c.receive_hz,c.transmit_hz,c.mode,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.created_at,c.updated_at,g.id,g.name,g.description,g.latitude,g.longitude,g.radius_km,g.notes,g.created_at,g.updated_at FROM channels c LEFT JOIN groups g ON c.group_id=g.id` + where + ` ORDER BY c.name,c.receive_hz`
+
+// tagSeparator joins a channel's tags in the list query. The ASCII unit
+// separator cannot appear in a normalized tag typed or imported as text.
+const tagSeparator = "\x1f"
+
+func (s *Store) listChannels(ctx context.Context, where string, args []any) ([]domain.Channel, error) {
+	q := `SELECT c.id,c.group_id,c.name,c.receive_hz,c.transmit_hz,c.mode,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.created_at,c.updated_at,g.id,g.name,g.description,g.latitude,g.longitude,g.radius_km,g.notes,g.created_at,g.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id) FROM channels c LEFT JOIN groups g ON c.group_id=g.id` + where + ` ORDER BY c.name,c.receive_hz`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list channels: %w", err)
 	}
+	defer rows.Close()
 	var out []domain.Channel
 	for rows.Next() {
 		c, err := scanChannel(rows)
 		if err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		out = append(out, c)
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	for i := range out {
-		tags, err := s.tags(ctx, out[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		out[i].Tags = tags
-	}
-	return out, nil
-}
-func (s *Store) tags(ctx context.Context, id string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT tag FROM channel_tags WHERE channel_id=? ORDER BY tag`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var tags []string
-	for rows.Next() {
-		var tag string
-		if err := rows.Scan(&tag); err != nil {
-			return nil, err
-		}
-		tags = append(tags, tag)
-	}
-	return tags, rows.Err()
+	return out, rows.Err()
 }
 
 type scanner interface{ Scan(...any) error }
@@ -354,9 +395,9 @@ func scanChannel(r scanner) (domain.Channel, error) {
 	var created, updated string
 	var gid sql.NullString
 	var g domain.Group
-	var groupID, gn, gd, gnote, gc, gu sql.NullString
+	var groupID, gn, gd, gnote, gc, gu, tags sql.NullString
 	var glat, glon, grad sql.NullFloat64
-	err := r.Scan(&c.ID, &gid, &c.Name, &c.ReceiveHz, &c.TransmitHz, &c.Mode, &c.ReceiveTone.Kind, &rtCT, &rtD, &rtInv, &c.TransmitTone.Kind, &ttCT, &ttD, &ttInv, &ts, &c.Power, &c.Bandwidth, &skip, &c.Notes, &created, &updated, &groupID, &gn, &gd, &glat, &glon, &grad, &gnote, &gc, &gu)
+	err := r.Scan(&c.ID, &gid, &c.Name, &c.ReceiveHz, &c.TransmitHz, &c.Mode, &c.ReceiveTone.Kind, &rtCT, &rtD, &rtInv, &c.TransmitTone.Kind, &ttCT, &ttD, &ttInv, &ts, &c.Power, &c.Bandwidth, &skip, &c.Notes, &created, &updated, &groupID, &gn, &gd, &glat, &glon, &grad, &gnote, &gc, &gu, &tags)
 	if err != nil {
 		return c, err
 	}
@@ -383,6 +424,9 @@ func scanChannel(r scanner) (domain.Channel, error) {
 	c.Skip = skip
 	c.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	c.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	if tags.Valid && tags.String != "" {
+		c.Tags = strings.Split(tags.String, tagSeparator)
+	}
 	if groupID.Valid {
 		g.ID = groupID.String
 		g.Name = gn.String

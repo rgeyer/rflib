@@ -1,0 +1,11 @@
+version: "2"
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*github.com/ryan/rflib/internal/store.Store).Close
