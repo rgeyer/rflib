@@ -67,16 +67,35 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--gro
 
 `list` and `show` commands accept `--format json` for scripting.
 
-## Generic CSV export
+## Export
 
-The initial exporter is deliberately vendor-neutral. It outputs stable headers for the library's normalized data, including receive/transmit frequencies, tones, tags, notes, and group coordinates.
+Exports write to stdout unless `--output PATH` is given, and accept the same filters as `channel list`.
 
 ```sh
 ./rflib export csv --output channels.csv --tag ham
-./rflib export csv --group "Portland Metro" > metro.csv   # stdout when --output is omitted
+./rflib export csv --group "Portland Metro" > metro.csv
+./rflib export json --output backup.json
 ```
 
-This is not yet a CHIRP or Yaesu import file. Those formats will be separate tested export profiles so their field and tone mappings are explicit.
+- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, and group coordinates. It is not yet a CHIRP or Yaesu import file. Those formats will be separate tested export profiles so their field and tone mappings are explicit.
+- **`export json`** is a full-fidelity backup, including IDs, timestamps, and group details that the CSV leaves out. Without filters it includes every group, even empty ones. With filters it includes only the groups the exported channels use.
+
+## Import
+
+```sh
+./rflib import csv channels.csv --dry-run
+./rflib import csv channels.csv --tags imported
+./rflib import json backup.json
+./rflib export csv --tag ham | ./rflib --db other.db import csv
+```
+
+`import csv` reads the generic CSV format. Columns are matched by header name, so they can be in any order and extra columns are ignored. Only `name` and `receive_mhz` are required, which makes hand-built spreadsheets easy to load. `import json` restores a backup exactly.
+
+- **All or nothing:** any invalid row is reported with its line number and nothing is imported. Use `--skip-invalid` to import the valid rows anyway. A failure partway through also writes nothing.
+- **`--dry-run`** runs the whole import and then discards it, so its summary is exactly what a real import would do.
+- **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive frequency, and group. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. Re-running an import is therefore safe.
+- **Groups:** channels are attached to groups by ID, then by name. Groups that don't exist yet are created and listed in the summary. `--group NAME` puts every imported channel in an existing group instead.
+- **`--tags`** adds tags to every imported channel.
 
 ## Development
 
