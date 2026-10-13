@@ -48,7 +48,7 @@ func seed(t *testing.T, s *store.Store) {
 	tx := int64(146340000)
 	simplex := int64(146520000)
 	for _, c := range []domain.Channel{
-		{Name: "Repeater, Main", GroupID: &metro.ID, ReceiveHz: 146940000, TransmitHz: &tx, Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: tone("ctcss:69.3"), TransmitTone: tone("ctcss:69.3"), ToneSquelch: true, Power: "25W", Bandwidth: "25kHz", Tags: []string{"ham", "repeater"}, ShortNames: []string{"Rpt Main", "RptM"}, Notes: "quoted \"note\""},
+		{Name: "Repeater, Main", GroupID: &metro.ID, ReceiveHz: 146940000, TransmitHz: &tx, Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: tone("ctcss:69.3"), TransmitTone: tone("ctcss:69.3"), ToneSquelch: true, Power: domain.PowerHigh, Bandwidth: "25kHz", Tags: []string{"ham", "repeater"}, ShortNames: []string{"Rpt Main", "RptM"}, Notes: "quoted \"note\""},
 		{Name: "Calling", ReceiveHz: 146520000, TransmitHz: &simplex, Mode: "NFM", ReceiveTone: tone("none"), TransmitTone: tone("dcs:023:inverted"), Skip: true},
 		{Name: "Air", ReceiveHz: 121500000, Mode: "AM", Service: domain.ServiceOther, RXOnly: true, ReceiveTone: tone("dcs:754"), TransmitTone: tone("none")},
 	} {
@@ -142,7 +142,7 @@ func TestDuplicatePolicies(t *testing.T) {
 	seed(t, s)
 	data := exportCSV(t, s)
 	parse := func() Batch {
-		b, err := ParseGenericCSV(strings.NewReader(strings.ReplaceAll(data, "25W", "50W")))
+		b, err := ParseGenericCSV(strings.NewReader(strings.ReplaceAll(data, ",high,", ",low,")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,7 +155,7 @@ func TestDuplicatePolicies(t *testing.T) {
 	if sum := mustApply(t, s, parse(), Options{OnDuplicate: UpdateDuplicates}); sum.Updated != 3 {
 		t.Fatalf("update: %+v", sum)
 	}
-	if !strings.Contains(exportCSV(t, s), "50W") {
+	if !strings.Contains(exportCSV(t, s), ",low,") {
 		t.Fatal("update did not change power")
 	}
 	if sum := mustApply(t, s, parse(), Options{OnDuplicate: CreateDuplicates}); sum.Created != 3 {

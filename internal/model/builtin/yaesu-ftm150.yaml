@@ -1,0 +1,11 @@
+name: yaesu-ftm150
+description: Yaesu FTM-150 (programmed with ADMS-17)
+format: profile:yaesu-ftm150
+memories: {first: 1, last: 999}
+names: {max_length: 16}
+power:
+  - {label: LOW, watts: 5, intent: low}
+  - {label: MID, watts: 25, intent: medium}
+  - {label: HIGH, watts: 50, intent: high}
+notes: HIGH is 55 W on 2 m and 50 W on 70 cm; 50 W is recorded so service caps are never under-estimated.
+source: Yaesu FTM-150R/E operating manual (EH086M201), TX power specification

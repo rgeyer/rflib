@@ -59,10 +59,10 @@ func TestChannelUpdateOnlyChangesSuppliedFlags(t *testing.T) {
 	id := c.ok("channel", "add", "--name", "Repeater", "--rx", "146.940", "--tx", "146.340", "--mode", "NFM",
 		"--rx-tone", "ctcss:100.0", "--tx-tone", "ctcss:100.0", "--tone-squelch", "--skip", "--tags", "ham,repeater")
 
-	c.ok("channel", "update", "--id", id, "--power", "25W")
+	c.ok("channel", "update", "--id", id, "--power", "high")
 
 	ch := c.channel(id)
-	if ch.Power != "25W" {
+	if ch.Power != "high" {
 		t.Errorf("power = %q", ch.Power)
 	}
 	if ch.Mode != "NFM" || ch.RXTone != "ctcss:100.000" || ch.TXTone != "ctcss:100.000" || !ch.ToneSquelch || !ch.Skip {
@@ -322,7 +322,7 @@ func TestImportCHIRP(t *testing.T) {
 	}
 	id := strings.Fields(c.ok("channel", "list", "--tag", "chirp"))[0]
 	ch := c.channel(id)
-	if *ch.TransmitMHz != "146.340000" || ch.RXTone != "ctcss:100.000" || !ch.ToneSquelch || ch.Power != "50W" {
+	if *ch.TransmitMHz != "146.340000" || ch.RXTone != "ctcss:100.000" || !ch.ToneSquelch || ch.Power != "" { // CHIRP watts describe the source radio
 		t.Fatalf("channel = %+v", ch)
 	}
 }
@@ -468,4 +468,118 @@ func TestNamesAndShortNames(t *testing.T) {
 	}
 	c.fails("unknown dedupe", "names", "--dedupe", "suffix")
 	c.fails("--charset", "names", "--charset", "Z-A")
+}
+
+func TestRadioWorkflow(t *testing.T) {
+	c := newCLI(t)
+	c.ok("seed", "install", "us-gmrs", "us-noaa")
+	ids := map[string]string{}
+	for _, line := range strings.Split(c.ok("channel", "list"), "\n") {
+		f := strings.Split(line, "\t")
+		ids[f[1]] = f[0]
+	}
+	if out := c.ok("model", "list"); !strings.Contains(out, "radioddity-uv5g\t") || !strings.Contains(out, "CHIRP: Radioddity UV-5G") {
+		t.Fatalf("model list = %q", out)
+	}
+	c.fails("unknown radio model", "radio", "add", "HT", "--model", "uv-5r")
+	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g", "--default-power", "high", "--sync-service", "noaa")
+
+	if out := c.ok("radio", "channels", "add", "HT", "--tag", "repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
+		t.Fatalf("add by filter = %q", out)
+	}
+	c.ok("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]+","+ids["GMRS 8"])
+	if out := c.ok("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]); out != "Added 0 channels to HT" {
+		t.Fatalf("re-adding = %q", out)
+	}
+
+	// Move GMRS 1 to the top, and start GMRS 8 a section at memory 20.
+	c.ok("radio", "channels", "move", "HT", "--id", ids["GMRS 1"], "--top")
+	c.ok("radio", "channels", "set", "HT", "--id", ids["GMRS 8"], "--section-start", "20", "--scan", "no", "--name", "Kids")
+	c.fails("already reach memory", "radio", "channels", "set", "HT", "--id", ids["GMRS 15R"], "--section-start", "0")
+	c.ok("radio", "channels", "set", "HT", "--id", ids["GMRS 15R"], "--section-start", "")
+
+	out, stderr, err := c.exec("radio", "channels", "list", "HT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 10 {
+		t.Fatalf("listing:\n%s", out)
+	}
+	for _, want := range []string{
+		"0\tGMRS 1\tfits\tHigh\tscan\t462.562500\tGMRS 1\t",  // capped at 5 W: High (4 W) is fine
+		"1\tGMRS15R\tshortened\tHigh\tscan\t462.550000",       // 7 characters
+		"§20\tKIDS*\tfits\tLow\tskip*\t467.562500\tGMRS 8\t", // 0.5 W cap: lowest level, warned
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("listing missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(stderr, "lowest level, Low, is above the gmrs limit of 0.5 W") {
+		t.Errorf("stderr = %q", stderr)
+	}
+
+	if got := c.ok("radio", "sync", "HT", "--dry-run"); strings.Count(got, "would add") != 7 {
+		t.Fatalf("sync dry run = %q", got)
+	}
+	if got := c.ok("radio", "sync", "HT"); got != "Added 7 channels to HT" {
+		t.Fatalf("sync = %q", got)
+	}
+	if got := c.ok("radio", "sync", "HT"); got != "Added 0 channels to HT" {
+		t.Fatalf("second sync = %q", got)
+	}
+
+	csv, _, err := c.exec("radio", "export", "HT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"\r\n0,GMRS 1,462.562500,,", ",4W,", "\r\n20,KIDS,467.562500,", ",1W,", ",S,"} {
+		if !strings.Contains(csv, want) {
+			t.Errorf("CHIRP export missing %q:\n%s", want, csv)
+		}
+	}
+	if !strings.Contains(c.ok("radio", "list"), "HT\tradioddity-uv5g\t17 channels") {
+		t.Errorf("radio list = %q", c.ok("radio", "list"))
+	}
+
+	// Deleting a channel takes it off the radio.
+	c.ok("channel", "delete", "--id", ids["GMRS 1"], "--yes")
+	if strings.Contains(c.ok("radio", "channels", "list", "HT"), "\tGMRS 1\t") {
+		t.Error("deleted channel still on the radio")
+	}
+	c.fails("requires --yes", "radio", "delete", "HT")
+	c.ok("radio", "delete", "HT", "--yes")
+	c.fails("not found", "radio", "show", "HT")
+}
+
+func TestRadioMoveBeforeAfter(t *testing.T) {
+	c := newCLI(t)
+	var ids []string
+	for _, n := range []string{"A", "B", "C", "D"} {
+		ids = append(ids, c.ok("channel", "add", "--name", n, "--rx", "146.52"))
+	}
+	c.ok("radio", "add", "Truck", "--model", "yaesu-ftm150")
+	c.ok("radio", "channels", "add", "Truck", "--id", strings.Join(ids, ","))
+	order := func() string {
+		var names []string
+		for _, l := range strings.Split(c.ok("radio", "channels", "list", "Truck", "--format", "json"), "\"channel_name\": \"")[1:] {
+			names = append(names, l[:1])
+		}
+		return strings.Join(names, "")
+	}
+	for _, step := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--id", ids[3], "--before", ids[1]}, "ADBC"},
+		{[]string{"--id", ids[0], "--after", ids[2]}, "DBCA"},
+		{[]string{"--id", ids[1], "--to", "4"}, "DCAB"},
+		{[]string{"--id", ids[3], "--bottom"}, "CABD"},
+	} {
+		c.ok(append([]string{"radio", "channels", "move", "Truck"}, step.args...)...)
+		if got := order(); got != step.want {
+			t.Fatalf("after %v: %s, want %s", step.args, got, step.want)
+		}
+	}
+	c.fails("not on Truck", "radio", "channels", "move", "Truck", "--id", "nope", "--top")
 }

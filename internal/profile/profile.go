@@ -94,7 +94,7 @@ var Sources = map[string]string{
 	"rx_dcs_code": "receive (squelch) DCS code",
 	"dcs_polarity": "transmit then receive DCS polarity: NN, NR, RN, or RR. Without this column, " +
 		"inverted DCS can't be exported",
-	"power":    "power label, upper-cased",
+	"power":    "the radio's power level label when exporting a radio, else the channel's power intent (LOW, MEDIUM, HIGH, MAX); upper-cased",
 	"skip":     "true when the channel is skipped while scanning",
 	"notes":    "notes on one line",
 	"service":  "radio service",

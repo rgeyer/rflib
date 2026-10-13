@@ -17,6 +17,7 @@ type groupOut struct {
 	Latitude    *float64 `json:"latitude,omitempty"`
 	Longitude   *float64 `json:"longitude,omitempty"`
 	RadiusKM    *float64 `json:"radius_km,omitempty"`
+	Power       string   `json:"power"`
 	Notes       string   `json:"notes"`
 }
 
@@ -43,7 +44,7 @@ type channelOut struct {
 }
 
 func newGroupOut(g domain.Group) groupOut {
-	return groupOut{ID: g.ID, Name: g.Name, Description: g.Description, Latitude: g.Latitude, Longitude: g.Longitude, RadiusKM: g.RadiusKM, Notes: g.Notes}
+	return groupOut{ID: g.ID, Name: g.Name, Description: g.Description, Latitude: g.Latitude, Longitude: g.Longitude, RadiusKM: g.RadiusKM, Power: string(g.Power), Notes: g.Notes}
 }
 
 func newChannelOut(c domain.Channel) channelOut {
@@ -59,7 +60,7 @@ func newChannelOut(c domain.Channel) channelOut {
 		RXTone:      domain.FormatTone(c.ReceiveTone),
 		TXTone:      domain.FormatTone(c.TransmitTone),
 		ToneSquelch: c.ToneSquelch,
-		Power:       c.Power,
+		Power:       string(c.Power),
 		Bandwidth:   c.Bandwidth,
 		Skip:        c.Skip,
 		Tags:        c.Tags,
@@ -114,7 +115,7 @@ func writeGroup(out io.Writer, g domain.Group, format string) error {
 	if format == "json" {
 		return writeJSON(out, newGroupOut(g))
 	}
-	fmt.Fprintf(out, "%s\nname: %s\ncoordinates: %s\nradius: %s\ndescription: %s\nnotes: %s\n", g.ID, g.Name, formatCoordinates(g), optionalKM(g.RadiusKM), g.Description, g.Notes)
+	fmt.Fprintf(out, "%s\nname: %s\ncoordinates: %s\nradius: %s\npower: %s\ndescription: %s\nnotes: %s\n", g.ID, g.Name, formatCoordinates(g), optionalKM(g.RadiusKM), powerName(g.Power), g.Description, g.Notes)
 	return nil
 }
 
@@ -138,7 +139,7 @@ func writeChannel(out io.Writer, c domain.Channel, format string) error {
 	}
 	fmt.Fprintf(out, "%s\nname: %s\nshort names: %s\ngroup: %s\nservice: %s\nrx: %s MHz\ntx: %s\nmode: %s\nreceive tone: %s\ntransmit tone: %s\ntone squelch: %t\npower: %s\nbandwidth: %s\nskip: %t\ntags: %s\nnotes: %s\n",
 		c.ID, c.Name, strings.Join(c.ShortNames, ", "), groupName(c), serviceName(c.Service), domain.FormatFrequencyMHz(c.ReceiveHz), txText(c), c.Mode,
-		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, c.Power, c.Bandwidth, c.Skip,
+		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, powerName(c.Power), c.Bandwidth, c.Skip,
 		strings.Join(c.Tags, ","), c.Notes)
 	return nil
 }
@@ -148,6 +149,13 @@ func optionalFloat(v *float64) string {
 		return ""
 	}
 	return strconv.FormatFloat(*v, 'f', 6, 64)
+}
+
+func powerName(p domain.PowerIntent) string {
+	if p == domain.PowerUnset {
+		return "unset"
+	}
+	return string(p)
 }
 
 func optionalKM(v *float64) string {

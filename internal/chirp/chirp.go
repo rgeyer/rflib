@@ -77,7 +77,7 @@ func FromChannel(c domain.Channel, location, maxNameLen int) (Memory, error) {
 		Location: location, Name: truncate(c.Name, maxNameLen), FrequencyHz: c.ReceiveHz,
 		RToneMilliHz: defaultCTCSS, CToneMilliHz: defaultCTCSS, DTCS: defaultDCS, RxDTCS: defaultDCS,
 		DTCSPolarity: defaultPolarity, CrossMode: defaultCrossMode, Mode: c.Mode, TStep: defaultTStep,
-		Power: c.Power, Comment: strings.Join(strings.Fields(c.Notes), " "),
+		Power: chirpPower(c.ProgrammedPower), Comment: strings.Join(strings.Fields(c.Notes), " "),
 	}
 	if !slices.Contains(Modes, c.Mode) {
 		return m, fmt.Errorf("mode %s is not supported by CHIRP export", c.Mode)
@@ -99,6 +99,16 @@ func FromChannel(c domain.Channel, location, maxNameLen int) (Memory, error) {
 	}
 	setTones(&m, txTone, rxTone)
 	return m, nil
+}
+
+// chirpPower writes a radio power level as CHIRP's CSV import reads it:
+// watts. A level without known watts, or no level at all, is left blank and
+// CHIRP picks its default.
+func chirpPower(p *domain.PowerLevel) string {
+	if p == nil || p.Watts == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*p.Watts, 'f', -1, 64) + "W"
 }
 
 func duplex(rx int64, tx *int64) (string, int64) {
@@ -171,7 +181,7 @@ func polarity(t domain.Tone) string {
 // ToChannel converts a CHIRP memory to a channel. A memory without a name is
 // named after its frequency, since the library requires names.
 func ToChannel(m Memory) (domain.Channel, error) {
-	c := domain.Channel{Name: m.Name, ReceiveHz: m.FrequencyHz, Mode: m.Mode, Power: m.Power, Notes: m.Comment, Skip: m.Skip == "S" || m.Skip == "P"}
+	c := domain.Channel{Name: m.Name, ReceiveHz: m.FrequencyHz, Mode: m.Mode, Power: domain.PowerFromText(m.Power), Notes: m.Comment, Skip: m.Skip == "S" || m.Skip == "P"}
 	if strings.TrimSpace(c.Name) == "" {
 		c.Name = domain.FormatFrequencyMHz(m.FrequencyHz)
 	}

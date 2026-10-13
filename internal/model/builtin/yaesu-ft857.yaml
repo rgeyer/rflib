@@ -1,0 +1,10 @@
+name: yaesu-ft857
+description: Yaesu FT-857D HF/VHF/UHF all-mode
+format: chirp
+chirp_model: Yaesu FT-857/897 (US)
+memories: {first: 1, last: 200}
+names: {max_length: 8, charset: alnum, extra: "!\"#$%&'()*+,-./:;<=>?@[]^_`~"}
+power: []
+bands_mhz: [[0.1, 33], [33, 56], [76, 108], [108, 137], [137, 164], [420, 470]]
+notes: Transmit power is set from the radio's menu, not per memory, so exports leave power blank.
+source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/ft857.py and ft817.py

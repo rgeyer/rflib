@@ -1,0 +1,12 @@
+name: explorer-qrz1
+description: Explorer QRZ-1
+format: chirp
+chirp_model: Explorer QRZ-1
+memories: {first: 1, last: 200}
+names: {max_length: 10, charset: alnum, extra: "`!\"#$%&'()*+,-./:;<=>?@[]^_"}
+power:
+  - {label: Low, watts: 0.5, intent: low}
+  - {label: Mid, watts: 2.5, intent: medium}
+  - {label: High, watts: 5, intent: high}
+bands_mhz: [[136, 174], [400, 480]]
+source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/th_uv88.py (QRZ1)

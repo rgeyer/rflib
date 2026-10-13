@@ -4,8 +4,9 @@ notes: |
   Every memory is written, as ADMS-13 exports them: channels first, then
   empty memories up to 999. Names are cut to 6 characters.
 
-  Power labels HIGH, MID, and LOW pass through; any other label (such as
-  "50W") becomes HIGH.
+  Power: exporting a radio writes the model's level (HIGH, MID, LOW).
+  Exporting channels directly maps their power intent (low, medium, high,
+  max); channels without one get HIGH.
 
   Receive-only channels are written as simplex: the FTM-6000 has no
   per-memory transmit inhibit, and it only transmits on 2 m and 70 cm.
@@ -40,7 +41,7 @@ columns:
   - {name: User CTCSS, source: const, value: 1500 Hz}
   - name: Tx Power
     source: power
-    map: {HIGH: HIGH, MID: MID, LOW: LOW, "*": HIGH}
+    map: {HIGH: HIGH, MID: MID, LOW: LOW, MEDIUM: MID, MAX: HIGH, "*": HIGH}
   - name: Scan
     source: skip
     map: {"true": "NO", "false": "YES"}

@@ -101,7 +101,7 @@ func TestFromChannelRejectsWhatCHIRPCannotProgram(t *testing.T) {
 }
 
 func TestFromChannelFormatting(t *testing.T) {
-	c := domain.Channel{Name: "Portland Metro Repeater", ReceiveHz: 146940000, TransmitHz: hz("146.34"), Mode: "NFM", ReceiveTone: tone(t, "none"), TransmitTone: tone(t, "none"), Skip: true, Power: "5W", Notes: "line one\nline two"}
+	c := domain.Channel{Name: "Portland Metro Repeater", ReceiveHz: 146940000, TransmitHz: hz("146.34"), Mode: "NFM", ReceiveTone: tone(t, "none"), TransmitTone: tone(t, "none"), Skip: true, ProgrammedPower: &domain.PowerLevel{Label: "High", Watts: &[]float64{5}[0]}, Notes: "line one\nline two"}
 	m, err := FromChannel(c, 7, 8)
 	if err != nil {
 		t.Fatal(err)
@@ -144,5 +144,21 @@ func TestFromChannelRXOnlyKeepsTXOffTheAir(t *testing.T) {
 	}
 	if m.Duplex != "off" || m.ToneMode != "TSQL" {
 		t.Fatalf("duplex = %q, tone = %q", m.Duplex, m.ToneMode)
+	}
+}
+
+func TestChirpPowerIsWatts(t *testing.T) {
+	half := 0.5
+	for _, tc := range []struct {
+		p    *domain.PowerLevel
+		want string
+	}{
+		{nil, ""},
+		{&domain.PowerLevel{Label: "High"}, ""}, // watts unknown: CHIRP's default
+		{&domain.PowerLevel{Label: "Low", Watts: &half}, "0.5W"},
+	} {
+		if got := chirpPower(tc.p); got != tc.want {
+			t.Errorf("chirpPower(%+v) = %q, want %q", tc.p, got, tc.want)
+		}
 	}
 }

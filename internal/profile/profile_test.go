@@ -88,7 +88,7 @@ func TestParseFTM150Sample(t *testing.T) {
 	check("Metro tx", "146.340000", domain.FormatFrequencyMHz(*metro.TransmitHz))
 	check("Metro tone", "ctcss:127.300", domain.FormatTone(metro.TransmitTone))
 	check("Metro squelch", "none", domain.FormatTone(metro.ReceiveTone))
-	check("Metro power", "MID", metro.Power)
+	check("Metro power", "medium", string(metro.Power))
 	if !metro.Skip || byName["Calling"].Skip {
 		t.Error("Scan NO should mean skip")
 	}

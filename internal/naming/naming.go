@@ -414,15 +414,40 @@ func (c *Charset) Allows(r rune) bool {
 
 func (c *Charset) String() string { return c.spec }
 
+// HasLower reports whether the set includes any lower-case letter; names
+// for sets without one are upper-cased rather than losing their letters.
+func (c *Charset) HasLower() bool {
+	for r := 'a'; r <= 'z'; r++ {
+		if c.Allows(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// WithLiteral returns a copy that also allows each character of extra,
+// taken literally (no ranges), for radio character sets such as
+// "!@#$%^&*()+-=[]".
+func (c *Charset) WithLiteral(extra string) *Charset {
+	out := &Charset{spec: c.spec + " + " + extra, ranges: append([][2]rune(nil), c.ranges...)}
+	for _, r := range extra {
+		out.ranges = append(out.ranges, [2]rune{r, r})
+	}
+	return out
+}
+
 // ParseCharset reads "ascii" (printable ASCII), "alnum" (letters, digits,
-// and space), or a literal set where "A-Z" is a range and a "-" at either
-// end is literal, such as "A-Z0-9 -/".
+// and space), "upper_numeric" (capitals, digits, and space), or a literal
+// set where "A-Z" is a range and a "-" at either end is literal, such as
+// "A-Z0-9 -/".
 func ParseCharset(spec string) (*Charset, error) {
 	switch spec {
 	case "", "ascii":
 		return &Charset{spec: "ascii", ranges: [][2]rune{{0x20, 0x7e}}}, nil
 	case "alnum":
 		return &Charset{spec: spec, ranges: [][2]rune{{'A', 'Z'}, {'a', 'z'}, {'0', '9'}, {' ', ' '}}}, nil
+	case "upper_numeric":
+		return &Charset{spec: spec, ranges: [][2]rune{{'A', 'Z'}, {'0', '9'}, {' ', ' '}}}, nil
 	}
 	rs := []rune(spec)
 	c := &Charset{spec: spec}

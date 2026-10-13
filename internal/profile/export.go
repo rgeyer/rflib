@@ -15,6 +15,9 @@ type Exporter struct {
 	Profile Profile
 	// Start overrides Profile.Start when set.
 	Start *int
+	// Locations, when set, gives each channel's memory number instead of
+	// numbering from the start; with Slots, gaps become empty memories.
+	Locations []int
 }
 
 func (x Exporter) start() int {
@@ -122,24 +125,44 @@ func (x Exporter) Export(w io.Writer, channels []domain.Channel) error {
 		}
 		rows = append(rows, header)
 	}
+	locs := x.Locations
+	if locs == nil {
+		locs = make([]int, len(channels))
+		for i := range locs {
+			locs[i] = x.start() + i
+		}
+	}
 	var errs []error
+	byLoc := make(map[int][]string, len(channels))
 	for i, c := range channels {
-		rec, err := x.record(c, x.start()+i)
+		if p.Slots > 0 && (locs[i] < x.start() || locs[i] >= x.start()+p.Slots) {
+			errs = append(errs, fmt.Errorf("channel %q: memory %d is outside the profile's %d memories", c.Name, locs[i], p.Slots))
+			continue
+		}
+		rec, err := x.record(c, locs[i])
 		if err != nil {
 			errs = append(errs, fmt.Errorf("channel %q (%s MHz): %w", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), err))
 			continue
 		}
-		rows = append(rows, rec)
+		byLoc[locs[i]] = rec
+		if p.Slots == 0 {
+			rows = append(rows, rec)
+		}
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
-	for i := len(channels); i < p.Slots; i++ {
+	// Padded formats list every memory in order, empty or not.
+	for loc := x.start(); loc < x.start()+p.Slots; loc++ {
+		if rec, ok := byLoc[loc]; ok {
+			rows = append(rows, rec)
+			continue
+		}
 		rec := make([]string, len(p.Columns))
 		for j, col := range p.Columns {
 			rec[j] = col.Empty
 			if col.Source == "location" {
-				rec[j] = fmt.Sprint(x.start() + i)
+				rec[j] = fmt.Sprint(loc)
 			}
 		}
 		rows = append(rows, rec)

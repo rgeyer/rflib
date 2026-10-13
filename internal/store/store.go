@@ -102,6 +102,21 @@ ALTER TABLE channels ADD COLUMN rx_only INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX idx_channels_service ON channels(service);`},
 	{4, `
 CREATE TABLE channel_short_names (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, PRIMARY KEY(channel_id, position));`},
+	// Power becomes an intent. Level names map across; anything else,
+	// such as watts from an import, describes the source's radio and is
+	// dropped (see domain.PowerFromText, which imports use).
+	{5, `
+UPDATE channels SET power = CASE lower(trim(power))
+	WHEN 'low' THEN 'low' WHEN 'lo' THEN 'low' WHEN 'l' THEN 'low' WHEN 'low1' THEN 'low' WHEN 'low2' THEN 'low'
+	WHEN 'medium' THEN 'medium' WHEN 'med' THEN 'medium' WHEN 'mid' THEN 'medium' WHEN 'm' THEN 'medium' WHEN 'mid1' THEN 'medium' WHEN 'mid2' THEN 'medium'
+	WHEN 'high' THEN 'high' WHEN 'hi' THEN 'high' WHEN 'h' THEN 'high'
+	WHEN 'max' THEN 'max' WHEN 'maximum' THEN 'max' WHEN 'full' THEN 'max'
+	ELSE '' END;
+ALTER TABLE groups ADD COLUMN power TEXT NOT NULL DEFAULT '';
+CREATE TABLE radios (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, model TEXT NOT NULL, default_power TEXT NOT NULL DEFAULT '', dedupe TEXT NOT NULL DEFAULT '', sync_tag TEXT NOT NULL DEFAULT '', sync_group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, sync_service TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE radio_channels (radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, position INTEGER NOT NULL, section_start INTEGER, name TEXT NOT NULL DEFAULT '', power TEXT NOT NULL DEFAULT '', skip INTEGER, PRIMARY KEY(radio_id, channel_id));
+CREATE INDEX idx_radio_channels_order ON radio_channels(radio_id, position);
+CREATE INDEX idx_radio_channels_channel ON radio_channels(channel_id);`},
 }
 
 func latestVersion() int64 {
@@ -210,7 +225,7 @@ func (s *Store) CreateGroup(ctx context.Context, g domain.Group) (domain.Group, 
 	if err := assignIdentity(&g.ID, &g.CreatedAt, &g.UpdatedAt); err != nil {
 		return g, err
 	}
-	_, err := s.q.ExecContext(ctx, `INSERT INTO groups (id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`, g.ID, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, g.Notes, g.CreatedAt.Format(time.RFC3339Nano), g.UpdatedAt.Format(time.RFC3339Nano))
+	_, err := s.q.ExecContext(ctx, `INSERT INTO groups (id,name,description,latitude,longitude,radius_km,power,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`, g.ID, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, string(g.Power), g.Notes, g.CreatedAt.Format(time.RFC3339Nano), g.UpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return g, fmt.Errorf("create group: %w", err)
 	}
@@ -219,14 +234,14 @@ func (s *Store) CreateGroup(ctx context.Context, g domain.Group) (domain.Group, 
 
 // GetGroup looks a group up by ID or by its unique name.
 func (s *Store) GetGroup(ctx context.Context, idOrName string) (domain.Group, error) {
-	g, err := scanGroup(s.q.QueryRowContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups WHERE id=? OR name=?`, idOrName, idOrName))
+	g, err := scanGroup(s.q.QueryRowContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,power,notes,created_at,updated_at FROM groups WHERE id=? OR name=?`, idOrName, idOrName))
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, fmt.Errorf("group %q: %w", idOrName, ErrNotFound)
 	}
 	return g, err
 }
 func (s *Store) ListGroups(ctx context.Context) ([]domain.Group, error) {
-	rows, err := s.q.QueryContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,notes,created_at,updated_at FROM groups ORDER BY name`)
+	rows, err := s.q.QueryContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,power,notes,created_at,updated_at FROM groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +261,7 @@ func (s *Store) UpdateGroup(ctx context.Context, g domain.Group) (domain.Group, 
 		return g, err
 	}
 	g.UpdatedAt = time.Now().UTC()
-	r, err := s.q.ExecContext(ctx, `UPDATE groups SET name=?,description=?,latitude=?,longitude=?,radius_km=?,notes=?,updated_at=? WHERE id=?`, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, g.Notes, g.UpdatedAt.Format(time.RFC3339Nano), g.ID)
+	r, err := s.q.ExecContext(ctx, `UPDATE groups SET name=?,description=?,latitude=?,longitude=?,radius_km=?,power=?,notes=?,updated_at=? WHERE id=?`, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, string(g.Power), g.Notes, g.UpdatedAt.Format(time.RFC3339Nano), g.ID)
 	if err != nil {
 		return g, fmt.Errorf("update group: %w", err)
 	}
@@ -317,7 +332,7 @@ func (s *Store) UpdateChannel(ctx context.Context, c domain.Channel) (domain.Cha
 }
 func writeChannel(ctx context.Context, ex execer, q string, c domain.Channel) error {
 	rt, tt := toneArgs(c.ReceiveTone), toneArgs(c.TransmitTone)
-	args := []any{c.GroupID, c.Name, c.ReceiveHz, c.TransmitHz, c.Mode, string(c.Service), c.RXOnly, rt.kind, rt.ctcss, rt.dcs, rt.inv, tt.kind, tt.ctcss, tt.dcs, tt.inv, c.ToneSquelch, c.Power, c.Bandwidth, c.Skip, c.Notes}
+	args := []any{c.GroupID, c.Name, c.ReceiveHz, c.TransmitHz, c.Mode, string(c.Service), c.RXOnly, rt.kind, rt.ctcss, rt.dcs, rt.inv, tt.kind, tt.ctcss, tt.dcs, tt.inv, c.ToneSquelch, string(c.Power), c.Bandwidth, c.Skip, c.Notes}
 	insert := strings.HasPrefix(q, "INSERT")
 	if insert {
 		args = append([]any{c.ID}, args...)
@@ -435,7 +450,7 @@ func (s *Store) ListChannels(ctx context.Context, f ChannelFilter) ([]domain.Cha
 const tagSeparator = "\x1f"
 
 func (s *Store) listChannels(ctx context.Context, where string, args []any) ([]domain.Channel, error) {
-	q := `SELECT c.id,c.group_id,c.name,c.receive_hz,c.transmit_hz,c.mode,c.service,c.rx_only,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.created_at,c.updated_at,g.id,g.name,g.description,g.latitude,g.longitude,g.radius_km,g.notes,g.created_at,g.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id),(SELECT group_concat(n.name, char(31) ORDER BY n.position) FROM channel_short_names n WHERE n.channel_id=c.id) FROM channels c LEFT JOIN groups g ON c.group_id=g.id` + where + ` ORDER BY c.name,c.receive_hz`
+	q := `SELECT c.id,c.group_id,c.name,c.receive_hz,c.transmit_hz,c.mode,c.service,c.rx_only,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.created_at,c.updated_at,g.id,g.name,g.description,g.latitude,g.longitude,g.radius_km,g.power,g.notes,g.created_at,g.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id),(SELECT group_concat(n.name, char(31) ORDER BY n.position) FROM channel_short_names n WHERE n.channel_id=c.id) FROM channels c LEFT JOIN groups g ON c.group_id=g.id` + where + ` ORDER BY c.name,c.receive_hz`
 	rows, err := s.q.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
@@ -457,7 +472,7 @@ type scanner interface{ Scan(...any) error }
 func scanGroup(r scanner) (domain.Group, error) {
 	var g domain.Group
 	var created, updated string
-	err := r.Scan(&g.ID, &g.Name, &g.Description, &g.Latitude, &g.Longitude, &g.RadiusKM, &g.Notes, &created, &updated)
+	err := r.Scan(&g.ID, &g.Name, &g.Description, &g.Latitude, &g.Longitude, &g.RadiusKM, &g.Power, &g.Notes, &created, &updated)
 	if err != nil {
 		return g, err
 	}
@@ -473,9 +488,9 @@ func scanChannel(r scanner) (domain.Channel, error) {
 	var created, updated string
 	var gid sql.NullString
 	var g domain.Group
-	var groupID, gn, gd, gnote, gc, gu, tags, shortNames sql.NullString
+	var groupID, gn, gd, gpower, gnote, gc, gu, tags, shortNames sql.NullString
 	var glat, glon, grad sql.NullFloat64
-	err := r.Scan(&c.ID, &gid, &c.Name, &c.ReceiveHz, &c.TransmitHz, &c.Mode, &c.Service, &c.RXOnly, &c.ReceiveTone.Kind, &rtCT, &rtD, &rtInv, &c.TransmitTone.Kind, &ttCT, &ttD, &ttInv, &ts, &c.Power, &c.Bandwidth, &skip, &c.Notes, &created, &updated, &groupID, &gn, &gd, &glat, &glon, &grad, &gnote, &gc, &gu, &tags, &shortNames)
+	err := r.Scan(&c.ID, &gid, &c.Name, &c.ReceiveHz, &c.TransmitHz, &c.Mode, &c.Service, &c.RXOnly, &c.ReceiveTone.Kind, &rtCT, &rtD, &rtInv, &c.TransmitTone.Kind, &ttCT, &ttD, &ttInv, &ts, &c.Power, &c.Bandwidth, &skip, &c.Notes, &created, &updated, &groupID, &gn, &gd, &glat, &glon, &grad, &gpower, &gnote, &gc, &gu, &tags, &shortNames)
 	if err != nil {
 		return c, err
 	}
@@ -513,6 +528,7 @@ func scanChannel(r scanner) (domain.Channel, error) {
 		g.Name = gn.String
 		g.Description = gd.String
 		g.Notes = gnote.String
+		g.Power = domain.PowerIntent(gpower.String)
 		if glat.Valid {
 			g.Latitude = &glat.Float64
 			g.Longitude = &glon.Float64
