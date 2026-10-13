@@ -326,3 +326,61 @@ func TestImportCHIRP(t *testing.T) {
 		t.Fatalf("channel = %+v", ch)
 	}
 }
+
+func TestSeedInstallIsIdempotent(t *testing.T) {
+	c := newCLI(t)
+	if out := c.ok("seed", "list"); !strings.Contains(out, "us-gmrs\t30 channels") {
+		t.Fatalf("seed list = %q", out)
+	}
+	out := c.ok("seed", "install", "us-gmrs", "us-noaa")
+	if !strings.Contains(out, "us-gmrs: created 30") || !strings.Contains(out, "us-noaa: created 7") {
+		t.Fatalf("first install = %q", out)
+	}
+	out = c.ok("seed", "install", "us-gmrs", "us-noaa")
+	if !strings.Contains(out, "us-gmrs: created 0, updated 0, skipped 30 duplicates") || !strings.Contains(out, "us-noaa: created 0") {
+		t.Fatalf("second install = %q", out)
+	}
+	if out := c.ok("channel", "list", "--service", "noaa"); strings.Count(out, "\n")+1 != 7 {
+		t.Fatalf("noaa channels = %q", out)
+	}
+	c.ok("check") // built-in lists fit their own band plans
+	c.fails("unknown list", "seed", "install", "us-pmr446")
+}
+
+func TestServiceDefaultsAndWarnings(t *testing.T) {
+	c := newCLI(t)
+	id := c.ok("channel", "add", "--name", "Dispatch", "--rx", "460.275", "--tx", "465.275", "--service", "public_safety")
+	if ch := c.channel(id); !ch.RXOnly || ch.Service != "public_safety" || ch.TransmitMHz == nil {
+		t.Fatalf("public safety channel = %+v", ch)
+	}
+	csv := c.ok("export", "chirp", "--service", "public_safety")
+	if !strings.Contains(csv, ",Dispatch,460.275000,off,") {
+		t.Fatalf("rx-only channel exported as transmitting: %s", csv)
+	}
+
+	_, stderr, err := c.exec("channel", "add", "--name", "Oops", "--rx", "146.52", "--tx", "151.82", "--service", "amateur")
+	if err != nil || !strings.Contains(stderr, "warning: Oops: transmit frequency 151.820000 MHz is outside the US amateur bands") {
+		t.Fatalf("err = %v, stderr = %q", err, stderr)
+	}
+	out, _, err := c.exec("check")
+	if err == nil || !strings.Contains(out, "Oops") || strings.Contains(out, "Dispatch") {
+		t.Fatalf("check: err = %v, out = %q", err, out)
+	}
+
+	// Explicitly allowing transmit on a public safety channel is warned about.
+	_, stderr, _ = c.exec("channel", "update", "--id", id, "--rx-only=false")
+	if !strings.Contains(stderr, "--rx-only") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	c.fails("unknown service", "channel", "add", "--name", "x", "--rx", "146.52", "--service", "ham")
+}
+
+func TestImportWithService(t *testing.T) {
+	c := newCLI(t)
+	file := writeFile(t, "name,receive_mhz,transmit_mhz\nDispatch,460.275,465.275\n")
+	c.ok("import", "csv", file, "--service", "public_safety")
+	id := strings.Fields(c.ok("channel", "list", "--service", "public_safety"))[0]
+	if ch := c.channel(id); !ch.RXOnly {
+		t.Fatalf("imported public safety channel not rx-only: %+v", ch)
+	}
+}

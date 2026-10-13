@@ -12,7 +12,7 @@ make build    # or: go build -o rflib ./cmd/rflib
 
 Every command takes `--db PATH`. When it is omitted, `rflib` uses `$RFLIB_DB`, then `$XDG_DATA_HOME/rflib/library.db` (`~/.local/share/rflib/library.db` by default). The examples below set `RFLIB_DB` once instead of repeating `--db`.
 
-The CLI only creates a database when you explicitly initialize one. Re-running `init` upgrades an existing library to the current schema.
+The CLI only creates a database when you explicitly initialize one. After upgrading `rflib`, commands may report that the library schema is out of date; re-run `init` to upgrade it in place.
 
 ```sh
 export RFLIB_DB=./radio-library.db
@@ -49,7 +49,7 @@ Channels record a receive frequency plus an optional transmit frequency. Use mat
 ./rflib channel list --lat 45.52 --lon -122.68 --radius-km 30
 ```
 
-Supported modes are `FM`, `NFM`, and `AM`. Channel frequencies are entered in MHz and stored exactly as integer Hz. CTCSS tones are entered in Hz and stored exactly as integer millihertz, preserving standard values such as `69.3 Hz` without floating-point math or rounding.
+Supported modes are `FM`, `NFM`, `AM`, `USB`, and `LSB`. Channel frequencies are entered in MHz and stored exactly as integer Hz. CTCSS tones are entered in Hz and stored exactly as integer millihertz, preserving standard values such as `69.3 Hz` without floating-point math or rounding.
 
 Tone syntax is normalized and exporter-neutral:
 
@@ -67,6 +67,42 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--gro
 
 `list` and `show` commands accept `--format json` for scripting.
 
+## Services and receive-only channels
+
+Each channel can record its radio service with `--service`: `amateur`, `gmrs`, `frs`, `cb`, `murs`, `marine`, `noaa`, `public_safety`, or `other`. Leaving it out means unspecified; `rflib` never guesses from frequency, since services such as FRS and GMRS share channels. `channel list`, `export`, and `check` accept `--service` as a filter.
+
+`--rx-only` marks a channel you must never transmit on. Unlike omitting `--tx`, it keeps the system's input frequency on record (useful for public safety repeaters), while exports such as CHIRP program the channel receive only. `noaa` and `public_safety` channels are receive only unless you pass `--rx-only=false`.
+
+```sh
+./rflib channel add --name "SO Dispatch" --rx 460.275 --tx 465.275 --service public_safety
+./rflib import chirp radioreference.csv --skip-invalid --service public_safety
+```
+
+To label channels you already imported, re-import the same file with `--on-duplicate update --service ...`. Service and receive-only don't count when matching duplicates, so the existing channels are updated in place.
+
+### Band plan checks
+
+Saving or importing a channel warns, without failing, when it doesn't fit its service's US (FCC) channel plan. That covers amateur transmit frequencies outside the amateur bands, off-plan FRS, GMRS, MURS, CB, and NOAA frequencies, repeater splits on simplex-only services, and transmitting NOAA or public safety channels. `rflib check` reports every such channel in the library and exits non-zero when it finds any.
+
+## Built-in channel lists
+
+```sh
+./rflib seed list
+./rflib seed show us-gmrs
+./rflib seed install us-gmrs us-noaa --tags handheld
+```
+
+| List | Channels |
+|---|---|
+| `us-frs` | FRS 1-22, with power limits in the notes |
+| `us-gmrs` | GMRS 1-22 plus repeater pairs 15R-22R (add your repeater's tone) |
+| `us-murs` | MURS 1-5 |
+| `us-cb` | CB 1-40, AM |
+| `us-noaa` | NOAA Weather Radio WX1-WX7, receive only |
+| `us-ham-calling` | Amateur FM and SSB simplex calling frequencies, 10 m through 70 cm |
+
+Installing a list again skips the channels already added. `install` takes the same `--group`, `--tags`, `--on-duplicate`, and `--dry-run` flags as `import`.
+
 ## Export
 
 Exports write to stdout unless `--output PATH` is given, and accept the same filters as `channel list`.
@@ -77,7 +113,7 @@ Exports write to stdout unless `--output PATH` is given, and accept the same fil
 ./rflib export json --output backup.json
 ```
 
-- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, and group coordinates.
+- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, and group coordinates. New columns are only ever added at the end.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
 - **`export json`** is a full-fidelity backup, including IDs, timestamps, and group details that the CSV leaves out. Without filters it includes every group, even empty ones. With filters it includes only the groups the exported channels use.
 
@@ -114,7 +150,7 @@ How library channels map to CHIRP:
 | TX equals RX | Duplex blank |
 | TX within 50 MHz of RX | Duplex `+` or `-` with the offset |
 | TX 50 MHz or more from RX (cross-band) | Duplex `split`, Offset is the TX frequency |
-| No TX (receive only) | Duplex `off` |
+| No TX, or `--rx-only` | Duplex `off` |
 | TX tone only | Tone `Tone` |
 | Same CTCSS both ways, tone squelch on | Tone `TSQL` |
 | Same DCS code both ways, tone squelch on | Tone `DTCS`, with polarity |
@@ -124,9 +160,9 @@ How library channels map to CHIRP:
 
 The receive tone is only programmed when tone squelch is on, since that is what makes the radio use it.
 
-CHIRP only accepts FM, NFM, and AM, the 50 standard CTCSS tones, and the 104 standard DCS codes. An export that includes anything else fails and names every such channel. Add `--skip-invalid` to leave them out with a warning instead.
+CHIRP export accepts every library mode, but only the 50 standard CTCSS tones and the 104 standard DCS codes. An export that includes anything else fails and names every such channel. Add `--skip-invalid` to leave them out with a warning instead.
 
-`import chirp` does the reverse. Memory locations aren't kept, unnamed memories are named after their frequency, and memories in modes the library doesn't support yet (such as DV or DMR) are reported as invalid rows.
+`import chirp` does the reverse. Memory locations aren't kept, unnamed memories are named after their frequency, and memories in modes the library doesn't support yet (digital modes such as DV, DMR, and P25) are reported as invalid rows. Pass `--service` to label everything you import.
 
 ## Development
 

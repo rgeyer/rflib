@@ -1,0 +1,8 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+NOAA WX1,162.550,,FM,noaa,true,weather,
+NOAA WX2,162.400,,FM,noaa,true,weather,
+NOAA WX3,162.475,,FM,noaa,true,weather,
+NOAA WX4,162.425,,FM,noaa,true,weather,
+NOAA WX5,162.450,,FM,noaa,true,weather,
+NOAA WX6,162.500,,FM,noaa,true,weather,
+NOAA WX7,162.525,,FM,noaa,true,weather,

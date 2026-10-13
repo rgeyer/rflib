@@ -29,6 +29,8 @@ type channelOut struct {
 	TransmitHz  *int64    `json:"transmit_hz,omitempty"`
 	TransmitMHz *string   `json:"transmit_mhz,omitempty"`
 	Mode        string    `json:"mode"`
+	Service     string    `json:"service"`
+	RXOnly      bool      `json:"rx_only"`
 	RXTone      string    `json:"rx_tone"`
 	TXTone      string    `json:"tx_tone"`
 	ToneSquelch bool      `json:"tone_squelch"`
@@ -51,6 +53,8 @@ func newChannelOut(c domain.Channel) channelOut {
 		ReceiveMHz:  domain.FormatFrequencyMHz(c.ReceiveHz),
 		TransmitHz:  c.TransmitHz,
 		Mode:        c.Mode,
+		Service:     string(c.Service),
+		RXOnly:      c.RXOnly,
 		RXTone:      domain.FormatTone(c.ReceiveTone),
 		TXTone:      domain.FormatTone(c.TransmitTone),
 		ToneSquelch: c.ToneSquelch,
@@ -127,8 +131,8 @@ func writeChannel(out io.Writer, c domain.Channel, format string) error {
 	if format == "json" {
 		return writeJSON(out, newChannelOut(c))
 	}
-	fmt.Fprintf(out, "%s\nname: %s\ngroup: %s\nrx: %s MHz\ntx: %s\nmode: %s\nreceive tone: %s\ntransmit tone: %s\ntone squelch: %t\npower: %s\nbandwidth: %s\nskip: %t\ntags: %s\nnotes: %s\n",
-		c.ID, c.Name, groupName(c), domain.FormatFrequencyMHz(c.ReceiveHz), optionalFreq(c.TransmitHz), c.Mode,
+	fmt.Fprintf(out, "%s\nname: %s\ngroup: %s\nservice: %s\nrx: %s MHz\ntx: %s\nmode: %s\nreceive tone: %s\ntransmit tone: %s\ntone squelch: %t\npower: %s\nbandwidth: %s\nskip: %t\ntags: %s\nnotes: %s\n",
+		c.ID, c.Name, groupName(c), serviceName(c.Service), domain.FormatFrequencyMHz(c.ReceiveHz), txText(c), c.Mode,
 		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, c.Power, c.Bandwidth, c.Skip,
 		strings.Join(c.Tags, ","), c.Notes)
 	return nil
@@ -167,4 +171,18 @@ func groupName(c domain.Channel) string {
 		return ""
 	}
 	return c.Group.Name
+}
+
+func serviceName(s domain.Service) string {
+	if s == domain.ServiceUnspecified {
+		return "unspecified"
+	}
+	return string(s)
+}
+
+func txText(c domain.Channel) string {
+	if c.RXOnly && c.TransmitHz != nil {
+		return optionalFreq(c.TransmitHz) + " (receive only; never transmitted)"
+	}
+	return optionalFreq(c.TransmitHz)
 }

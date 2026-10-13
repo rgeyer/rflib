@@ -3,10 +3,14 @@ package domain
 import (
 	"crypto/rand"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// Modes are the analog modulation modes the library stores.
+var Modes = []string{"FM", "NFM", "AM", "USB", "LSB"}
 
 type ToneKind string
 
@@ -36,12 +40,17 @@ type Group struct {
 }
 
 type Channel struct {
-	ID           string
-	GroupID      *string
-	Name         string
-	ReceiveHz    int64
-	TransmitHz   *int64
-	Mode         string
+	ID         string
+	GroupID    *string
+	Name       string
+	ReceiveHz  int64
+	TransmitHz *int64
+	Mode       string
+	Service    Service
+	// RXOnly marks a channel never to transmit on, even when TransmitHz
+	// records the system's input frequency; exporters program it receive
+	// only.
+	RXOnly       bool
 	ReceiveTone  Tone
 	TransmitTone Tone
 	ToneSquelch  bool
@@ -214,8 +223,11 @@ func ValidateChannel(c Channel) error {
 		return fmt.Errorf("transmit frequency must be positive")
 	}
 	c.Mode = strings.ToUpper(strings.TrimSpace(c.Mode))
-	if c.Mode != "FM" && c.Mode != "NFM" && c.Mode != "AM" {
-		return fmt.Errorf("mode must be FM, NFM, or AM")
+	if !slices.Contains(Modes, c.Mode) {
+		return fmt.Errorf("mode must be one of %s", strings.Join(Modes, ", "))
+	}
+	if _, err := ParseService(string(c.Service)); err != nil {
+		return err
 	}
 	if c.ReceiveTone.Kind == "" || c.TransmitTone.Kind == "" {
 		return fmt.Errorf("receive and transmit tones are required; use none when unset")

@@ -96,6 +96,12 @@ func channelFromCSV(get func(string) string) (domain.Channel, error) {
 	if c.Skip, err = parseBool(get("skip")); err != nil {
 		return c, fmt.Errorf("skip: %w", err)
 	}
+	if c.Service, err = domain.ParseService(get("service")); err != nil {
+		return c, fmt.Errorf("service: %w", err)
+	}
+	if c.RXOnly, err = parseBool(get("rx_only")); err != nil {
+		return c, fmt.Errorf("rx_only: %w", err)
+	}
 	if v := get("tags"); v != "" {
 		c.Tags = strings.Split(v, ";")
 	}
