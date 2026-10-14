@@ -1,4 +1,4 @@
-package store
+package sqlite
 
 import (
 	"context"
@@ -10,37 +10,36 @@ import (
 	"time"
 
 	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/store"
 )
 
 const radioColumns = `id,name,model,default_power,dedupe,notes,created_at,updated_at`
 
-func (s *Store) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error) {
+func (l *library) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error) {
 	if err := domain.ValidateRadio(r); err != nil {
 		return r, err
 	}
 	if err := assignIdentity(&r.ID, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return r, err
 	}
-	_, err := s.q.ExecContext(ctx, `INSERT INTO radios (`+radioColumns+`) VALUES (?,?,?,?,?,?,?,?)`,
-		r.ID, r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.Notes,
-		r.CreatedAt.Format(time.RFC3339Nano), r.UpdatedAt.Format(time.RFC3339Nano))
+	_, err := l.q.ExecContext(ctx, `INSERT INTO radios (library_id,`+radioColumns+`) VALUES (?,?,?,?,?,?,?,?,?)`,
+		l.id, r.ID, r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.Notes, timestamp(r.CreatedAt), timestamp(r.UpdatedAt))
 	if err != nil {
-		return r, fmt.Errorf("create radio: %w", err)
+		return r, conflict(fmt.Errorf("create radio: %w", err), "a radio named %q", r.Name)
 	}
 	return r, nil
 }
 
-// GetRadio looks a radio up by ID or by its unique name.
-func (s *Store) GetRadio(ctx context.Context, idOrName string) (domain.Radio, error) {
-	r, err := scanRadio(s.q.QueryRowContext(ctx, `SELECT `+radioColumns+` FROM radios WHERE id=? OR name=?`, idOrName, idOrName))
+func (l *library) GetRadio(ctx context.Context, idOrName string) (domain.Radio, error) {
+	r, err := scanRadio(l.q.QueryRowContext(ctx, `SELECT `+radioColumns+` FROM radios WHERE library_id=? AND (id=? OR name=?)`, l.id, idOrName, idOrName))
 	if errors.Is(err, sql.ErrNoRows) {
-		return r, fmt.Errorf("radio %q: %w", idOrName, ErrNotFound)
+		return r, fmt.Errorf("radio %q: %w", idOrName, store.ErrNotFound)
 	}
 	return r, err
 }
 
-func (s *Store) ListRadios(ctx context.Context) ([]domain.Radio, error) {
-	rows, err := s.q.QueryContext(ctx, `SELECT `+radioColumns+` FROM radios ORDER BY name`)
+func (l *library) ListRadios(ctx context.Context) ([]domain.Radio, error) {
+	rows, err := l.q.QueryContext(ctx, `SELECT `+radioColumns+` FROM radios WHERE library_id=? ORDER BY name`, l.id)
 	if err != nil {
 		return nil, err
 	}
@@ -56,30 +55,29 @@ func (s *Store) ListRadios(ctx context.Context) ([]domain.Radio, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) UpdateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error) {
+func (l *library) UpdateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error) {
 	if err := domain.ValidateRadio(r); err != nil {
 		return r, err
 	}
 	r.UpdatedAt = time.Now().UTC()
-	res, err := s.q.ExecContext(ctx, `UPDATE radios SET name=?,model=?,default_power=?,dedupe=?,notes=?,updated_at=? WHERE id=?`,
-		r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.Notes, r.UpdatedAt.Format(time.RFC3339Nano), r.ID)
+	res, err := l.q.ExecContext(ctx, `UPDATE radios SET name=?,model=?,default_power=?,dedupe=?,notes=?,updated_at=? WHERE id=? AND library_id=?`,
+		r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.Notes, timestamp(r.UpdatedAt), r.ID, l.id)
 	if err != nil {
-		return r, fmt.Errorf("update radio: %w", err)
+		return r, conflict(fmt.Errorf("update radio: %w", err), "a radio named %q", r.Name)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return r, fmt.Errorf("radio %q: %w", r.ID, ErrNotFound)
+		return r, fmt.Errorf("radio %q: %w", r.ID, store.ErrNotFound)
 	}
 	return r, nil
 }
 
-// DeleteRadio deletes a radio by ID or name. Its channels are untouched.
-func (s *Store) DeleteRadio(ctx context.Context, idOrName string) error {
-	res, err := s.q.ExecContext(ctx, `DELETE FROM radios WHERE id=? OR name=?`, idOrName, idOrName)
+func (l *library) DeleteRadio(ctx context.Context, id string) error {
+	res, err := l.q.ExecContext(ctx, `DELETE FROM radios WHERE id=? AND library_id=?`, id, l.id)
 	if err != nil {
 		return fmt.Errorf("delete radio: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("radio %q: %w", idOrName, ErrNotFound)
+		return fmt.Errorf("radio %q: %w", id, store.ErrNotFound)
 	}
 	return nil
 }
@@ -91,15 +89,19 @@ func scanRadio(r scanner) (domain.Radio, error) {
 	if err != nil {
 		return x, err
 	}
-	x.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	x.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	x.CreatedAt, x.UpdatedAt = parseTime(created), parseTime(updated)
 	return x, nil
 }
 
-// RadioEntries returns a radio's channels in memory order, with the radio's
-// overrides for each.
-func (s *Store) RadioEntries(ctx context.Context, radioID string) ([]domain.RadioEntry, error) {
-	rows, err := s.q.QueryContext(ctx, `SELECT channel_id,section_start,name,power,skip,source_id FROM radio_channels WHERE radio_id=? ORDER BY position`, radioID)
+func (l *library) ownsRadio(ctx context.Context, radioID string) error {
+	return l.owns(ctx, "radios", "radio", radioID)
+}
+
+func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.RadioEntry, error) {
+	if err := l.ownsRadio(ctx, radioID); err != nil {
+		return nil, err
+	}
+	rows, err := l.q.QueryContext(ctx, `SELECT channel_id,section_start,name,power,skip,source_id FROM radio_channels WHERE radio_id=? ORDER BY position`, radioID)
 	if err != nil {
 		return nil, fmt.Errorf("list radio channels: %w", err)
 	}
@@ -130,7 +132,7 @@ func (s *Store) RadioEntries(ctx context.Context, radioID string) ([]domain.Radi
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	channels, err := s.listChannels(ctx, ` WHERE c.id IN (SELECT channel_id FROM radio_channels WHERE radio_id=?)`, []any{radioID})
+	channels, err := l.listChannels(ctx, ` AND c.id IN (SELECT channel_id FROM radio_channels WHERE radio_id=?)`, radioID)
 	if err != nil {
 		return nil, err
 	}
@@ -172,28 +174,24 @@ func renumber(ctx context.Context, ex execer, radioID string, ids []string) erro
 	return nil
 }
 
-// AddRadioChannels appends channels to the end of a radio's list, in the
-// order given, skipping any already on it. It returns how many were added.
-func (s *Store) AddRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error) {
-	return s.insertRadioChannels(ctx, radioID, nil, channelIDs)
+func (l *library) AddRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error) {
+	return l.insertRadioChannels(ctx, radioID, nil, channelIDs)
 }
 
-// AddSourceChannels adds channels for a radio source, skipping any already
-// on the radio. They go after the last channel the source added; for a
-// source with none yet, after the channels of earlier sources and before
-// those of later ones, else at the end. The source's section start, when
-// set, is kept on its first channel.
-func (s *Store) AddSourceChannels(ctx context.Context, src domain.RadioSource, channelIDs []string) (int, error) {
-	return s.insertRadioChannels(ctx, src.RadioID, &src, channelIDs)
+func (l *library) AddSourceChannels(ctx context.Context, src domain.RadioSource, channelIDs []string) (int, error) {
+	return l.insertRadioChannels(ctx, src.RadioID, &src, channelIDs)
 }
 
 type orderRow struct {
 	channelID, sourceID string
 }
 
-func (s *Store) insertRadioChannels(ctx context.Context, radioID string, src *domain.RadioSource, channelIDs []string) (int, error) {
+func (l *library) insertRadioChannels(ctx context.Context, radioID string, src *domain.RadioSource, channelIDs []string) (int, error) {
 	added := 0
-	err := s.InTx(ctx, func(tx *Store) error {
+	err := l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, radioID); err != nil {
+			return err
+		}
 		rows, err := radioRows(ctx, tx.q, radioID)
 		if err != nil {
 			return err
@@ -205,6 +203,9 @@ func (s *Store) insertRadioChannels(ctx context.Context, radioID string, src *do
 		var add []orderRow
 		for _, id := range channelIDs {
 			if !have[id] {
+				if err := tx.owns(ctx, "channels", "channel", id); err != nil {
+					return err
+				}
 				have[id] = true
 				add = append(add, orderRow{channelID: id})
 			}
@@ -314,11 +315,12 @@ func keepSectionStart(ctx context.Context, ex execer, src domain.RadioSource) er
 	return err
 }
 
-// RemoveRadioChannels takes channels off a radio and closes up the list.
-// It returns how many were removed.
-func (s *Store) RemoveRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error) {
+func (l *library) RemoveRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error) {
 	removed := 0
-	err := s.InTx(ctx, func(tx *Store) error {
+	err := l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, radioID); err != nil {
+			return err
+		}
 		for _, id := range channelIDs {
 			res, err := tx.q.ExecContext(ctx, `DELETE FROM radio_channels WHERE radio_id=? AND channel_id=?`, radioID, id)
 			if err != nil {
@@ -336,10 +338,11 @@ func (s *Store) RemoveRadioChannels(ctx context.Context, radioID string, channel
 	return removed, err
 }
 
-// MoveRadioChannel moves a channel to index to (0-based) in the radio's
-// list; an index past the end moves it last.
-func (s *Store) MoveRadioChannel(ctx context.Context, radioID, channelID string, to int) error {
-	return s.InTx(ctx, func(tx *Store) error {
+func (l *library) MoveRadioChannel(ctx context.Context, radioID, channelID string, to int) error {
+	return l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, radioID); err != nil {
+			return err
+		}
 		order, err := radioOrder(ctx, tx.q, radioID)
 		if err != nil {
 			return err
@@ -351,7 +354,7 @@ func (s *Store) MoveRadioChannel(ctx context.Context, radioID, channelID string,
 			}
 		}
 		if from < 0 {
-			return fmt.Errorf("channel %q is not on this radio: %w", channelID, ErrNotFound)
+			return fmt.Errorf("channel %q is not on this radio: %w", channelID, store.ErrNotFound)
 		}
 		order = append(order[:from], order[from+1:]...)
 		to = max(0, min(to, len(order)))
@@ -360,9 +363,10 @@ func (s *Store) MoveRadioChannel(ctx context.Context, radioID, channelID string,
 	})
 }
 
-// SetRadioEntry stores a radio's overrides for one of its channels: the
-// entry's SectionStart, Name, Power, and Skip.
-func (s *Store) SetRadioEntry(ctx context.Context, radioID string, e domain.RadioEntry) error {
+func (l *library) SetRadioEntry(ctx context.Context, radioID string, e domain.RadioEntry) error {
+	if err := l.ownsRadio(ctx, radioID); err != nil {
+		return err
+	}
 	if _, err := domain.ParsePowerIntent(string(e.Power)); err != nil {
 		return err
 	}
@@ -376,13 +380,13 @@ func (s *Store) SetRadioEntry(ctx context.Context, radioID string, e domain.Radi
 	if e.Skip != nil {
 		skip = *e.Skip
 	}
-	res, err := s.q.ExecContext(ctx, `UPDATE radio_channels SET section_start=?,name=?,power=?,skip=? WHERE radio_id=? AND channel_id=?`,
+	res, err := l.q.ExecContext(ctx, `UPDATE radio_channels SET section_start=?,name=?,power=?,skip=? WHERE radio_id=? AND channel_id=?`,
 		section, strings.TrimSpace(e.Name), string(e.Power), skip, radioID, e.Channel.ID)
 	if err != nil {
 		return fmt.Errorf("update radio channel: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("channel %q is not on this radio: %w", e.Channel.ID, ErrNotFound)
+		return fmt.Errorf("channel %q is not on this radio: %w", e.Channel.ID, store.ErrNotFound)
 	}
 	return nil
 }
@@ -397,17 +401,21 @@ func listRadioSources(ctx context.Context, q querier, radioID string) ([]domain.
 	return scanSources(rows)
 }
 
-// RadioSources returns a radio's sources in order.
-func (s *Store) RadioSources(ctx context.Context, radioID string) ([]domain.RadioSource, error) {
-	return listRadioSources(ctx, s.q, radioID)
+func (l *library) RadioSources(ctx context.Context, radioID string) ([]domain.RadioSource, error) {
+	if err := l.ownsRadio(ctx, radioID); err != nil {
+		return nil, err
+	}
+	return listRadioSources(ctx, l.q, radioID)
 }
 
-// AddRadioSource appends a source to a radio's list.
-func (s *Store) AddRadioSource(ctx context.Context, src domain.RadioSource) (domain.RadioSource, error) {
+func (l *library) AddRadioSource(ctx context.Context, src domain.RadioSource) (domain.RadioSource, error) {
 	if err := domain.ValidateRadioSource(src); err != nil {
 		return src, err
 	}
-	err := s.InTx(ctx, func(tx *Store) error {
+	err := l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, src.RadioID); err != nil {
+			return err
+		}
 		var unused time.Time
 		if err := assignIdentity(&src.ID, &unused, &unused); err != nil {
 			return err
@@ -427,21 +435,21 @@ func (s *Store) AddRadioSource(ctx context.Context, src domain.RadioSource) (dom
 	return src, err
 }
 
-// UpdateRadioSource changes a source's query, sort, and section start. A
-// changed section start moves to the source's first channel now; a removed
-// one is taken off it, if it is still the source's.
-func (s *Store) UpdateRadioSource(ctx context.Context, src domain.RadioSource) error {
+func (l *library) UpdateRadioSource(ctx context.Context, src domain.RadioSource) error {
 	if err := domain.ValidateRadioSource(src); err != nil {
 		return err
 	}
-	return s.InTx(ctx, func(tx *Store) error {
+	return l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, src.RadioID); err != nil {
+			return err
+		}
 		sources, err := listRadioSources(ctx, tx.q, src.RadioID)
 		if err != nil {
 			return err
 		}
 		i := slices.IndexFunc(sources, func(x domain.RadioSource) bool { return x.ID == src.ID })
 		if i < 0 {
-			return fmt.Errorf("radio source %q: %w", src.ID, ErrNotFound)
+			return fmt.Errorf("radio source %q: %w", src.ID, store.ErrNotFound)
 		}
 		old := sources[i]
 		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_sources SET query=?,sort=?,section_start=? WHERE id=?`,
@@ -460,12 +468,12 @@ func (s *Store) UpdateRadioSource(ctx context.Context, src domain.RadioSource) e
 	})
 }
 
-// RemoveRadioSource deletes a source. Its channels stay on the radio as if
-// added by hand, unless withChannels, which takes them off too. It returns
-// how many channels were taken off.
-func (s *Store) RemoveRadioSource(ctx context.Context, src domain.RadioSource, withChannels bool) (int, error) {
+func (l *library) RemoveRadioSource(ctx context.Context, src domain.RadioSource, withChannels bool) (int, error) {
 	removed := 0
-	err := s.InTx(ctx, func(tx *Store) error {
+	err := l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, src.RadioID); err != nil {
+			return err
+		}
 		if withChannels {
 			res, err := tx.q.ExecContext(ctx, `DELETE FROM radio_channels WHERE radio_id=? AND source_id=?`, src.RadioID, src.ID)
 			if err != nil {
@@ -479,7 +487,7 @@ func (s *Store) RemoveRadioSource(ctx context.Context, src domain.RadioSource, w
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("radio source %q: %w", src.ID, ErrNotFound)
+			return fmt.Errorf("radio source %q: %w", src.ID, store.ErrNotFound)
 		}
 		sources, err := listRadioSources(ctx, tx.q, src.RadioID)
 		if err != nil {
@@ -497,17 +505,18 @@ func (s *Store) RemoveRadioSource(ctx context.Context, src domain.RadioSource, w
 	return removed, err
 }
 
-// MoveRadioSource moves a source to index to (0-based) in its radio's
-// list. Channels already on the radio stay where they are.
-func (s *Store) MoveRadioSource(ctx context.Context, src domain.RadioSource, to int) error {
-	return s.InTx(ctx, func(tx *Store) error {
+func (l *library) MoveRadioSource(ctx context.Context, src domain.RadioSource, to int) error {
+	return l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, src.RadioID); err != nil {
+			return err
+		}
 		sources, err := listRadioSources(ctx, tx.q, src.RadioID)
 		if err != nil {
 			return err
 		}
 		from := slices.IndexFunc(sources, func(x domain.RadioSource) bool { return x.ID == src.ID })
 		if from < 0 {
-			return fmt.Errorf("radio source %q: %w", src.ID, ErrNotFound)
+			return fmt.Errorf("radio source %q: %w", src.ID, store.ErrNotFound)
 		}
 		moving := sources[from]
 		sources = slices.Delete(sources, from, from+1)
@@ -526,9 +535,8 @@ func renumberSources(ctx context.Context, ex execer, sources []domain.RadioSourc
 	return nil
 }
 
-// AllRadioSources returns every radio's sources.
-func (s *Store) AllRadioSources(ctx context.Context) ([]domain.RadioSource, error) {
-	rows, err := s.q.QueryContext(ctx, `SELECT `+sourceColumns+` FROM radio_sources ORDER BY radio_id, position`)
+func (l *library) AllRadioSources(ctx context.Context) ([]domain.RadioSource, error) {
+	rows, err := l.q.QueryContext(ctx, `SELECT `+sourceColumns+` FROM radio_sources WHERE radio_id IN (SELECT id FROM radios WHERE library_id=?) ORDER BY radio_id, position`, l.id)
 	if err != nil {
 		return nil, err
 	}

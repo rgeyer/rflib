@@ -1,19 +1,17 @@
 package main
 
 import (
-	"cmp"
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 
+	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/importer"
 	"github.com/ryan/rflib/internal/naming"
 	"github.com/ryan/rflib/internal/profile"
-	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -26,8 +24,8 @@ func newExportCommand() *cobra.Command {
 	csv.Flags().String("output", "-", "Output path, or - for stdout")
 	filterFields(csv)
 	csv.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			cs, err := filteredChannels(cmd, s)
+		return withApp(cmd, func(a *app.Service) error {
+			cs, err := filteredChannels(cmd, a)
 			if err != nil {
 				return err
 			}
@@ -40,12 +38,12 @@ func newExportCommand() *cobra.Command {
 	js.Flags().String("output", "-", "Output path, or - for stdout")
 	filterFields(js)
 	js.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			cs, err := filteredChannels(cmd, s)
+		return withApp(cmd, func(a *app.Service) error {
+			cs, err := filteredChannels(cmd, a)
 			if err != nil {
 				return err
 			}
-			gs, err := s.ListGroups(ctx(cmd))
+			gs, err := a.ListGroups(ctx(cmd))
 			if err != nil {
 				return err
 			}
@@ -141,12 +139,12 @@ func exportNumbered(cmd *cobra.Command, ex interface {
 	if err != nil {
 		return err
 	}
-	return withStore(cmd, func(s *store.Store) error {
-		cs, err := filteredChannels(cmd, s)
+	return withApp(cmd, func(a *app.Service) error {
+		cs, err := filteredChannels(cmd, a)
 		if err != nil {
 			return err
 		}
-		if err := sortChannels(cs, getString(cmd, "sort")); err != nil {
+		if err := domain.SortChannels(cs, getString(cmd, "sort")); err != nil {
 			return err
 		}
 		if skipInvalid {
@@ -166,28 +164,6 @@ func warnDuplicateNames(cmd *cobra.Command, results []naming.Result) {
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: duplicate names on the radio: %s; use --dedupe index or freq to tell them apart\n", strings.Join(names, ", "))
 	}
-}
-
-// sortChannels orders channels for exporters that number memories. The store
-// already returns them by name, then frequency; sorts are stable on that.
-func sortChannels(cs []domain.Channel, by string) error {
-	switch by {
-	case "name":
-	case "freq":
-		slices.SortStableFunc(cs, func(a, b domain.Channel) int { return cmp.Compare(a.ReceiveHz, b.ReceiveHz) })
-	case "group":
-		// Ungrouped channels sort last.
-		key := func(c domain.Channel) string {
-			if c.Group == nil {
-				return "\uffff"
-			}
-			return c.Group.Name
-		}
-		slices.SortStableFunc(cs, func(a, b domain.Channel) int { return cmp.Compare(key(a), key(b)) })
-	default:
-		return fmt.Errorf("unknown sort %q; use name, freq, or group", by)
-	}
-	return nil
 }
 
 // validChannels drops channels the exporter can't represent, warning about
@@ -306,7 +282,7 @@ func runFileImport(cmd *cobra.Command, args []string, parse func(io.Reader) (imp
 		opts.RXOnly = &v
 	}
 	skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
-	return withStore(cmd, func(s *store.Store) error {
+	return withApp(cmd, func(a *app.Service) error {
 		batch, err := parseInput(cmd, args, parse)
 		if err != nil {
 			return err
@@ -317,7 +293,7 @@ func runFileImport(cmd *cobra.Command, args []string, parse func(io.Reader) (imp
 		if len(batch.Errors) > 0 && !skipInvalid {
 			return fmt.Errorf("%d invalid rows; nothing imported (fix them, or use --skip-invalid to import the rest)", len(batch.Errors))
 		}
-		return applyImport(cmd, s, batch, opts, len(batch.Errors))
+		return applyImport(cmd, a, batch, opts, len(batch.Errors))
 	})
 }
 
@@ -340,8 +316,8 @@ func importOptions(cmd *cobra.Command) (importer.Options, error) {
 	return importer.Options{OnDuplicate: policy, Match: match, Group: getString(cmd, "group"), Tags: splitTags(getString(cmd, "tags")), DryRun: dryRun}, err
 }
 
-func applyImport(cmd *cobra.Command, s *store.Store, batch importer.Batch, opts importer.Options, invalid int) error {
-	sum, err := importer.Apply(ctx(cmd), s, batch, opts)
+func applyImport(cmd *cobra.Command, a *app.Service, batch importer.Batch, opts importer.Options, invalid int) error {
+	sum, err := a.Import(ctx(cmd), batch, opts)
 	if err != nil {
 		return err
 	}

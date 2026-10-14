@@ -3,9 +3,10 @@ package main
 import (
 	"fmt"
 
+	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/naming"
 	"github.com/ryan/rflib/internal/profile"
-	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -42,12 +43,12 @@ characters from an export profile instead of the flags.`}
 		if err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			cs, err := filteredChannels(cmd, s)
+		return withApp(cmd, func(a *app.Service) error {
+			cs, err := filteredChannels(cmd, a)
 			if err != nil {
 				return err
 			}
-			if err := sortChannels(cs, getString(cmd, "sort")); err != nil {
+			if err := domain.SortChannels(cs, getString(cmd, "sort")); err != nil {
 				return err
 			}
 			_, results := naming.Apply(cs, rules, dedupe)

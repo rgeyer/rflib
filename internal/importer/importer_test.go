@@ -11,23 +11,29 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/store"
+	"github.com/ryan/rflib/internal/store/sqlite"
 )
 
-func newStore(t *testing.T) *store.Store {
+func newStore(t *testing.T) store.Library {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "lib.db"))
+	ctx := context.Background()
+	d, err := sqlite.Open(filepath.Join(t.TempDir(), "lib.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
-	if err := s.Migrate(context.Background()); err != nil {
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return s
+	lib, err := d.GetLibrary(ctx, domain.DefaultLibrary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.Library(lib.ID)
 }
 
 // seed fills a library with channels covering every field and tone kind.
-func seed(t *testing.T, s *store.Store) {
+func seed(t *testing.T, s store.Library) {
 	t.Helper()
 	ctx := context.Background()
 	lat, lon, radius := 45.5152, -122.6784, 40.0
@@ -58,9 +64,9 @@ func seed(t *testing.T, s *store.Store) {
 	}
 }
 
-func exportCSV(t *testing.T, s *store.Store) string {
+func exportCSV(t *testing.T, s store.Library) string {
 	t.Helper()
-	cs, err := s.ListChannels(context.Background(), store.ChannelFilter{})
+	cs, err := s.ListChannels(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,10 +77,10 @@ func exportCSV(t *testing.T, s *store.Store) string {
 	return buf.String()
 }
 
-func exportJSON(t *testing.T, s *store.Store) string {
+func exportJSON(t *testing.T, s store.Library) string {
 	t.Helper()
 	ctx := context.Background()
-	cs, err := s.ListChannels(ctx, store.ChannelFilter{})
+	cs, err := s.ListChannels(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +95,7 @@ func exportJSON(t *testing.T, s *store.Store) string {
 	return buf.String()
 }
 
-func mustApply(t *testing.T, s *store.Store, b Batch, opts Options) Summary {
+func mustApply(t *testing.T, s store.Library, b Batch, opts Options) Summary {
 	t.Helper()
 	if len(b.Errors) > 0 {
 		t.Fatalf("parse errors: %v", b.Errors)
@@ -161,7 +167,7 @@ func TestDuplicatePolicies(t *testing.T) {
 	if sum := mustApply(t, s, parse(), Options{OnDuplicate: CreateDuplicates}); sum.Created != 3 {
 		t.Fatalf("create: %+v", sum)
 	}
-	if cs, _ := s.ListChannels(context.Background(), store.ChannelFilter{}); len(cs) != 6 {
+	if cs, _ := s.ListChannels(context.Background()); len(cs) != 6 {
 		t.Fatalf("channels = %d, want 6", len(cs))
 	}
 }
@@ -248,7 +254,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 	if sum.Created != 1 || len(sum.GroupsCreated) != 1 {
 		t.Fatalf("summary = %+v", sum)
 	}
-	cs, _ := s.ListChannels(context.Background(), store.ChannelFilter{})
+	cs, _ := s.ListChannels(context.Background())
 	gs, _ := s.ListGroups(context.Background())
 	if len(cs) != 0 || len(gs) != 0 {
 		t.Fatalf("dry run wrote %d channels, %d groups", len(cs), len(gs))
@@ -266,7 +272,7 @@ func TestApplyIsAtomic(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "row 3") {
 		t.Fatalf("err = %v", err)
 	}
-	if cs, _ := s.ListChannels(context.Background(), store.ChannelFilter{}); len(cs) != 0 {
+	if cs, _ := s.ListChannels(context.Background()); len(cs) != 0 {
 		t.Fatalf("failed import left %d channels", len(cs))
 	}
 }
@@ -284,7 +290,7 @@ func TestGroupAndTagOverrides(t *testing.T) {
 	if sum := mustApply(t, s, b, Options{Group: "Target", Tags: []string{"Imported"}}); len(sum.GroupsCreated) != 0 {
 		t.Fatalf("override still created groups: %v", sum.GroupsCreated)
 	}
-	cs, _ := s.ListChannels(context.Background(), store.ChannelFilter{})
+	cs, _ := s.ListChannels(context.Background())
 	if len(cs) != 1 || *cs[0].GroupID != g.ID || strings.Join(cs[0].Tags, ",") != "ham,imported" {
 		t.Fatalf("channel = %+v", cs[0])
 	}
@@ -344,7 +350,13 @@ func TestServiceOverrideAndWarnings(t *testing.T) {
 	if len(sum.Warnings) != 0 {
 		t.Fatalf("public safety defaults to receive only, so no warnings expected: %v", sum.Warnings)
 	}
-	cs, _ := s.ListChannels(context.Background(), store.ChannelFilter{Service: domain.ServicePublicSafety})
+	all, _ := s.ListChannels(context.Background())
+	var cs []domain.Channel
+	for _, c := range all {
+		if c.Service == domain.ServicePublicSafety {
+			cs = append(cs, c)
+		}
+	}
 	if len(cs) != 2 || !cs[0].RXOnly || cs[0].TransmitHz == nil {
 		t.Fatalf("channels = %+v", cs)
 	}

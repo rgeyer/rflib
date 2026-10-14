@@ -83,7 +83,7 @@ var errDryRun = errors.New("dry run")
 // leaves the library unchanged. With DryRun the same work runs and is then
 // rolled back, so the summary is exact. Batch.Errors are the caller's
 // concern; Apply only writes Records.
-func Apply(ctx context.Context, s *store.Store, b Batch, opts Options) (Summary, error) {
+func Apply(ctx context.Context, s store.Library, b Batch, opts Options) (Summary, error) {
 	if opts.OnDuplicate == "" {
 		opts.OnDuplicate = SkipDuplicates
 	}
@@ -91,7 +91,7 @@ func Apply(ctx context.Context, s *store.Store, b Batch, opts Options) (Summary,
 		opts.Match = MatchExact
 	}
 	var sum Summary
-	err := s.InTx(ctx, func(tx *store.Store) error {
+	err := s.InTx(ctx, func(tx store.Library) error {
 		a, err := newApplier(ctx, tx, opts)
 		if err != nil {
 			return err
@@ -120,7 +120,7 @@ func Apply(ctx context.Context, s *store.Store, b Batch, opts Options) (Summary,
 
 type applier struct {
 	ctx         context.Context
-	tx          *store.Store
+	tx          store.Library
 	opts        Options
 	target      *domain.Group
 	groupByID   map[string]domain.Group
@@ -130,7 +130,7 @@ type applier struct {
 	sum         Summary
 }
 
-func newApplier(ctx context.Context, tx *store.Store, opts Options) (*applier, error) {
+func newApplier(ctx context.Context, tx store.Library, opts Options) (*applier, error) {
 	a := &applier{ctx: ctx, tx: tx, opts: opts, groupByID: map[string]domain.Group{}, groupByName: map[string]domain.Group{}, chanByID: map[string]domain.Channel{}, chanByKey: map[string]domain.Channel{}}
 	groups, err := tx.ListGroups(ctx)
 	if err != nil {
@@ -146,7 +146,7 @@ func newApplier(ctx context.Context, tx *store.Store, opts Options) (*applier, e
 		}
 		a.target = &g
 	}
-	channels, err := tx.ListChannels(ctx, store.ChannelFilter{})
+	channels, err := tx.ListChannels(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,391 @@
+// Package sqlite is the SQLite implementation of package store, using the
+// pure-Go modernc.org/sqlite driver.
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/store"
+	_ "modernc.org/sqlite"
+)
+
+// DB is a SQLite database of libraries.
+type DB struct {
+	db *sql.DB
+}
+
+var _ store.Store = (*DB)(nil)
+
+// execer and querier are satisfied by both *sql.DB and *sql.Tx.
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+type querier interface {
+	execer
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// Open opens a SQLite database. Pragmas are set in the DSN so every pooled
+// connection enforces foreign keys, not just the first one.
+func Open(path string) (*DB, error) {
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	return &DB{db: db}, nil
+}
+
+func (d *DB) Close() error { return d.db.Close() }
+
+func (d *DB) Ready(ctx context.Context) error {
+	var version sql.NullInt64
+	if err := d.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		return fmt.Errorf("library is not initialized; run rflib init: %w", err)
+	}
+	if !version.Valid || version.Int64 < latestVersion() {
+		return fmt.Errorf("library schema is out of date; run rflib init to upgrade it")
+	}
+	return nil
+}
+
+type migration struct {
+	version int64
+	sql     string
+	// rebuild marks a migration that rebuilds tables other tables refer
+	// to. It runs with foreign keys off, as SQLite's ALTER TABLE
+	// documentation prescribes, and checks them before committing.
+	rebuild bool
+}
+
+// baselineVersion is the schema version that baselineSchema creates directly
+// on a fresh database.
+const baselineVersion = 2
+
+const baselineSchema = `
+CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', latitude REAL, longitude REAL, radius_km REAL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE channels (id TEXT PRIMARY KEY, group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, name TEXT NOT NULL, receive_hz INTEGER NOT NULL, transmit_hz INTEGER, mode TEXT NOT NULL, receive_tone_kind TEXT NOT NULL, receive_ctcss_millihz INTEGER, receive_dcs_code INTEGER, receive_dcs_inverted INTEGER NOT NULL DEFAULT 0, transmit_tone_kind TEXT NOT NULL, transmit_ctcss_millihz INTEGER, transmit_dcs_code INTEGER, transmit_dcs_inverted INTEGER NOT NULL DEFAULT 0, tone_squelch INTEGER NOT NULL DEFAULT 0, power TEXT NOT NULL DEFAULT '', bandwidth TEXT NOT NULL DEFAULT '', skip INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE channel_tags (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY(channel_id, tag));
+CREATE INDEX idx_channels_group ON channels(group_id);
+CREATE INDEX idx_channel_tags_tag ON channel_tags(tag);`
+
+// newIDSQL generates an ID in the same shape as domain.NewID.
+const newIDSQL = `lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(6)))`
+
+// migrations upgrade existing databases. Append new steps in version order;
+// each runs in its own transaction together with its schema_migrations row.
+var migrations = []migration{
+	{version: 2, sql: `
+ALTER TABLE channels ADD COLUMN receive_ctcss_millihz INTEGER;
+ALTER TABLE channels ADD COLUMN transmit_ctcss_millihz INTEGER;
+UPDATE channels SET receive_ctcss_millihz = CAST(ROUND(receive_ctcss_hz * 1000) AS INTEGER), transmit_ctcss_millihz = CAST(ROUND(transmit_ctcss_hz * 1000) AS INTEGER);`},
+	{version: 3, sql: `
+ALTER TABLE channels ADD COLUMN service TEXT NOT NULL DEFAULT '';
+ALTER TABLE channels ADD COLUMN rx_only INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_channels_service ON channels(service);`},
+	{version: 4, sql: `
+CREATE TABLE channel_short_names (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, PRIMARY KEY(channel_id, position));`},
+	// Power becomes an intent. Level names map across; anything else,
+	// such as watts from an import, describes the source's radio and is
+	// dropped (see domain.PowerFromText, which imports use).
+	{version: 5, sql: `
+UPDATE channels SET power = CASE lower(trim(power))
+	WHEN 'low' THEN 'low' WHEN 'lo' THEN 'low' WHEN 'l' THEN 'low' WHEN 'low1' THEN 'low' WHEN 'low2' THEN 'low'
+	WHEN 'medium' THEN 'medium' WHEN 'med' THEN 'medium' WHEN 'mid' THEN 'medium' WHEN 'm' THEN 'medium' WHEN 'mid1' THEN 'medium' WHEN 'mid2' THEN 'medium'
+	WHEN 'high' THEN 'high' WHEN 'hi' THEN 'high' WHEN 'h' THEN 'high'
+	WHEN 'max' THEN 'max' WHEN 'maximum' THEN 'max' WHEN 'full' THEN 'max'
+	ELSE '' END;
+ALTER TABLE groups ADD COLUMN power TEXT NOT NULL DEFAULT '';
+CREATE TABLE radios (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, model TEXT NOT NULL, default_power TEXT NOT NULL DEFAULT '', dedupe TEXT NOT NULL DEFAULT '', sync_tag TEXT NOT NULL DEFAULT '', sync_group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, sync_service TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE radio_channels (radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, position INTEGER NOT NULL, section_start INTEGER, name TEXT NOT NULL DEFAULT '', power TEXT NOT NULL DEFAULT '', skip INTEGER, PRIMARY KEY(radio_id, channel_id));
+CREATE INDEX idx_radio_channels_order ON radio_channels(radio_id, position);
+CREATE INDEX idx_radio_channels_channel ON radio_channels(channel_id);`},
+	// Saved searches, and radio sources in place of the one-filter sync.
+	// Each radio's old sync filter becomes its first source.
+	{version: 6, sql: `
+CREATE TABLE searches (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, query TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE radio_sources (id TEXT PRIMARY KEY, radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, position INTEGER NOT NULL, query TEXT NOT NULL, sort TEXT NOT NULL DEFAULT 'name', section_start INTEGER);
+CREATE INDEX idx_radio_sources_order ON radio_sources(radio_id, position);
+ALTER TABLE radio_channels ADD COLUMN source_id TEXT REFERENCES radio_sources(id) ON DELETE SET NULL;
+INSERT INTO radio_sources (id, radio_id, position, query, sort)
+SELECT ` + newIDSQL + `, id, 0,
+	trim(
+		CASE WHEN sync_tag <> '' THEN 'tag:"' || replace(replace(sync_tag, '\', '\\'), '"', '\"') || '" ' ELSE '' END ||
+		CASE WHEN sync_group_id IS NOT NULL THEN 'group:' || sync_group_id || ' ' ELSE '' END ||
+		CASE WHEN sync_service <> '' THEN 'service:' || sync_service ELSE '' END),
+	'name'
+FROM radios WHERE sync_tag <> '' OR sync_group_id IS NOT NULL OR sync_service <> '';`},
+	// Libraries. Everything so far moves into one named "default". Groups,
+	// channels, radios, and searches are rebuilt with a library_id, so
+	// names are unique per library; the rebuild also drops the unused
+	// sync_* and pre-v2 CTCSS columns.
+	{version: 7, rebuild: true, sql: `
+CREATE TABLE libraries (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+INSERT INTO libraries (id, name, created_at, updated_at) VALUES (` + newIDSQL + `, 'default', strftime('%Y-%m-%dT%H:%M:%fZ'), strftime('%Y-%m-%dT%H:%M:%fZ'));
+
+CREATE TABLE new_groups (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', latitude REAL, longitude REAL, radius_km REAL, power TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(library_id, name));
+INSERT INTO new_groups SELECT id, (SELECT id FROM libraries), name, description, latitude, longitude, radius_km, power, notes, created_at, updated_at FROM groups;
+DROP TABLE groups;
+ALTER TABLE new_groups RENAME TO groups;
+
+CREATE TABLE new_channels (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, name TEXT NOT NULL, receive_hz INTEGER NOT NULL, transmit_hz INTEGER, mode TEXT NOT NULL, service TEXT NOT NULL DEFAULT '', rx_only INTEGER NOT NULL DEFAULT 0, receive_tone_kind TEXT NOT NULL, receive_ctcss_millihz INTEGER, receive_dcs_code INTEGER, receive_dcs_inverted INTEGER NOT NULL DEFAULT 0, transmit_tone_kind TEXT NOT NULL, transmit_ctcss_millihz INTEGER, transmit_dcs_code INTEGER, transmit_dcs_inverted INTEGER NOT NULL DEFAULT 0, tone_squelch INTEGER NOT NULL DEFAULT 0, power TEXT NOT NULL DEFAULT '', bandwidth TEXT NOT NULL DEFAULT '', skip INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+INSERT INTO new_channels SELECT id, (SELECT id FROM libraries), group_id, name, receive_hz, transmit_hz, mode, service, rx_only, receive_tone_kind, receive_ctcss_millihz, receive_dcs_code, receive_dcs_inverted, transmit_tone_kind, transmit_ctcss_millihz, transmit_dcs_code, transmit_dcs_inverted, tone_squelch, power, bandwidth, skip, notes, created_at, updated_at FROM channels;
+DROP TABLE channels;
+ALTER TABLE new_channels RENAME TO channels;
+CREATE INDEX idx_channels_library ON channels(library_id, name);
+CREATE INDEX idx_channels_group ON channels(group_id);
+CREATE INDEX idx_channels_service ON channels(service);
+
+CREATE TABLE new_radios (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, name TEXT NOT NULL, model TEXT NOT NULL, default_power TEXT NOT NULL DEFAULT '', dedupe TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(library_id, name));
+INSERT INTO new_radios SELECT id, (SELECT id FROM libraries), name, model, default_power, dedupe, notes, created_at, updated_at FROM radios;
+DROP TABLE radios;
+ALTER TABLE new_radios RENAME TO radios;
+
+CREATE TABLE new_searches (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, name TEXT NOT NULL, query TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(library_id, name));
+INSERT INTO new_searches SELECT id, (SELECT id FROM libraries), name, query, notes, created_at, updated_at FROM searches;
+DROP TABLE searches;
+ALTER TABLE new_searches RENAME TO searches;`},
+}
+
+func latestVersion() int64 {
+	v := int64(baselineVersion)
+	for _, m := range migrations {
+		v = max(v, m.version)
+	}
+	return v
+}
+
+func (d *DB) Migrate(ctx context.Context) error {
+	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
+		return fmt.Errorf("create migration table: %w", err)
+	}
+	var version sql.NullInt64
+	if err := d.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if !version.Valid {
+		if err := d.inTx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, baselineSchema); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES (?)`, baselineVersion)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create schema: %w", err)
+		}
+		version = sql.NullInt64{Int64: baselineVersion, Valid: true}
+	}
+	for _, m := range migrations {
+		if m.version <= version.Int64 {
+			continue
+		}
+		if err := d.migrate(ctx, m); err != nil {
+			return fmt.Errorf("migrate schema to version %d: %w", m.version, err)
+		}
+	}
+	return nil
+}
+
+func (d *DB) migrate(ctx context.Context, m migration) error {
+	if m.rebuild {
+		// The pool has one connection, so the pragma applies to the
+		// transaction below. It can't change inside a transaction.
+		if _, err := d.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
+		defer func() { _, _ = d.db.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`) }()
+	}
+	return d.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
+			return err
+		}
+		if m.rebuild {
+			if err := checkForeignKeys(ctx, tx); err != nil {
+				return err
+			}
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES (?)`, m.version)
+		return err
+	})
+}
+
+// checkForeignKeys fails when any reference is broken.
+func checkForeignKeys(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var table, parent string
+		var rowid sql.NullInt64
+		var fk int
+		if err := rows.Scan(&table, &rowid, &parent, &fk); err != nil {
+			return err
+		}
+		return fmt.Errorf("broken reference from %s to %s", table, parent)
+	}
+	return rows.Err()
+}
+
+func (d *DB) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// assignIdentity fills in an ID and timestamps that the caller left empty.
+// Imports supply them so a restored backup keeps its original identity.
+func assignIdentity(id *string, created, updated *time.Time) error {
+	if *id == "" {
+		v, err := domain.NewID()
+		if err != nil {
+			return err
+		}
+		*id = v
+	}
+	now := time.Now().UTC()
+	if created.IsZero() {
+		*created = now
+	}
+	if updated.IsZero() {
+		*updated = now
+	}
+	return nil
+}
+
+// freeID clears a supplied ID that a record in table already has, in any
+// library, so assignIdentity gives a new one. Restoring one library's
+// backup into another therefore copies it instead of failing.
+func freeID(ctx context.Context, q querier, table string, id *string) error {
+	if *id == "" {
+		return nil
+	}
+	var n int
+	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM `+table+` WHERE id=?`, *id).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		*id = ""
+	}
+	return nil
+}
+
+// conflict turns a uniqueness violation into store.ErrConflict.
+func conflict(err error, format string, args ...any) error {
+	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		return fmt.Errorf(format+": %w", append(args, store.ErrConflict)...)
+	}
+	return err
+}
+
+func timestamp(t time.Time) string { return t.Format(time.RFC3339Nano) }
+
+func parseTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t
+}
+
+// --- libraries ---
+
+const libraryColumns = `id,name,description,created_at,updated_at`
+
+func (d *DB) CreateLibrary(ctx context.Context, lib domain.Library) (domain.Library, error) {
+	if err := domain.ValidateLibrary(lib); err != nil {
+		return lib, err
+	}
+	if err := assignIdentity(&lib.ID, &lib.CreatedAt, &lib.UpdatedAt); err != nil {
+		return lib, err
+	}
+	_, err := d.db.ExecContext(ctx, `INSERT INTO libraries (`+libraryColumns+`) VALUES (?,?,?,?,?)`,
+		lib.ID, lib.Name, lib.Description, timestamp(lib.CreatedAt), timestamp(lib.UpdatedAt))
+	if err != nil {
+		return lib, conflict(fmt.Errorf("create library: %w", err), "a library named %q", lib.Name)
+	}
+	return lib, nil
+}
+
+func (d *DB) GetLibrary(ctx context.Context, idOrName string) (domain.Library, error) {
+	lib, err := scanLibrary(d.db.QueryRowContext(ctx, `SELECT `+libraryColumns+` FROM libraries WHERE id=? OR name=?`, idOrName, idOrName))
+	if errors.Is(err, sql.ErrNoRows) {
+		return lib, fmt.Errorf("library %q: %w", idOrName, store.ErrNotFound)
+	}
+	return lib, err
+}
+
+func (d *DB) ListLibraries(ctx context.Context) ([]domain.Library, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT `+libraryColumns+` FROM libraries ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Library
+	for rows.Next() {
+		lib, err := scanLibrary(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, lib)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) UpdateLibrary(ctx context.Context, lib domain.Library) (domain.Library, error) {
+	if err := domain.ValidateLibrary(lib); err != nil {
+		return lib, err
+	}
+	lib.UpdatedAt = time.Now().UTC()
+	res, err := d.db.ExecContext(ctx, `UPDATE libraries SET name=?,description=?,updated_at=? WHERE id=?`,
+		lib.Name, lib.Description, timestamp(lib.UpdatedAt), lib.ID)
+	if err != nil {
+		return lib, conflict(fmt.Errorf("update library: %w", err), "a library named %q", lib.Name)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return lib, fmt.Errorf("library %q: %w", lib.ID, store.ErrNotFound)
+	}
+	return lib, nil
+}
+
+func (d *DB) DeleteLibrary(ctx context.Context, id string) error {
+	res, err := d.db.ExecContext(ctx, `DELETE FROM libraries WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("delete library: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("library %q: %w", id, store.ErrNotFound)
+	}
+	return nil
+}
+
+type scanner interface{ Scan(...any) error }
+
+func scanLibrary(r scanner) (domain.Library, error) {
+	var lib domain.Library
+	var created, updated string
+	if err := r.Scan(&lib.ID, &lib.Name, &lib.Description, &created, &updated); err != nil {
+		return lib, err
+	}
+	lib.CreatedAt, lib.UpdatedAt = parseTime(created), parseTime(updated)
+	return lib, nil
+}
+
+// Library returns the library with the given ID.
+func (d *DB) Library(id string) store.Library { return &library{db: d.db, q: d.db, id: id} }

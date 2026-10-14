@@ -21,6 +21,27 @@ export RFLIB_DB=./radio-library.db
 
 Back up the database by copying it while the CLI is not running.
 
+## Libraries
+
+One database can hold several **libraries**, each a separate collection of groups, channels, radios, and saved searches. Names only have to be unique within a library, so two libraries can each have a group called "Home" and a radio called "HT".
+
+Every command works on one library: `--library NAME`, else `$RFLIB_LIBRARY`, else `default`. Every database starts with a library called `default`, and upgrading an existing database moves everything already in it there.
+
+```sh
+./rflib library add club --description "Club radios"
+./rflib library list                      # * marks the library in use
+./rflib --library club seed install us-gmrs
+RFLIB_LIBRARY=club ./rflib radio list
+./rflib library update club --name "Club Radios"
+./rflib library delete "Club Radios" --yes   # deletes everything in it
+```
+
+To copy channels from one library to another, export a backup from one and import it into the other. The copies get new IDs, and groups are matched by name:
+
+```sh
+./rflib export json --library default | ./rflib import json --library club
+```
+
 ## Groups
 
 Groups are optional geographic collections. Provide latitude and longitude together; radius is optional metadata for the group itself.
@@ -464,3 +485,5 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 ```sh
 make check    # go vet, golangci-lint, and go test
 ```
+
+The CLI (`cmd/rflib`) parses flags and prints results. The operations themselves live in `internal/app`, which the coming web API shares. `internal/app` works on one library through the `store.Store` and `store.Library` interfaces (`internal/store`); `internal/store/sqlite` implements them. Any other backend must pass the contract tests in `internal/store/storetest`.

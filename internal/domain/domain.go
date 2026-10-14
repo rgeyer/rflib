@@ -67,9 +67,9 @@ type Channel struct {
 	// ProgrammedPower is the radio power level chosen for an export. It is
 	// set on export copies by a radio's power resolution and never stored.
 	ProgrammedPower *PowerLevel
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	Group      *Group
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Group           *Group
 }
 
 func NewID() (string, error) {

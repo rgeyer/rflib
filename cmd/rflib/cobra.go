@@ -5,8 +5,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
-	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -19,8 +19,9 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	}
 	root.SetOut(out)
 	root.SetErr(errOut)
-	root.PersistentFlags().String("db", "", "SQLite library path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
-	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand())
+	root.PersistentFlags().String("db", "", "SQLite database path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
+	root.PersistentFlags().String("library", "", "Library to use, by name or ID (default $RFLIB_LIBRARY, then \"default\"; see rflib library)")
+	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newLibraryCommand())
 	return root
 }
 
@@ -117,8 +118,8 @@ func newGroupAddCommand() *cobra.Command {
 		if err := applyGroupFlags(cmd, &g, true); err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			g, err := s.CreateGroup(ctx(cmd), g)
+		return withApp(cmd, func(a *app.Service) error {
+			g, err := a.CreateGroup(ctx(cmd), g)
 			if err == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), g.ID)
 			}
@@ -136,8 +137,8 @@ func newGroupListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			gs, err := s.ListGroups(ctx(cmd))
+		return withApp(cmd, func(a *app.Service) error {
+			gs, err := a.ListGroups(ctx(cmd))
 			if err != nil {
 				return err
 			}
@@ -156,8 +157,8 @@ func newGroupShowCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			g, err := s.GetGroup(ctx(cmd), getString(cmd, "id"))
+		return withApp(cmd, func(a *app.Service) error {
+			g, err := a.GetGroup(ctx(cmd), getString(cmd, "id"))
 			if err != nil {
 				return err
 			}
@@ -172,15 +173,15 @@ func newGroupUpdateCommand() *cobra.Command {
 	idFlag(cmd, "Group ID or name (required)")
 	groupFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			g, err := s.GetGroup(ctx(cmd), getString(cmd, "id"))
+		return withApp(cmd, func(a *app.Service) error {
+			g, err := a.GetGroup(ctx(cmd), getString(cmd, "id"))
 			if err != nil {
 				return err
 			}
 			if err := applyGroupFlags(cmd, &g, false); err != nil {
 				return err
 			}
-			_, err = s.UpdateGroup(ctx(cmd), g)
+			_, err = a.UpdateGroup(ctx(cmd), g)
 			return err
 		})
 	}
@@ -195,7 +196,7 @@ func newGroupDeleteCommand() *cobra.Command {
 		if err := requireYes(cmd, "group"); err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error { return s.DeleteGroup(ctx(cmd), getString(cmd, "id")) })
+		return withApp(cmd, func(a *app.Service) error { return a.DeleteGroup(ctx(cmd), getString(cmd, "id")) })
 	}
 	return cmd
 }
@@ -230,7 +231,7 @@ func channelFields(cmd *cobra.Command) {
 // applyChannelFlags copies flags onto c. With all=false only flags the user
 // explicitly set are applied; an explicitly empty --tx, --group, or --tags
 // clears that field.
-func applyChannelFlags(cmd *cobra.Command, s *store.Store, c *domain.Channel, all bool) error {
+func applyChannelFlags(cmd *cobra.Command, a *app.Service, c *domain.Channel, all bool) error {
 	set := func(name string) bool { return all || cmd.Flags().Changed(name) }
 	for _, f := range []struct {
 		name string
@@ -304,7 +305,7 @@ func applyChannelFlags(cmd *cobra.Command, s *store.Store, c *domain.Channel, al
 	if set("group") {
 		c.GroupID, c.Group = nil, nil
 		if ref := getString(cmd, "group"); strings.TrimSpace(ref) != "" {
-			g, err := s.GetGroup(ctx(cmd), ref)
+			g, err := a.GetGroup(ctx(cmd), ref)
 			if err != nil {
 				return err
 			}
@@ -320,15 +321,15 @@ func newChannelAddCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("rx")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withStore(cmd, func(s *store.Store) error {
+		return withApp(cmd, func(a *app.Service) error {
 			var c domain.Channel
-			if err := applyChannelFlags(cmd, s, &c, true); err != nil {
+			if err := applyChannelFlags(cmd, a, &c, true); err != nil {
 				return err
 			}
-			c, err := s.CreateChannel(ctx(cmd), c)
+			c, warnings, err := a.CreateChannel(ctx(cmd), c)
 			if err == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), c.ID)
-				warnBandPlan(cmd, c)
+				warnBandPlan(cmd, c, warnings)
 			}
 			return err
 		})
@@ -350,8 +351,8 @@ func newChannelListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			cs, err := findChannels(cmd, s, n)
+		return withApp(cmd, func(a *app.Service) error {
+			cs, err := a.FindChannels(ctx(cmd), n)
 			if err != nil {
 				return err
 			}
@@ -370,8 +371,8 @@ func newChannelShowCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			c, err := s.GetChannel(ctx(cmd), getString(cmd, "id"))
+		return withApp(cmd, func(a *app.Service) error {
+			c, err := a.GetChannel(ctx(cmd), getString(cmd, "id"))
 			if err != nil {
 				return err
 			}
@@ -386,16 +387,17 @@ func newChannelUpdateCommand() *cobra.Command {
 	idFlag(cmd, "Channel ID (required)")
 	channelFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			c, err := s.GetChannel(ctx(cmd), getString(cmd, "id"))
+		return withApp(cmd, func(a *app.Service) error {
+			c, err := a.GetChannel(ctx(cmd), getString(cmd, "id"))
 			if err != nil {
 				return err
 			}
-			if err := applyChannelFlags(cmd, s, &c, false); err != nil {
+			if err := applyChannelFlags(cmd, a, &c, false); err != nil {
 				return err
 			}
-			if _, err = s.UpdateChannel(ctx(cmd), c); err == nil {
-				warnBandPlan(cmd, c)
+			c, warnings, err := a.UpdateChannel(ctx(cmd), c)
+			if err == nil {
+				warnBandPlan(cmd, c, warnings)
 			}
 			return err
 		})
@@ -411,14 +413,14 @@ func newChannelDeleteCommand() *cobra.Command {
 		if err := requireYes(cmd, "channel"); err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error { return s.DeleteChannel(ctx(cmd), getString(cmd, "id")) })
+		return withApp(cmd, func(a *app.Service) error { return a.DeleteChannel(ctx(cmd), getString(cmd, "id")) })
 	}
 	return cmd
 }
 
-// warnBandPlan prints band-plan warnings for a saved channel to stderr.
-func warnBandPlan(cmd *cobra.Command, c domain.Channel) {
-	for _, w := range domain.CheckBandPlan(c) {
+// warnBandPlan prints a saved channel's band-plan warnings to stderr.
+func warnBandPlan(cmd *cobra.Command, c domain.Channel, warnings []string) {
+	for _, w := range warnings {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s: %s\n", c.Name, w)
 	}
 }

@@ -1,560 +1,136 @@
+// Package store defines how rflib keeps its data, independent of the
+// database: a Store holds libraries, and a Library holds one library's
+// groups, channels, radios, and saved searches. Package sqlite implements
+// it; package storetest is the contract every implementation must pass.
+//
+// Stores check what a database can check: that records are well formed,
+// names are unique within a library, and references stay inside their
+// library. Rules that need more than one record, such as what a saved
+// search may refer to, belong to package app.
 package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
-	"strings"
-	"time"
 
 	"github.com/ryan/rflib/internal/domain"
-	_ "modernc.org/sqlite"
 )
 
-// ErrNotFound is returned (wrapped) when a group or channel lookup matches nothing.
-var ErrNotFound = errors.New("not found")
+var (
+	// ErrNotFound is returned (wrapped) when a lookup matches nothing in
+	// the library.
+	ErrNotFound = errors.New("not found")
+	// ErrConflict is returned (wrapped) when a name is already taken in the
+	// library.
+	ErrConflict = errors.New("already exists")
+)
 
-// Store is a SQLite library. A Store returned to an InTx callback is bound to
-// that transaction; all other Stores run each call on the shared pool.
-type Store struct {
-	db *sql.DB
-	q  querier
-	tx *sql.Tx
-}
+// Store is a database of libraries.
+type Store interface {
+	// Migrate creates or upgrades the schema.
+	Migrate(ctx context.Context) error
+	// Ready reports an error unless the schema is current.
+	Ready(ctx context.Context) error
+	Close() error
 
-type ChannelFilter struct {
-	GroupID string
-	Tag     string
-	// Service filters by service when set; it can't select unspecified.
-	Service   domain.Service
-	Latitude  *float64
-	Longitude *float64
-	RadiusKM  *float64
-}
+	CreateLibrary(ctx context.Context, lib domain.Library) (domain.Library, error)
+	// GetLibrary looks a library up by ID or name.
+	GetLibrary(ctx context.Context, idOrName string) (domain.Library, error)
+	ListLibraries(ctx context.Context) ([]domain.Library, error)
+	UpdateLibrary(ctx context.Context, lib domain.Library) (domain.Library, error)
+	// DeleteLibrary deletes a library and everything in it.
+	DeleteLibrary(ctx context.Context, id string) error
 
-// execer and querier are satisfied by both *sql.DB and *sql.Tx.
-type execer interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}
-
-type querier interface {
-	execer
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+	// Library returns the library with the given ID. It doesn't check
+	// that the library exists; look it up with GetLibrary first.
+	Library(id string) Library
 }
 
-// Open opens a SQLite library. Pragmas are set in the DSN so every pooled
-// connection enforces foreign keys, not just the first one.
-func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	return &Store{db: db, q: db}, nil
-}
+// Library is one library's data. Every lookup is confined to the library:
+// a record in another library is not found.
+type Library interface {
+	ID() string
+	// InTx runs fn in one transaction, committing when it returns nil. Only
+	// the Library passed to fn may be used inside it.
+	InTx(ctx context.Context, fn func(Library) error) error
 
-func (s *Store) Close() error { return s.db.Close() }
+	CreateGroup(ctx context.Context, g domain.Group) (domain.Group, error)
+	// GetGroup looks a group up by ID or name.
+	GetGroup(ctx context.Context, idOrName string) (domain.Group, error)
+	ListGroups(ctx context.Context) ([]domain.Group, error)
+	UpdateGroup(ctx context.Context, g domain.Group) (domain.Group, error)
+	// DeleteGroup deletes a group by ID or name; its channels become
+	// ungrouped.
+	DeleteGroup(ctx context.Context, idOrName string) error
 
-func (s *Store) Ready(ctx context.Context) error {
-	var version sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
-		return fmt.Errorf("library is not initialized; run rflib init: %w", err)
-	}
-	if !version.Valid || version.Int64 < latestVersion() {
-		return fmt.Errorf("library schema is out of date; run rflib init to upgrade it")
-	}
-	return nil
-}
+	// CreateChannel stores a channel. A supplied ID is kept, so restored
+	// backups keep their identity, unless another record already has it;
+	// then a new one is assigned.
+	CreateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error)
+	GetChannel(ctx context.Context, id string) (domain.Channel, error)
+	// ListChannels returns every channel, with its group, in name order.
+	ListChannels(ctx context.Context) ([]domain.Channel, error)
+	UpdateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error)
+	// DeleteChannel deletes a channel and takes it off every radio.
+	DeleteChannel(ctx context.Context, id string) error
 
-type migration struct {
-	version int64
-	sql     string
-}
+	CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error)
+	// GetRadio looks a radio up by ID or name.
+	GetRadio(ctx context.Context, idOrName string) (domain.Radio, error)
+	ListRadios(ctx context.Context) ([]domain.Radio, error)
+	UpdateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error)
+	// DeleteRadio deletes a radio; its channels stay in the library.
+	DeleteRadio(ctx context.Context, id string) error
 
-// baselineVersion is the schema version that baselineSchema creates directly
-// on a fresh database.
-const baselineVersion = 2
+	// RadioEntries returns a radio's channels in memory order, with the
+	// radio's overrides for each.
+	RadioEntries(ctx context.Context, radioID string) ([]domain.RadioEntry, error)
+	// AddRadioChannels appends channels to the end of a radio's list in the
+	// order given, skipping any already on it, and returns how many were
+	// added.
+	AddRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error)
+	// AddSourceChannels adds channels for a radio source, skipping any
+	// already on the radio. They go after the last channel the source
+	// added; for a source with none yet, after the channels of earlier
+	// sources and before those of later ones, else at the end. The source's
+	// section start, when set, is kept on its first channel.
+	AddSourceChannels(ctx context.Context, src domain.RadioSource, channelIDs []string) (int, error)
+	// RemoveRadioChannels takes channels off a radio, closes up the list,
+	// and returns how many were removed.
+	RemoveRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error)
+	// MoveRadioChannel moves a channel to index to (from 0) in the radio's
+	// list; an index past the end moves it last.
+	MoveRadioChannel(ctx context.Context, radioID, channelID string, to int) error
+	// SetRadioEntry stores a radio's overrides for one of its channels: the
+	// entry's SectionStart, Name, Power, and Skip.
+	SetRadioEntry(ctx context.Context, radioID string, e domain.RadioEntry) error
+	// RadioChannelIDs returns the channels on a radio, or on any radio when
+	// radioID is empty.
+	RadioChannelIDs(ctx context.Context, radioID string) (map[string]bool, error)
 
-const baselineSchema = `
-CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', latitude REAL, longitude REAL, radius_km REAL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE channels (id TEXT PRIMARY KEY, group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, name TEXT NOT NULL, receive_hz INTEGER NOT NULL, transmit_hz INTEGER, mode TEXT NOT NULL, receive_tone_kind TEXT NOT NULL, receive_ctcss_millihz INTEGER, receive_dcs_code INTEGER, receive_dcs_inverted INTEGER NOT NULL DEFAULT 0, transmit_tone_kind TEXT NOT NULL, transmit_ctcss_millihz INTEGER, transmit_dcs_code INTEGER, transmit_dcs_inverted INTEGER NOT NULL DEFAULT 0, tone_squelch INTEGER NOT NULL DEFAULT 0, power TEXT NOT NULL DEFAULT '', bandwidth TEXT NOT NULL DEFAULT '', skip INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE channel_tags (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY(channel_id, tag));
-CREATE INDEX idx_channels_group ON channels(group_id);
-CREATE INDEX idx_channel_tags_tag ON channel_tags(tag);`
+	// RadioSources returns a radio's sources in order.
+	RadioSources(ctx context.Context, radioID string) ([]domain.RadioSource, error)
+	// AllRadioSources returns every radio's sources.
+	AllRadioSources(ctx context.Context) ([]domain.RadioSource, error)
+	// AddRadioSource appends a source to its radio's sources.
+	AddRadioSource(ctx context.Context, src domain.RadioSource) (domain.RadioSource, error)
+	// UpdateRadioSource changes a source's query, sort, and section start.
+	// A changed section start moves to the source's first channel now; a
+	// removed one is taken off it, if it is still the source's.
+	UpdateRadioSource(ctx context.Context, src domain.RadioSource) error
+	// MoveRadioSource moves a source to index to (from 0). Channels already
+	// on the radio stay where they are.
+	MoveRadioSource(ctx context.Context, src domain.RadioSource, to int) error
+	// RemoveRadioSource deletes a source. Its channels stay on the radio as
+	// if added by hand, unless withChannels; it returns how many channels
+	// were taken off.
+	RemoveRadioSource(ctx context.Context, src domain.RadioSource, withChannels bool) (int, error)
 
-// migrations upgrade existing databases. Append new steps in version order;
-// each runs in its own transaction together with its schema_migrations row.
-var migrations = []migration{
-	{2, `
-ALTER TABLE channels ADD COLUMN receive_ctcss_millihz INTEGER;
-ALTER TABLE channels ADD COLUMN transmit_ctcss_millihz INTEGER;
-UPDATE channels SET receive_ctcss_millihz = CAST(ROUND(receive_ctcss_hz * 1000) AS INTEGER), transmit_ctcss_millihz = CAST(ROUND(transmit_ctcss_hz * 1000) AS INTEGER);`},
-	{3, `
-ALTER TABLE channels ADD COLUMN service TEXT NOT NULL DEFAULT '';
-ALTER TABLE channels ADD COLUMN rx_only INTEGER NOT NULL DEFAULT 0;
-CREATE INDEX idx_channels_service ON channels(service);`},
-	{4, `
-CREATE TABLE channel_short_names (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, PRIMARY KEY(channel_id, position));`},
-	// Power becomes an intent. Level names map across; anything else,
-	// such as watts from an import, describes the source's radio and is
-	// dropped (see domain.PowerFromText, which imports use).
-	{5, `
-UPDATE channels SET power = CASE lower(trim(power))
-	WHEN 'low' THEN 'low' WHEN 'lo' THEN 'low' WHEN 'l' THEN 'low' WHEN 'low1' THEN 'low' WHEN 'low2' THEN 'low'
-	WHEN 'medium' THEN 'medium' WHEN 'med' THEN 'medium' WHEN 'mid' THEN 'medium' WHEN 'm' THEN 'medium' WHEN 'mid1' THEN 'medium' WHEN 'mid2' THEN 'medium'
-	WHEN 'high' THEN 'high' WHEN 'hi' THEN 'high' WHEN 'h' THEN 'high'
-	WHEN 'max' THEN 'max' WHEN 'maximum' THEN 'max' WHEN 'full' THEN 'max'
-	ELSE '' END;
-ALTER TABLE groups ADD COLUMN power TEXT NOT NULL DEFAULT '';
-CREATE TABLE radios (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, model TEXT NOT NULL, default_power TEXT NOT NULL DEFAULT '', dedupe TEXT NOT NULL DEFAULT '', sync_tag TEXT NOT NULL DEFAULT '', sync_group_id TEXT REFERENCES groups(id) ON DELETE SET NULL, sync_service TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE radio_channels (radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, position INTEGER NOT NULL, section_start INTEGER, name TEXT NOT NULL DEFAULT '', power TEXT NOT NULL DEFAULT '', skip INTEGER, PRIMARY KEY(radio_id, channel_id));
-CREATE INDEX idx_radio_channels_order ON radio_channels(radio_id, position);
-CREATE INDEX idx_radio_channels_channel ON radio_channels(channel_id);`},
-	// Saved searches, and radio sources in place of the one-filter sync.
-	// Each radio's old sync filter becomes its first source. The sync_*
-	// columns stay (SQLite can't drop a column with a foreign key) but are
-	// no longer read or written.
-	{6, `
-CREATE TABLE searches (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, query TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE radio_sources (id TEXT PRIMARY KEY, radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, position INTEGER NOT NULL, query TEXT NOT NULL, sort TEXT NOT NULL DEFAULT 'name', section_start INTEGER);
-CREATE INDEX idx_radio_sources_order ON radio_sources(radio_id, position);
-ALTER TABLE radio_channels ADD COLUMN source_id TEXT REFERENCES radio_sources(id) ON DELETE SET NULL;
-INSERT INTO radio_sources (id, radio_id, position, query, sort)
-SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(6))), id, 0,
-	trim(
-		CASE WHEN sync_tag <> '' THEN 'tag:"' || replace(replace(sync_tag, '\', '\\'), '"', '\"') || '" ' ELSE '' END ||
-		CASE WHEN sync_group_id IS NOT NULL THEN 'group:' || sync_group_id || ' ' ELSE '' END ||
-		CASE WHEN sync_service <> '' THEN 'service:' || sync_service ELSE '' END),
-	'name'
-FROM radios WHERE sync_tag <> '' OR sync_group_id IS NOT NULL OR sync_service <> '';`},
-}
-
-func latestVersion() int64 {
-	v := int64(baselineVersion)
-	for _, m := range migrations {
-		v = max(v, m.version)
-	}
-	return v
-}
-
-func (s *Store) Migrate(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
-		return fmt.Errorf("create migration table: %w", err)
-	}
-	var version sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
-		return fmt.Errorf("read schema version: %w", err)
-	}
-	if !version.Valid {
-		if err := s.inTx(ctx, func(tx execer) error {
-			if _, err := tx.ExecContext(ctx, baselineSchema); err != nil {
-				return err
-			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES (?)`, baselineVersion)
-			return err
-		}); err != nil {
-			return fmt.Errorf("create schema: %w", err)
-		}
-		version = sql.NullInt64{Int64: baselineVersion, Valid: true}
-	}
-	for _, m := range migrations {
-		if m.version <= version.Int64 {
-			continue
-		}
-		if err := s.inTx(ctx, func(tx execer) error {
-			if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-				return err
-			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES (?)`, m.version)
-			return err
-		}); err != nil {
-			return fmt.Errorf("migrate schema to version %d: %w", m.version, err)
-		}
-	}
-	return nil
-}
-
-// InTx runs fn with a Store bound to a single transaction, committing when fn
-// returns nil and rolling back otherwise. Only the Store passed to fn may be
-// used inside it: the pool has one connection, which the transaction holds.
-func (s *Store) InTx(ctx context.Context, fn func(*Store) error) error {
-	if s.tx != nil {
-		return fn(s)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if err := fn(&Store{db: s.db, q: tx, tx: tx}); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
-}
-
-// inTx runs fn in the Store's transaction, or in a new one when unbound.
-func (s *Store) inTx(ctx context.Context, fn func(execer) error) error {
-	if s.tx != nil {
-		return fn(s.tx)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
-}
-
-// assignIdentity fills in an ID and timestamps that the caller left empty.
-// Imports supply them so a restored backup keeps its original identity.
-func assignIdentity(id *string, created, updated *time.Time) error {
-	if *id == "" {
-		v, err := domain.NewID()
-		if err != nil {
-			return err
-		}
-		*id = v
-	}
-	now := time.Now().UTC()
-	if created.IsZero() {
-		*created = now
-	}
-	if updated.IsZero() {
-		*updated = now
-	}
-	return nil
-}
-
-func (s *Store) CreateGroup(ctx context.Context, g domain.Group) (domain.Group, error) {
-	if err := domain.ValidateGroup(g); err != nil {
-		return g, err
-	}
-	if err := assignIdentity(&g.ID, &g.CreatedAt, &g.UpdatedAt); err != nil {
-		return g, err
-	}
-	_, err := s.q.ExecContext(ctx, `INSERT INTO groups (id,name,description,latitude,longitude,radius_km,power,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`, g.ID, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, string(g.Power), g.Notes, g.CreatedAt.Format(time.RFC3339Nano), g.UpdatedAt.Format(time.RFC3339Nano))
-	if err != nil {
-		return g, fmt.Errorf("create group: %w", err)
-	}
-	return g, nil
-}
-
-// GetGroup looks a group up by ID or by its unique name.
-func (s *Store) GetGroup(ctx context.Context, idOrName string) (domain.Group, error) {
-	g, err := scanGroup(s.q.QueryRowContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,power,notes,created_at,updated_at FROM groups WHERE id=? OR name=?`, idOrName, idOrName))
-	if errors.Is(err, sql.ErrNoRows) {
-		return g, fmt.Errorf("group %q: %w", idOrName, ErrNotFound)
-	}
-	return g, err
-}
-func (s *Store) ListGroups(ctx context.Context) ([]domain.Group, error) {
-	rows, err := s.q.QueryContext(ctx, `SELECT id,name,description,latitude,longitude,radius_km,power,notes,created_at,updated_at FROM groups ORDER BY name`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []domain.Group
-	for rows.Next() {
-		g, err := scanGroup(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, rows.Err()
-}
-func (s *Store) UpdateGroup(ctx context.Context, g domain.Group) (domain.Group, error) {
-	if err := domain.ValidateGroup(g); err != nil {
-		return g, err
-	}
-	g.UpdatedAt = time.Now().UTC()
-	r, err := s.q.ExecContext(ctx, `UPDATE groups SET name=?,description=?,latitude=?,longitude=?,radius_km=?,power=?,notes=?,updated_at=? WHERE id=?`, g.Name, g.Description, g.Latitude, g.Longitude, g.RadiusKM, string(g.Power), g.Notes, g.UpdatedAt.Format(time.RFC3339Nano), g.ID)
-	if err != nil {
-		return g, fmt.Errorf("update group: %w", err)
-	}
-	if n, _ := r.RowsAffected(); n == 0 {
-		return g, fmt.Errorf("group %q: %w", g.ID, ErrNotFound)
-	}
-	return g, nil
-}
-
-// DeleteGroup deletes a group by ID or name. Its channels are kept and
-// become ungrouped.
-func (s *Store) DeleteGroup(ctx context.Context, idOrName string) error {
-	r, err := s.q.ExecContext(ctx, `DELETE FROM groups WHERE id=? OR name=?`, idOrName, idOrName)
-	if err != nil {
-		return fmt.Errorf("delete group: %w", err)
-	}
-	if n, _ := r.RowsAffected(); n == 0 {
-		return fmt.Errorf("group %q: %w", idOrName, ErrNotFound)
-	}
-	return nil
-}
-
-func (s *Store) CreateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error) {
-	c.Mode = strings.ToUpper(strings.TrimSpace(c.Mode))
-	if err := domain.ValidateChannel(c); err != nil {
-		return c, err
-	}
-	if err := assignIdentity(&c.ID, &c.CreatedAt, &c.UpdatedAt); err != nil {
-		return c, err
-	}
-	c.Tags = domain.NormalizeTags(c.Tags)
-	c.ShortNames = domain.NormalizeShortNames(c.Name, c.ShortNames)
-	err := s.inTx(ctx, func(tx execer) error {
-		if err := writeChannel(ctx, tx, `INSERT INTO channels (id,group_id,name,receive_hz,transmit_hz,mode,service,rx_only,receive_tone_kind,receive_ctcss_millihz,receive_dcs_code,receive_dcs_inverted,transmit_tone_kind,transmit_ctcss_millihz,transmit_dcs_code,transmit_dcs_inverted,tone_squelch,power,bandwidth,skip,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c); err != nil {
-			return err
-		}
-		if err := replaceTags(ctx, tx, c.ID, c.Tags); err != nil {
-			return err
-		}
-		return replaceShortNames(ctx, tx, c.ID, c.ShortNames)
-	})
-	if err != nil {
-		return c, fmt.Errorf("create channel: %w", err)
-	}
-	return c, nil
-}
-func (s *Store) UpdateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error) {
-	c.Mode = strings.ToUpper(strings.TrimSpace(c.Mode))
-	if err := domain.ValidateChannel(c); err != nil {
-		return c, err
-	}
-	c.Tags = domain.NormalizeTags(c.Tags)
-	c.ShortNames = domain.NormalizeShortNames(c.Name, c.ShortNames)
-	c.UpdatedAt = time.Now().UTC()
-	err := s.inTx(ctx, func(tx execer) error {
-		if err := writeChannel(ctx, tx, `UPDATE channels SET group_id=?,name=?,receive_hz=?,transmit_hz=?,mode=?,service=?,rx_only=?,receive_tone_kind=?,receive_ctcss_millihz=?,receive_dcs_code=?,receive_dcs_inverted=?,transmit_tone_kind=?,transmit_ctcss_millihz=?,transmit_dcs_code=?,transmit_dcs_inverted=?,tone_squelch=?,power=?,bandwidth=?,skip=?,notes=?,updated_at=? WHERE id=?`, c); err != nil {
-			return err
-		}
-		if err := replaceTags(ctx, tx, c.ID, c.Tags); err != nil {
-			return err
-		}
-		return replaceShortNames(ctx, tx, c.ID, c.ShortNames)
-	})
-	if err != nil {
-		return c, fmt.Errorf("update channel: %w", err)
-	}
-	return c, nil
-}
-func writeChannel(ctx context.Context, ex execer, q string, c domain.Channel) error {
-	rt, tt := toneArgs(c.ReceiveTone), toneArgs(c.TransmitTone)
-	args := []any{c.GroupID, c.Name, c.ReceiveHz, c.TransmitHz, c.Mode, string(c.Service), c.RXOnly, rt.kind, rt.ctcss, rt.dcs, rt.inv, tt.kind, tt.ctcss, tt.dcs, tt.inv, c.ToneSquelch, string(c.Power), c.Bandwidth, c.Skip, c.Notes}
-	insert := strings.HasPrefix(q, "INSERT")
-	if insert {
-		args = append([]any{c.ID}, args...)
-		args = append(args, c.CreatedAt.Format(time.RFC3339Nano), c.UpdatedAt.Format(time.RFC3339Nano))
-	} else {
-		args = append(args, c.UpdatedAt.Format(time.RFC3339Nano), c.ID)
-	}
-	r, err := ex.ExecContext(ctx, q, args...)
-	if err != nil {
-		return err
-	}
-	if n, _ := r.RowsAffected(); !insert && n == 0 {
-		return fmt.Errorf("channel %q: %w", c.ID, ErrNotFound)
-	}
-	return nil
-}
-
-type toneArg struct {
-	kind  string
-	ctcss any
-	dcs   any
-	inv   bool
-}
-
-func toneArgs(t domain.Tone) toneArg {
-	a := toneArg{kind: string(t.Kind), inv: t.Inverted}
-	if t.CTCSSMilliHz != nil {
-		a.ctcss = *t.CTCSSMilliHz
-	}
-	if t.DCSCode != nil {
-		a.dcs = *t.DCSCode
-	}
-	return a
-}
-
-// replaceShortNames stores short names in the user's order.
-func replaceShortNames(ctx context.Context, ex execer, id string, names []string) error {
-	if _, err := ex.ExecContext(ctx, `DELETE FROM channel_short_names WHERE channel_id=?`, id); err != nil {
-		return err
-	}
-	for i, name := range names {
-		if _, err := ex.ExecContext(ctx, `INSERT INTO channel_short_names(channel_id,position,name) VALUES(?,?,?)`, id, i, name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func replaceTags(ctx context.Context, ex execer, id string, tags []string) error {
-	if _, err := ex.ExecContext(ctx, `DELETE FROM channel_tags WHERE channel_id=?`, id); err != nil {
-		return err
-	}
-	for _, tag := range tags {
-		if _, err := ex.ExecContext(ctx, `INSERT INTO channel_tags(channel_id,tag) VALUES(?,?)`, id, tag); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-func (s *Store) DeleteChannel(ctx context.Context, id string) error {
-	r, err := s.q.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, id)
-	if err != nil {
-		return fmt.Errorf("delete channel: %w", err)
-	}
-	if n, _ := r.RowsAffected(); n == 0 {
-		return fmt.Errorf("channel %q: %w", id, ErrNotFound)
-	}
-	return nil
-}
-
-func (s *Store) GetChannel(ctx context.Context, id string) (domain.Channel, error) {
-	chs, err := s.listChannels(ctx, ` WHERE c.id=?`, []any{id})
-	if err != nil {
-		return domain.Channel{}, err
-	}
-	if len(chs) == 0 {
-		return domain.Channel{}, fmt.Errorf("channel %q: %w", id, ErrNotFound)
-	}
-	return chs[0], nil
-}
-func (s *Store) ListChannels(ctx context.Context, f ChannelFilter) ([]domain.Channel, error) {
-	geo := f.Latitude != nil || f.Longitude != nil || f.RadiusKM != nil
-	if geo && (f.Latitude == nil || f.Longitude == nil || f.RadiusKM == nil) {
-		return nil, fmt.Errorf("latitude, longitude, and radius must be supplied together")
-	}
-	q := ` WHERE 1=1`
-	args := []any{}
-	if f.GroupID != "" {
-		q += ` AND c.group_id=?`
-		args = append(args, f.GroupID)
-	}
-	if f.Service != "" {
-		q += ` AND c.service=?`
-		args = append(args, string(f.Service))
-	}
-	if f.Tag != "" {
-		q += ` AND EXISTS (SELECT 1 FROM channel_tags ft WHERE ft.channel_id=c.id AND ft.tag=?)`
-		args = append(args, strings.ToLower(strings.TrimSpace(f.Tag)))
-	}
-	chs, err := s.listChannels(ctx, q, args)
-	if err != nil || !geo {
-		return chs, err
-	}
-	out := chs[:0]
-	for _, c := range chs {
-		if c.Group != nil && c.Group.Latitude != nil && domain.DistanceKM(*f.Latitude, *f.Longitude, *c.Group.Latitude, *c.Group.Longitude) <= *f.RadiusKM {
-			out = append(out, c)
-		}
-	}
-	return out, nil
-}
-
-// tagSeparator joins a channel's tags in the list query. The ASCII unit
-// separator cannot appear in a normalized tag typed or imported as text.
-const tagSeparator = "\x1f"
-
-func (s *Store) listChannels(ctx context.Context, where string, args []any) ([]domain.Channel, error) {
-	q := `SELECT c.id,c.group_id,c.name,c.receive_hz,c.transmit_hz,c.mode,c.service,c.rx_only,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.created_at,c.updated_at,g.id,g.name,g.description,g.latitude,g.longitude,g.radius_km,g.power,g.notes,g.created_at,g.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id),(SELECT group_concat(n.name, char(31) ORDER BY n.position) FROM channel_short_names n WHERE n.channel_id=c.id) FROM channels c LEFT JOIN groups g ON c.group_id=g.id` + where + ` ORDER BY c.name,c.receive_hz`
-	rows, err := s.q.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list channels: %w", err)
-	}
-	defer rows.Close()
-	var out []domain.Channel
-	for rows.Next() {
-		c, err := scanChannel(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-type scanner interface{ Scan(...any) error }
-
-func scanGroup(r scanner) (domain.Group, error) {
-	var g domain.Group
-	var created, updated string
-	err := r.Scan(&g.ID, &g.Name, &g.Description, &g.Latitude, &g.Longitude, &g.RadiusKM, &g.Power, &g.Notes, &created, &updated)
-	if err != nil {
-		return g, err
-	}
-	g.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	g.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
-	return g, nil
-}
-func scanChannel(r scanner) (domain.Channel, error) {
-	var c domain.Channel
-	var rtCT, ttCT sql.NullInt64
-	var rtD, ttD sql.NullInt64
-	var rtInv, ttInv, ts, skip bool
-	var created, updated string
-	var gid sql.NullString
-	var g domain.Group
-	var groupID, gn, gd, gpower, gnote, gc, gu, tags, shortNames sql.NullString
-	var glat, glon, grad sql.NullFloat64
-	err := r.Scan(&c.ID, &gid, &c.Name, &c.ReceiveHz, &c.TransmitHz, &c.Mode, &c.Service, &c.RXOnly, &c.ReceiveTone.Kind, &rtCT, &rtD, &rtInv, &c.TransmitTone.Kind, &ttCT, &ttD, &ttInv, &ts, &c.Power, &c.Bandwidth, &skip, &c.Notes, &created, &updated, &groupID, &gn, &gd, &glat, &glon, &grad, &gpower, &gnote, &gc, &gu, &tags, &shortNames)
-	if err != nil {
-		return c, err
-	}
-	if gid.Valid {
-		c.GroupID = &gid.String
-	}
-	if rtCT.Valid {
-		c.ReceiveTone.CTCSSMilliHz = &rtCT.Int64
-	}
-	if rtD.Valid {
-		x := int(rtD.Int64)
-		c.ReceiveTone.DCSCode = &x
-	}
-	c.ReceiveTone.Inverted = rtInv
-	if ttCT.Valid {
-		c.TransmitTone.CTCSSMilliHz = &ttCT.Int64
-	}
-	if ttD.Valid {
-		x := int(ttD.Int64)
-		c.TransmitTone.DCSCode = &x
-	}
-	c.TransmitTone.Inverted = ttInv
-	c.ToneSquelch = ts
-	c.Skip = skip
-	c.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	c.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
-	if shortNames.Valid && shortNames.String != "" {
-		c.ShortNames = strings.Split(shortNames.String, tagSeparator)
-	}
-	if tags.Valid && tags.String != "" {
-		c.Tags = strings.Split(tags.String, tagSeparator)
-	}
-	if groupID.Valid {
-		g.ID = groupID.String
-		g.Name = gn.String
-		g.Description = gd.String
-		g.Notes = gnote.String
-		g.Power = domain.PowerIntent(gpower.String)
-		if glat.Valid {
-			g.Latitude = &glat.Float64
-			g.Longitude = &glon.Float64
-		}
-		if grad.Valid {
-			g.RadiusKM = &grad.Float64
-		}
-		g.CreatedAt, _ = time.Parse(time.RFC3339Nano, gc.String)
-		g.UpdatedAt, _ = time.Parse(time.RFC3339Nano, gu.String)
-		c.Group = &g
-	}
-	return c, nil
+	CreateSearch(ctx context.Context, s domain.SavedSearch) (domain.SavedSearch, error)
+	// GetSearch looks a saved search up by ID or name; a leading @ is
+	// ignored.
+	GetSearch(ctx context.Context, idOrName string) (domain.SavedSearch, error)
+	ListSearches(ctx context.Context) ([]domain.SavedSearch, error)
+	UpdateSearch(ctx context.Context, s domain.SavedSearch) (domain.SavedSearch, error)
+	DeleteSearch(ctx context.Context, id string) error
 }
