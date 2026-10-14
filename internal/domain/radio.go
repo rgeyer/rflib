@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,7 +19,7 @@ type Radio struct {
 	DefaultPower PowerIntent
 	// Dedupe is how duplicate names on this radio are told apart: none,
 	// index, or freq (see package naming).
-	Dedupe string
+	Dedupe    string
 	Notes     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -146,6 +147,28 @@ func ValidateRadio(r Radio) error {
 	case "", "none", "index", "freq":
 	default:
 		return fmt.Errorf("unknown dedupe %q; use none, index, or freq", r.Dedupe)
+	}
+	return nil
+}
+
+// SortChannels orders channels by name (the order they're listed in, so it
+// leaves them be), freq (receive frequency), or group (by group name,
+// ungrouped last). The sort is stable.
+func SortChannels(cs []Channel, by string) error {
+	switch by {
+	case "name":
+	case "freq":
+		slices.SortStableFunc(cs, func(a, b Channel) int { return cmp.Compare(a.ReceiveHz, b.ReceiveHz) })
+	case "group":
+		key := func(c Channel) string {
+			if c.Group == nil {
+				return "￿"
+			}
+			return c.Group.Name
+		}
+		slices.SortStableFunc(cs, func(a, b Channel) int { return cmp.Compare(key(a), key(b)) })
+	default:
+		return fmt.Errorf("unknown sort %q; use name, freq, or group", by)
 	}
 	return nil
 }

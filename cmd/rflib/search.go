@@ -1,16 +1,13 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
-	"github.com/ryan/rflib/internal/model"
 	"github.com/ryan/rflib/internal/query"
-	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -92,97 +89,13 @@ func channelQuery(cmd *cobra.Command, words []string) (query.Node, error) {
 	return query.Join(nodes...), nil
 }
 
-// queryEnv resolves saved searches, groups, and radios from the library.
-func queryEnv(cmd *cobra.Command, s *store.Store) query.Env {
-	return query.Env{
-		Search: func(name string) (string, error) {
-			x, err := s.GetSearch(ctx(cmd), name)
-			return x.Query, err
-		},
-		Group: func(ref string) (string, error) {
-			g, err := s.GetGroup(ctx(cmd), ref)
-			return g.ID, err
-		},
-		RadioChannels: func(ref string) (map[string]bool, error) { return s.RadioChannelIDs(ctx(cmd), ref) },
-		Tunes: func(ref string) (func(int64) bool, error) {
-			m, err := radioOrModel(cmd, s, ref)
-			if err != nil {
-				return nil, err
-			}
-			return m.Tunes, nil
-		},
-	}
-}
-
-// radioOrModel returns a radio's model, or the model named ref.
-func radioOrModel(cmd *cobra.Command, s *store.Store, ref string) (model.Model, error) {
-	r, err := s.GetRadio(ctx(cmd), ref)
-	if err == nil {
-		return model.Find(r.Model)
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return model.Model{}, err
-	}
-	if m, err := model.Find(ref); err == nil {
-		return m, nil
-	}
-	return model.Model{}, fmt.Errorf("no radio or radio model named %q", ref)
-}
-
-// findChannels returns the library's channels matching a query, in name
-// order.
-func findChannels(cmd *cobra.Command, s *store.Store, n query.Node) ([]domain.Channel, error) {
-	m, err := query.Compile(n, queryEnv(cmd, s))
-	if err != nil {
-		return nil, err
-	}
-	all, err := s.ListChannels(ctx(cmd), store.ChannelFilter{})
-	if err != nil {
-		return nil, err
-	}
-	out := all[:0]
-	for _, c := range all {
-		if m(c) {
-			out = append(out, c)
-		}
-	}
-	return out, nil
-}
-
 // filteredChannels returns the channels a command's filter flags select.
-func filteredChannels(cmd *cobra.Command, s *store.Store) ([]domain.Channel, error) {
+func filteredChannels(cmd *cobra.Command, a *app.Service) ([]domain.Channel, error) {
 	n, err := channelQuery(cmd, nil)
 	if err != nil {
 		return nil, err
 	}
-	return findChannels(cmd, s, n)
-}
-
-// checkQuery parses and compiles text, so a saved query is known to work.
-// override, when set, stands in for that saved search, so a search being
-// saved can't end up using itself.
-func checkQuery(cmd *cobra.Command, s *store.Store, text string, override *domain.SavedSearch) (query.Node, error) {
-	n, err := query.Parse(text)
-	if err != nil {
-		return nil, err
-	}
-	env := queryEnv(cmd, s)
-	compile := n
-	if override != nil {
-		base := env.Search
-		env.Search = func(name string) (string, error) {
-			if name == override.Name {
-				return override.Query, nil
-			}
-			return base(name)
-		}
-		// Compiling @name reports a cycle starting from this search.
-		compile = query.Ref{Name: override.Name}
-	}
-	if _, err := query.Compile(compile, env); err != nil {
-		return nil, err
-	}
-	return n, nil
+	return a.FindChannels(ctx(cmd), n)
 }
 
 // --- saved searches ---
@@ -198,15 +111,9 @@ func newSearchAddCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "add NAME QUERY...", Short: "Save a search", Args: cobra.MinimumNArgs(2)}
 	cmd.Flags().String("notes", "", "Notes")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		x := domain.SavedSearch{Name: strings.ToLower(strings.TrimPrefix(args[0], "@")), Query: strings.Join(args[1:], " "), Notes: getString(cmd, "notes")}
-		return withStore(cmd, func(s *store.Store) error {
-			if err := domain.ValidateSavedSearch(x); err != nil {
-				return err
-			}
-			if _, err := checkQuery(cmd, s, x.Query, &x); err != nil {
-				return err
-			}
-			x, err := s.CreateSearch(ctx(cmd), x)
+		x := domain.SavedSearch{Name: args[0], Query: strings.Join(args[1:], " "), Notes: getString(cmd, "notes")}
+		return withApp(cmd, func(a *app.Service) error {
+			x, err := a.CreateSearch(ctx(cmd), x)
 			if err == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), x.ID)
 			}
@@ -214,20 +121,6 @@ func newSearchAddCommand() *cobra.Command {
 		})
 	}
 	return cmd
-}
-
-// countMatches compiles and runs a query, returning -1 when it no longer
-// works (a group or saved search it names is gone).
-func countMatches(cmd *cobra.Command, s *store.Store, text string) (int, error) {
-	n, err := query.Parse(text)
-	if err != nil {
-		return -1, err
-	}
-	cs, err := findChannels(cmd, s, n)
-	if err != nil {
-		return -1, err
-	}
-	return len(cs), nil
 }
 
 func newSearchListCommand() *cobra.Command {
@@ -238,35 +131,31 @@ func newSearchListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			xs, err := s.ListSearches(ctx(cmd))
+		return withApp(cmd, func(a *app.Service) error {
+			xs, err := a.ListSearches(ctx(cmd))
 			if err != nil {
 				return err
 			}
-			type row struct {
-				ID      string `json:"id"`
-				Name    string `json:"name"`
-				Query   string `json:"query"`
-				Matches int    `json:"matches"`
-				Error   string `json:"error,omitempty"`
-				Notes   string `json:"notes"`
-			}
-			rows := make([]row, len(xs))
-			for i, x := range xs {
-				rows[i] = row{ID: x.ID, Name: x.Name, Query: x.Query, Notes: x.Notes}
-				if rows[i].Matches, err = countMatches(cmd, s, x.Query); err != nil {
-					rows[i].Error = err.Error()
-				}
-			}
 			if format == "json" {
+				type row struct {
+					ID      string `json:"id"`
+					Name    string `json:"name"`
+					Query   string `json:"query"`
+					Matches int    `json:"matches"`
+					Error   string `json:"error,omitempty"`
+					Notes   string `json:"notes"`
+				}
+				rows := make([]row, len(xs))
+				for i, x := range xs {
+					rows[i] = row{ID: x.ID, Name: x.Name, Query: x.Query, Matches: x.Matches, Notes: x.Notes}
+					if x.Err != nil {
+						rows[i].Error = x.Err.Error()
+					}
+				}
 				return writeJSON(cmd.OutOrStdout(), rows)
 			}
-			for _, r := range rows {
-				matches := strconv.Itoa(r.Matches)
-				if r.Error != "" {
-					matches = "error: " + r.Error
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "@%s\t%s\t%s\n", r.Name, matches, r.Query)
+			for _, x := range xs {
+				fmt.Fprintf(cmd.OutOrStdout(), "@%s\t%s\t%s\n", x.Name, matchesText(x), x.Query)
 			}
 			return nil
 		})
@@ -274,62 +163,23 @@ func newSearchListCommand() *cobra.Command {
 	return cmd
 }
 
-// searchUsers lists what uses a saved search: other searches and radio
-// sources.
-func searchUsers(cmd *cobra.Command, s *store.Store, name string) ([]string, error) {
-	var users []string
-	uses := func(text string) bool {
-		n, err := query.Parse(text)
-		return err == nil && slices.Contains(query.Refs(n), name)
+func matchesText(x app.SearchSummary) string {
+	if x.Err != nil {
+		return "error: " + x.Err.Error()
 	}
-	xs, err := s.ListSearches(ctx(cmd))
-	if err != nil {
-		return nil, err
-	}
-	for _, x := range xs {
-		if x.Name != name && uses(x.Query) {
-			users = append(users, "@"+x.Name)
-		}
-	}
-	radios, err := s.ListRadios(ctx(cmd))
-	if err != nil {
-		return nil, err
-	}
-	names := map[string]string{}
-	for _, r := range radios {
-		names[r.ID] = r.Name
-	}
-	sources, err := s.AllRadioSources(ctx(cmd))
-	if err != nil {
-		return nil, err
-	}
-	for _, src := range sources {
-		if uses(src.Query) {
-			users = append(users, fmt.Sprintf("radio %s source %d", names[src.RadioID], src.Position+1))
-		}
-	}
-	return users, nil
+	return strconv.Itoa(x.Matches)
 }
 
 func newSearchShowCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "show NAME", Short: "Show a saved search and what uses it", Args: cobra.ExactArgs(1)}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			x, err := s.GetSearch(ctx(cmd), args[0])
+		return withApp(cmd, func(a *app.Service) error {
+			x, err := a.SearchDetail(ctx(cmd), args[0])
 			if err != nil {
 				return err
-			}
-			users, err := searchUsers(cmd, s, x.Name)
-			if err != nil {
-				return err
-			}
-			n, err := countMatches(cmd, s, x.Query)
-			matches := strconv.Itoa(n)
-			if err != nil {
-				matches = "error: " + err.Error()
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\nname: @%s\nquery: %s\nmatches: %s\nused by: %s\nnotes: %s\n",
-				x.ID, x.Name, x.Query, matches, orDefault(strings.Join(users, ", "), "nothing"), x.Notes)
+				x.ID, x.Name, x.Query, matchesText(x.SearchSummary), orDefault(strings.Join(x.Users, ", "), "nothing"), x.Notes)
 			return nil
 		})
 	}
@@ -342,23 +192,13 @@ func newSearchUpdateCommand() *cobra.Command {
 	cmd.Flags().String("query", "", "New query")
 	cmd.Flags().String("notes", "", "Notes")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			x, err := s.GetSearch(ctx(cmd), args[0])
+		return withApp(cmd, func(a *app.Service) error {
+			x, err := a.GetSearch(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}
 			if cmd.Flags().Changed("name") {
-				name := strings.ToLower(strings.TrimPrefix(getString(cmd, "name"), "@"))
-				if name != x.Name {
-					users, err := searchUsers(cmd, s, x.Name)
-					if err != nil {
-						return err
-					}
-					if len(users) > 0 {
-						return fmt.Errorf("@%s is used by %s; change those first", x.Name, strings.Join(users, ", "))
-					}
-				}
-				x.Name = name
+				x.Name = getString(cmd, "name")
 			}
 			if cmd.Flags().Changed("query") {
 				x.Query = getString(cmd, "query")
@@ -366,13 +206,7 @@ func newSearchUpdateCommand() *cobra.Command {
 			if cmd.Flags().Changed("notes") {
 				x.Notes = getString(cmd, "notes")
 			}
-			if err := domain.ValidateSavedSearch(x); err != nil {
-				return err
-			}
-			if _, err := checkQuery(cmd, s, x.Query, &x); err != nil {
-				return err
-			}
-			_, err = s.UpdateSearch(ctx(cmd), x)
+			_, err = a.UpdateSearch(ctx(cmd), x)
 			return err
 		})
 	}
@@ -386,20 +220,7 @@ func newSearchDeleteCommand() *cobra.Command {
 		if err := requireYes(cmd, "saved search"); err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			x, err := s.GetSearch(ctx(cmd), args[0])
-			if err != nil {
-				return err
-			}
-			users, err := searchUsers(cmd, s, x.Name)
-			if err != nil {
-				return err
-			}
-			if len(users) > 0 {
-				return fmt.Errorf("@%s is used by %s; change those first", x.Name, strings.Join(users, ", "))
-			}
-			return s.DeleteSearch(ctx(cmd), x.ID)
-		})
+		return withApp(cmd, func(a *app.Service) error { return a.DeleteSearch(ctx(cmd), args[0]) })
 	}
 	return cmd
 }

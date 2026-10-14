@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 
+	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/seed"
-	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -66,14 +66,14 @@ func newSeedCommand() *cobra.Command {
 				return err
 			}
 		}
-		return withStore(cmd, func(s *store.Store) error {
+		return withApp(cmd, func(a *app.Service) error {
 			for _, l := range lists {
 				b, err := l.Batch()
 				if err != nil {
 					return err
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: ", l.ID)
-				if err := applyImport(cmd, s, b, opts, 0); err != nil {
+				if err := applyImport(cmd, a, b, opts, 0); err != nil {
 					return err
 				}
 			}
@@ -94,8 +94,8 @@ without a service that transmit outside the amateur bands and FRS, GMRS, MURS,
 and CB channels. Exits non-zero when anything is reported.`}
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			cs, err := filteredChannels(cmd, s)
+		return withApp(cmd, func(a *app.Service) error {
+			cs, err := filteredChannels(cmd, a)
 			if err != nil {
 				return err
 			}

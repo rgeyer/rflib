@@ -760,3 +760,64 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 		t.Errorf("sync = %q", out)
 	}
 }
+
+func TestLibraries(t *testing.T) {
+	c := newCLI(t)
+	if out := c.ok("library", "list"); !strings.HasPrefix(out, "*default\t0 channels\t0 radios\t") {
+		t.Fatalf("library list = %q", out)
+	}
+	c.ok("library", "add", "club", "--description", "Club radios")
+	c.fails("already exists", "library", "add", "club")
+	c.fails(`no library named "nope"`, "--library", "nope", "channel", "list")
+
+	// Each library has its own groups, channels, radios, and searches, so
+	// the same names can be used in both.
+	for _, lib := range []string{"default", "club"} {
+		c.ok("--library", lib, "group", "add", "--name", "Home")
+		c.ok("--library", lib, "radio", "add", "HT", "--model", "baofeng-uv5rm")
+		c.ok("--library", lib, "search", "add", "wx", "band:noaa")
+	}
+	c.ok("seed", "install", "us-noaa")
+	clubCh := c.ok("--library", "club", "channel", "add", "--name", "Club Net", "--rx", "147.000", "--group", "Home")
+	if out := c.ok("--library", "club", "channel", "list"); !strings.Contains(out, "Club Net") || strings.Contains(out, "NOAA") {
+		t.Errorf("club channels = %q", out)
+	}
+	if out := c.ok("channel", "list"); strings.Contains(out, "Club Net") {
+		t.Errorf("default sees club's channel: %q", out)
+	}
+	c.fails("not found", "channel", "show", "--id", clubCh)
+	c.fails("not found", "radio", "channels", "add", "HT", "--id", clubCh)
+
+	// $RFLIB_LIBRARY chooses the library when --library doesn't.
+	t.Setenv("RFLIB_LIBRARY", "club")
+	if out := c.ok("channel", "list"); !strings.Contains(out, "Club Net") {
+		t.Errorf("RFLIB_LIBRARY ignored: %q", out)
+	}
+	if out := c.ok("library", "list"); !strings.Contains(out, "*club\t1 channels\t1 radios\t") {
+		t.Errorf("library list marks the wrong one: %q", out)
+	}
+	t.Setenv("RFLIB_LIBRARY", "")
+
+	// Copy the default library's channels into the club's: the copies get
+	// new IDs, and groups are matched by name.
+	backup := filepath.Join(t.TempDir(), "backup.json")
+	c.ok("export", "json", "--output", backup)
+	if out := c.ok("--library", "club", "import", "json", backup); !strings.Contains(out, "created 7") {
+		t.Fatalf("import into club = %q", out)
+	}
+	defaultIDs := c.ok("channel", "list", "band:noaa")
+	clubIDs := c.ok("--library", "club", "channel", "list", "band:noaa")
+	if len(strings.Split(clubIDs, "\n")) != 7 || strings.Split(clubIDs, "\t")[0] == strings.Split(defaultIDs, "\t")[0] {
+		t.Errorf("copies share IDs:\n%s\n%s", defaultIDs, clubIDs)
+	}
+
+	c.ok("library", "update", "club", "--name", "Club Radios")
+	c.fails("requires --yes", "library", "delete", "Club Radios")
+	c.ok("library", "delete", "Club Radios", "--yes")
+	if out := c.ok("library", "list"); strings.Contains(out, "Club") {
+		t.Errorf("deleted library listed: %q", out)
+	}
+	if out := c.ok("channel", "list", "band:noaa"); len(strings.Split(out, "\n")) != 7 {
+		t.Errorf("deleting club touched default: %q", out)
+	}
+}

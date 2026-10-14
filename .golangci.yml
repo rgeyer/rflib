@@ -8,4 +8,4 @@ linters:
         - fmt.Fprintln
         - (*database/sql.DB).Close
         - (*database/sql.Rows).Close
-        - (*github.com/ryan/rflib/internal/store.Store).Close
+        - (*github.com/ryan/rflib/internal/store/sqlite.DB).Close

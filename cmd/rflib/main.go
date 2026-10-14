@@ -11,7 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/store"
+	"github.com/ryan/rflib/internal/store/sqlite"
 	"github.com/spf13/cobra"
 )
 
@@ -48,9 +51,9 @@ func dbPath(cmd *cobra.Command) (string, error) {
 	return filepath.Join(dataHome, "rflib", "library.db"), nil
 }
 
-// withStore opens an existing, initialized library. It never creates one:
+// withDB opens an existing, initialized database. It never creates one:
 // that only happens through rflib init.
-func withStore(cmd *cobra.Command, fn func(*store.Store) error) error {
+func withDB(cmd *cobra.Command, fn func(store.Store) error) error {
 	path, err := dbPath(cmd)
 	if err != nil {
 		return err
@@ -58,15 +61,38 @@ func withStore(cmd *cobra.Command, fn func(*store.Store) error) error {
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("library %s does not exist; run rflib init --db %s", path, path)
 	}
-	s, err := store.Open(path)
+	d, err := sqlite.Open(path)
 	if err != nil {
 		return err
 	}
-	defer s.Close()
-	if err = s.Ready(cmd.Context()); err != nil {
+	defer d.Close()
+	if err = d.Ready(cmd.Context()); err != nil {
 		return err
 	}
-	return fn(s)
+	return fn(d)
+}
+
+// libraryName resolves the library: --library, then $RFLIB_LIBRARY, then
+// the default library.
+func libraryName(cmd *cobra.Command) string {
+	if v, _ := cmd.Flags().GetString("library"); v != "" {
+		return v
+	}
+	if v := os.Getenv("RFLIB_LIBRARY"); v != "" {
+		return v
+	}
+	return domain.DefaultLibrary
+}
+
+// withApp opens the database and the chosen library's services.
+func withApp(cmd *cobra.Command, fn func(*app.Service) error) error {
+	return withDB(cmd, func(d store.Store) error {
+		a, err := app.Open(cmd.Context(), d, libraryName(cmd))
+		if err != nil {
+			return err
+		}
+		return fn(a)
+	})
 }
 
 func initLibrary(cmd *cobra.Command, _ []string) error {
@@ -77,12 +103,12 @@ func initLibrary(cmd *cobra.Command, _ []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create library directory: %w", err)
 	}
-	s, err := store.Open(path)
+	d, err := sqlite.Open(path)
 	if err != nil {
 		return err
 	}
-	defer s.Close()
-	if err = s.Migrate(cmd.Context()); err != nil {
+	defer d.Close()
+	if err = d.Migrate(cmd.Context()); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "Library initialized:", path)

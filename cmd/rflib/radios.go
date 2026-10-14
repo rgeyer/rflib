@@ -6,11 +6,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/model"
 	"github.com/ryan/rflib/internal/program"
-	"github.com/ryan/rflib/internal/query"
-	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -113,8 +112,8 @@ func newRadioAddCommand() *cobra.Command {
 		if err := applyRadioFlags(cmd, &r, true); err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.CreateRadio(ctx(cmd), r)
+		return withApp(cmd, func(a *app.Service) error {
+			r, err := a.CreateRadio(ctx(cmd), r)
 			if err == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), r.ID)
 			}
@@ -127,13 +126,13 @@ func newRadioAddCommand() *cobra.Command {
 func newRadioListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list", Short: "List your radios", Args: cobra.NoArgs}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			rs, err := s.ListRadios(ctx(cmd))
+		return withApp(cmd, func(a *app.Service) error {
+			rs, err := a.ListRadios(ctx(cmd))
 			if err != nil {
 				return err
 			}
 			for _, r := range rs {
-				es, err := s.RadioEntries(ctx(cmd), r.ID)
+				_, es, err := a.RadioEntries(ctx(cmd), r.ID)
 				if err != nil {
 					return err
 				}
@@ -148,16 +147,8 @@ func newRadioListCommand() *cobra.Command {
 func newRadioShowCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "show RADIO", Short: "Show a radio's settings", Args: cobra.ExactArgs(1)}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
-			if err != nil {
-				return err
-			}
-			es, err := s.RadioEntries(ctx(cmd), r.ID)
-			if err != nil {
-				return err
-			}
-			sources, err := s.RadioSources(ctx(cmd), r.ID)
+		return withApp(cmd, func(a *app.Service) error {
+			r, sources, es, err := a.Sources(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}
@@ -187,8 +178,8 @@ func newRadioUpdateCommand() *cobra.Command {
 	radioFields(cmd)
 	cmd.Flags().String("name", "", "New name")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
+		return withApp(cmd, func(a *app.Service) error {
+			r, err := a.GetRadio(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}
@@ -198,7 +189,7 @@ func newRadioUpdateCommand() *cobra.Command {
 			if err := applyRadioFlags(cmd, &r, false); err != nil {
 				return err
 			}
-			_, err = s.UpdateRadio(ctx(cmd), r)
+			_, err = a.UpdateRadio(ctx(cmd), r)
 			return err
 		})
 	}
@@ -212,7 +203,7 @@ func newRadioDeleteCommand() *cobra.Command {
 		if err := requireYes(cmd, "radio"); err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error { return s.DeleteRadio(ctx(cmd), args[0]) })
+		return withApp(cmd, func(a *app.Service) error { return a.DeleteRadio(ctx(cmd), args[0]) })
 	}
 	return cmd
 }
@@ -224,24 +215,6 @@ func newRadioChannelsCommand() *cobra.Command {
 	cmd.AddCommand(newRadioChannelsListCommand(), newRadioChannelsAddCommand(), newRadioChannelsRemoveCommand(),
 		newRadioChannelsMoveCommand(), newRadioChannelsSetCommand())
 	return cmd
-}
-
-// loadPlan loads a radio and plans its memories.
-func loadPlan(cmd *cobra.Command, s *store.Store, ref string) (program.Plan, []domain.RadioEntry, error) {
-	r, err := s.GetRadio(ctx(cmd), ref)
-	if err != nil {
-		return program.Plan{}, nil, err
-	}
-	m, err := model.Find(r.Model)
-	if err != nil {
-		return program.Plan{}, nil, err
-	}
-	es, err := s.RadioEntries(ctx(cmd), r.ID)
-	if err != nil {
-		return program.Plan{}, nil, err
-	}
-	p, err := program.Build(r, m, es)
-	return p, es, err
 }
 
 func printWarnings(w io.Writer, p program.Plan) {
@@ -261,8 +234,8 @@ a section start; "*" marks a value the radio overrides.`}
 		if err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			p, es, err := loadPlan(cmd, s, args[0])
+		return withApp(cmd, func(a *app.Service) error {
+			p, es, err := a.Plan(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}
@@ -323,6 +296,17 @@ func powerLabel(mem program.Memory) string {
 	return mem.Channel.ProgrammedPower.Label
 }
 
+func anyBandFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("any-band", false, "Add channels even when their receive frequency is outside the radio's bands")
+}
+
+func skippedNote(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; skipped %d outside its bands", n)
+}
+
 func newRadioChannelsAddCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "add RADIO", Short: "Append channels to the end of a radio's list", Args: cobra.ExactArgs(1),
 		Long: `Append channels to the end of a radio's list, by --id or by --query (or the
@@ -336,46 +320,30 @@ sources add.`}
 	anyBandFlag(cmd)
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		ids, _ := cmd.Flags().GetStringSlice("id")
-		if len(ids) == 0 && !filtered(cmd) {
+		var req app.AddRequest
+		req.IDs, _ = cmd.Flags().GetStringSlice("id")
+		req.Sort = getString(cmd, "sort")
+		req.AnyBand, _ = cmd.Flags().GetBool("any-band")
+		if len(req.IDs) == 0 && !filtered(cmd) {
 			return fmt.Errorf("give channels with --id or --query")
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			r, m, err := radioModel(cmd, s, args[0])
+		if filtered(cmd) {
+			n, err := channelQuery(cmd, nil)
 			if err != nil {
 				return err
 			}
-			var cs []domain.Channel
-			for _, id := range ids {
-				c, err := s.GetChannel(ctx(cmd), id)
-				if err != nil {
-					return err
-				}
-				cs = append(cs, c)
+			req.Query = n
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			r, res, err := a.AddChannels(ctx(cmd), args[0], req)
+			if err != nil {
+				return err
 			}
-			if filtered(cmd) {
-				found, err := filteredChannels(cmd, s)
-				if err != nil {
-					return err
-				}
-				if err := sortChannels(found, getString(cmd, "sort")); err != nil {
-					return err
-				}
-				cs = append(cs, found...)
-			}
-			cs, skipped := inBand(cmd, m, cs)
-			for _, c := range skipped {
+			for _, c := range res.Skipped {
 				fmt.Fprintf(cmd.ErrOrStderr(), "skipped %q (%s MHz): %s can't receive it\n", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), r.Name)
 			}
-			ids = ids[:0]
-			for _, c := range cs {
-				ids = append(ids, c.ID)
-			}
-			n, err := s.AddRadioChannels(ctx(cmd), r.ID, ids)
-			if err == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Added %d channels to %s%s\n", n, r.Name, skippedNote(len(skipped)))
-			}
-			return err
+			fmt.Fprintf(cmd.OutOrStdout(), "Added %d channels to %s%s\n", res.Added, r.Name, skippedNote(len(res.Skipped)))
+			return nil
 		})
 	}
 	return cmd
@@ -387,12 +355,8 @@ func newRadioChannelsRemoveCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("id")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ids, _ := cmd.Flags().GetStringSlice("id")
-		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
-			if err != nil {
-				return err
-			}
-			n, err := s.RemoveRadioChannels(ctx(cmd), r.ID, ids)
+		return withApp(cmd, func(a *app.Service) error {
+			r, n, err := a.RemoveChannels(ctx(cmd), args[0], ids)
 			if err == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Removed %d channels from %s\n", n, r.Name)
 			}
@@ -414,54 +378,17 @@ func newRadioChannelsMoveCommand() *cobra.Command {
 	cmd.MarkFlagsOneRequired("before", "after", "to", "top", "bottom")
 	_ = cmd.MarkFlagRequired("id")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		id := getString(cmd, "id")
-		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
-			if err != nil {
-				return err
+		mv := app.Move{Before: getString(cmd, "before"), After: getString(cmd, "after")}
+		mv.Top, _ = cmd.Flags().GetBool("top")
+		mv.Bottom, _ = cmd.Flags().GetBool("bottom")
+		if cmd.Flags().Changed("to") {
+			mv.To, _ = cmd.Flags().GetInt("to")
+			if mv.To < 1 {
+				return fmt.Errorf("--to counts from 1")
 			}
-			es, err := s.RadioEntries(ctx(cmd), r.ID)
-			if err != nil {
-				return err
-			}
-			index := func(ref string) (int, error) {
-				for _, e := range es {
-					if e.Channel.ID == ref {
-						return e.Position, nil
-					}
-				}
-				return 0, fmt.Errorf("channel %q is not on %s: %w", ref, r.Name, store.ErrNotFound)
-			}
-			from, err := index(id)
-			if err != nil {
-				return err
-			}
-			var to int
-			switch {
-			case cmd.Flags().Changed("top"):
-				to = 0
-			case cmd.Flags().Changed("bottom"):
-				to = len(es)
-			case cmd.Flags().Changed("to"):
-				n, _ := cmd.Flags().GetInt("to")
-				if n < 1 {
-					return fmt.Errorf("--to counts from 1")
-				}
-				to = n - 1
-			default:
-				ref := getString(cmd, "before") + getString(cmd, "after")
-				if to, err = index(ref); err != nil {
-					return err
-				}
-				// Positions are counted after the moving channel is taken out.
-				if to > from {
-					to--
-				}
-				if cmd.Flags().Changed("after") {
-					to++
-				}
-			}
-			return s.MoveRadioChannel(ctx(cmd), r.ID, id, to)
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			return a.MoveChannel(ctx(cmd), args[0], getString(cmd, "id"), mv)
 		})
 	}
 	return cmd
@@ -478,24 +405,10 @@ an empty value removes that override, so the channel's own setting applies.`}
 	cmd.Flags().String("section-start", "", "Start a section at this memory number (empty ends it)")
 	_ = cmd.MarkFlagRequired("id")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		id := getString(cmd, "id")
-		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
+		return withApp(cmd, func(a *app.Service) error {
+			r, e, err := a.RadioEntry(ctx(cmd), args[0], getString(cmd, "id"))
 			if err != nil {
 				return err
-			}
-			es, err := s.RadioEntries(ctx(cmd), r.ID)
-			if err != nil {
-				return err
-			}
-			var e *domain.RadioEntry
-			for i := range es {
-				if es[i].Channel.ID == id {
-					e = &es[i]
-				}
-			}
-			if e == nil {
-				return fmt.Errorf("channel %q is not on %s: %w", id, r.Name, store.ErrNotFound)
 			}
 			if cmd.Flags().Changed("name") {
 				e.Name = getString(cmd, "name")
@@ -517,23 +430,11 @@ an empty value removes that override, so the channel's own setting applies.`}
 				}
 			}
 			if cmd.Flags().Changed("section-start") {
-				e.SectionStart = nil
-				if v := strings.TrimSpace(getString(cmd, "section-start")); v != "" {
-					n, err := strconv.Atoi(v)
-					if err != nil {
-						return fmt.Errorf("--section-start must be a memory number")
-					}
-					e.SectionStart = &n
+				if e.SectionStart, err = parseSectionStart(getString(cmd, "section-start")); err != nil {
+					return err
 				}
 			}
-			if err := s.SetRadioEntry(ctx(cmd), r.ID, *e); err != nil {
-				return err
-			}
-			// Check the result still plans, so a bad section start is caught now.
-			if _, _, err := loadPlan(cmd, s, r.ID); err != nil {
-				return fmt.Errorf("saved, but %s no longer exports: %w", r.Name, err)
-			}
-			return nil
+			return a.SetEntry(ctx(cmd), r.ID, e)
 		})
 	}
 	return cmd
@@ -550,122 +451,39 @@ or reordered.`}
 	anyBandFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		return withStore(cmd, func(s *store.Store) error {
-			r, m, err := radioModel(cmd, s, args[0])
+		anyBand, _ := cmd.Flags().GetBool("any-band")
+		return withApp(cmd, func(a *app.Service) error {
+			res, err := a.Sync(ctx(cmd), args[0], dryRun, anyBand)
 			if err != nil {
 				return err
-			}
-			sources, err := s.RadioSources(ctx(cmd), r.ID)
-			if err != nil {
-				return err
-			}
-			if len(sources) == 0 {
-				return fmt.Errorf("%s has no sources; add one with: rflib radio sources add %s QUERY", r.Name, r.Name)
-			}
-			es, err := s.RadioEntries(ctx(cmd), r.ID)
-			if err != nil {
-				return err
-			}
-			claimed := map[string]bool{}
-			for _, e := range es {
-				claimed[e.Channel.ID] = true
 			}
 			out := cmd.OutOrStdout()
-			total := 0
-			for _, src := range sources {
-				n, err := query.Parse(src.Query)
-				if err != nil {
-					return fmt.Errorf("source %d: %w", src.Position+1, err)
-				}
-				cs, err := findChannels(cmd, s, n)
-				if err != nil {
-					return fmt.Errorf("source %d: %w", src.Position+1, err)
-				}
-				if err := sortChannels(cs, src.Sort); err != nil {
-					return err
-				}
-				var skipped []domain.Channel
-				cs, skipped = inBand(cmd, m, cs)
-				nSkipped := 0
-				for _, c := range skipped {
-					if claimed[c.ID] {
-						continue
+			for _, ss := range res.Sources {
+				n := ss.Source.Position + 1
+				if dryRun {
+					for _, c := range ss.Add {
+						fmt.Fprintf(out, "would add\tsource %d\t%s\t%s\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
 					}
-					nSkipped++
-					if dryRun {
-						fmt.Fprintf(out, "would skip\tsource %d\t%s\t%s\toutside the radio's bands\n", src.Position+1, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
+					for _, c := range ss.Skipped {
+						fmt.Fprintf(out, "would skip\tsource %d\t%s\t%s\toutside the radio's bands\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
 					}
-				}
-				var ids []string
-				for _, c := range cs {
-					if !claimed[c.ID] {
-						claimed[c.ID] = true
-						ids = append(ids, c.ID)
-						if dryRun {
-							fmt.Fprintf(out, "would add\tsource %d\t%s\t%s\n", src.Position+1, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
-						}
-					}
-				}
-				if dryRun || len(ids) == 0 && nSkipped == 0 {
 					continue
 				}
-				added, err := s.AddSourceChannels(ctx(cmd), src, ids)
-				if err != nil {
-					return err
+				if len(ss.Add) > 0 || len(ss.Skipped) > 0 {
+					fmt.Fprintf(out, "%s: added %d%s\n", app.SourceLabel(ss.Source), ss.Added, skippedNote(len(ss.Skipped)))
 				}
-				fmt.Fprintf(out, "Source %d (%s): added %d%s\n", src.Position+1, src.Query, added, skippedNote(nSkipped))
-				total += added
 			}
 			if dryRun {
 				return nil
 			}
-			fmt.Fprintf(out, "Added %d channels to %s\n", total, r.Name)
-			if _, _, err := loadPlan(cmd, s, r.ID); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s no longer exports: %v\n", r.Name, err)
+			fmt.Fprintf(out, "Added %d channels to %s\n", res.Added(), res.Radio.Name)
+			if res.PlanErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s no longer exports: %v\n", res.Radio.Name, res.PlanErr)
 			}
 			return nil
 		})
 	}
 	return cmd
-}
-
-func anyBandFlag(cmd *cobra.Command) {
-	cmd.Flags().Bool("any-band", false, "Add channels even when their receive frequency is outside the radio's bands")
-}
-
-// radioModel finds a radio and its model.
-func radioModel(cmd *cobra.Command, s *store.Store, ref string) (domain.Radio, model.Model, error) {
-	r, err := s.GetRadio(ctx(cmd), ref)
-	if err != nil {
-		return r, model.Model{}, err
-	}
-	m, err := model.Find(r.Model)
-	return r, m, err
-}
-
-// inBand splits channels by whether the model can tune their receive
-// frequency. With --any-band everything is kept. A transmit frequency
-// outside the bands only warns (see program.Build), since the radio can
-// still listen.
-func inBand(cmd *cobra.Command, m model.Model, cs []domain.Channel) (kept, skipped []domain.Channel) {
-	if anyBand, _ := cmd.Flags().GetBool("any-band"); anyBand {
-		return cs, nil
-	}
-	for _, c := range cs {
-		if m.Tunes(c.ReceiveHz) {
-			kept = append(kept, c)
-		} else {
-			skipped = append(skipped, c)
-		}
-	}
-	return kept, skipped
-}
-
-func skippedNote(n int) string {
-	if n == 0 {
-		return ""
-	}
-	return fmt.Sprintf("; skipped %d outside its bands", n)
 }
 
 // --- a radio's sources ---
@@ -697,21 +515,13 @@ func writeSources(w io.Writer, sources []domain.RadioSource, es []domain.RadioEn
 	}
 }
 
-// radioSource finds a radio and one of its sources by number (from 1).
-func radioSource(cmd *cobra.Command, s *store.Store, radioRef, number string) (domain.Radio, domain.RadioSource, error) {
-	r, err := s.GetRadio(ctx(cmd), radioRef)
+// sourceNumber parses a source number argument.
+func sourceNumber(v string) (int, error) {
+	n, err := strconv.Atoi(v)
 	if err != nil {
-		return r, domain.RadioSource{}, err
+		return 0, fmt.Errorf("%q is not a source number; see rflib radio sources list", v)
 	}
-	sources, err := s.RadioSources(ctx(cmd), r.ID)
-	if err != nil {
-		return r, domain.RadioSource{}, err
-	}
-	n, err := strconv.Atoi(number)
-	if err != nil || n < 1 || n > len(sources) {
-		return r, domain.RadioSource{}, fmt.Errorf("%s has sources 1-%d; see rflib radio sources list %s", r.Name, len(sources), r.Name)
-	}
-	return r, sources[n-1], nil
+	return n, nil
 }
 
 func parseSectionStart(v string) (*int, error) {
@@ -728,16 +538,8 @@ func parseSectionStart(v string) (*int, error) {
 func newRadioSourcesListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list RADIO", Short: "List a radio's sources", Args: cobra.ExactArgs(1)}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
-			if err != nil {
-				return err
-			}
-			sources, err := s.RadioSources(ctx(cmd), r.ID)
-			if err != nil {
-				return err
-			}
-			es, err := s.RadioEntries(ctx(cmd), r.ID)
+		return withApp(cmd, func(a *app.Service) error {
+			_, sources, es, err := a.Sources(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}
@@ -757,16 +559,9 @@ func newRadioSourcesAddCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			r, err := s.GetRadio(ctx(cmd), args[0])
-			if err != nil {
-				return err
-			}
-			src := domain.RadioSource{RadioID: r.ID, Query: strings.Join(args[1:], " "), Sort: getString(cmd, "sort"), SectionStart: section}
-			if _, err := checkQuery(cmd, s, src.Query, nil); err != nil {
-				return err
-			}
-			src, err = s.AddRadioSource(ctx(cmd), src)
+		src := domain.RadioSource{Query: strings.Join(args[1:], " "), Sort: getString(cmd, "sort"), SectionStart: section}
+		return withApp(cmd, func(a *app.Service) error {
+			r, src, err := a.AddSource(ctx(cmd), args[0], src)
 			if err == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Added source %d to %s; run rflib radio sync %s to add its channels\n", src.Position+1, r.Name, r.Name)
 			}
@@ -785,16 +580,17 @@ first channel now.`}
 	cmd.Flags().String("sort", "", "Order its channels are added in: name, freq, or group")
 	cmd.Flags().String("section-start", "", "Start the source's channels at this memory number (empty ends it)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return withStore(cmd, func(s *store.Store) error {
-			r, src, err := radioSource(cmd, s, args[0], args[1])
+		n, err := sourceNumber(args[1])
+		if err != nil {
+			return err
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			_, src, err := a.Source(ctx(cmd), args[0], n)
 			if err != nil {
 				return err
 			}
 			if cmd.Flags().Changed("query") {
 				src.Query = getString(cmd, "query")
-				if _, err := checkQuery(cmd, s, src.Query, nil); err != nil {
-					return err
-				}
 			}
 			if cmd.Flags().Changed("sort") {
 				src.Sort = getString(cmd, "sort")
@@ -804,13 +600,7 @@ first channel now.`}
 					return err
 				}
 			}
-			if err := s.UpdateRadioSource(ctx(cmd), src); err != nil {
-				return err
-			}
-			if _, _, err := loadPlan(cmd, s, r.ID); err != nil {
-				return fmt.Errorf("saved, but %s no longer exports: %w", r.Name, err)
-			}
-			return nil
+			return a.UpdateSource(ctx(cmd), src)
 		})
 	}
 	return cmd
@@ -825,13 +615,11 @@ func newRadioSourcesMoveCommand() *cobra.Command {
 		if to < 1 {
 			return fmt.Errorf("--to counts from 1")
 		}
-		return withStore(cmd, func(s *store.Store) error {
-			_, src, err := radioSource(cmd, s, args[0], args[1])
-			if err != nil {
-				return err
-			}
-			return s.MoveRadioSource(ctx(cmd), src, to-1)
-		})
+		n, err := sourceNumber(args[1])
+		if err != nil {
+			return err
+		}
+		return withApp(cmd, func(a *app.Service) error { return a.MoveSource(ctx(cmd), args[0], n, to) })
 	}
 	return cmd
 }
@@ -841,16 +629,20 @@ func newRadioSourcesRemoveCommand() *cobra.Command {
 	cmd.Flags().Bool("with-channels", false, "Also take the channels it added off the radio")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		withChannels, _ := cmd.Flags().GetBool("with-channels")
-		return withStore(cmd, func(s *store.Store) error {
-			r, src, err := radioSource(cmd, s, args[0], args[1])
+		n, err := sourceNumber(args[1])
+		if err != nil {
+			return err
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			r, err := a.GetRadio(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}
-			n, err := s.RemoveRadioSource(ctx(cmd), src, withChannels)
+			removed, err := a.RemoveSource(ctx(cmd), r.ID, n, withChannels)
 			if err == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Removed source %s from %s", args[1], r.Name)
+				fmt.Fprintf(cmd.OutOrStdout(), "Removed source %d from %s", n, r.Name)
 				if withChannels {
-					fmt.Fprintf(cmd.OutOrStdout(), " and %d channels", n)
+					fmt.Fprintf(cmd.OutOrStdout(), " and %d channels", removed)
 				}
 				fmt.Fprintln(cmd.OutOrStdout())
 			}
@@ -869,8 +661,8 @@ manufacturer software's CSV for profile radios. Warnings go to stderr.`}
 	cmd.Flags().Bool("skip-invalid", false, "Leave out memories the format can't represent instead of failing")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
-		return withStore(cmd, func(s *store.Store) error {
-			p, _, err := loadPlan(cmd, s, args[0])
+		return withApp(cmd, func(a *app.Service) error {
+			p, _, err := a.Plan(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}

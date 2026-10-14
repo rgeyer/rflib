@@ -9,7 +9,6 @@ import (
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
-	"github.com/ryan/rflib/internal/store"
 )
 
 func TestParseCHIRPGoldenExportRoundTrips(t *testing.T) {
@@ -26,7 +25,7 @@ func TestParseCHIRPGoldenExportRoundTrips(t *testing.T) {
 	}
 	s := newStore(t)
 	mustApply(t, s, b, Options{})
-	cs, err := s.ListChannels(context.Background(), store.ChannelFilter{})
+	cs, err := s.ListChannels(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
