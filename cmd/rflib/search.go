@@ -27,7 +27,7 @@ names. @name uses a saved search.
   has:location|service|group|tag|tone|power|notes|shortname|radio
   near:LAT,LON,KM           within KM plus the group's radius; channels
                             without a location never match
-  radio:NAME|any|none       tunes:RADIO|MODEL  receive frequency in its bands
+  radio:NAME|any|none       tunes:RADIO|MODEL  in its bands and modes
   created: updated:         YYYY-MM-DD, >=, <, ranges
   id:ID
 

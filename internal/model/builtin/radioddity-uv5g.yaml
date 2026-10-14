@@ -8,5 +8,6 @@ power:
   - {label: Low, watts: 1, intent: low}
   - {label: High, watts: 4, intent: high}
 bands_mhz: [[130, 176], [400, 520]]
+modes: [FM, NFM]
 notes: Memories are numbered from 0, as CHIRP does for this radio.
 source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/uv5r.py (RadioddityUV5GRadio, BaofengUV5R)

@@ -221,3 +221,26 @@ func TestTransmitOnlyWhereAllowed(t *testing.T) {
 		t.Errorf("sheriff not transmit-inhibited in CHIRP:\n%s", out.String())
 	}
 }
+
+// A memory in a mode the radio lacks keeps its number but isn't exported.
+func TestLeavesOutModesTheRadioLacks(t *testing.T) {
+	ssb := ch("2m SSB Call", 144_200_000, 144_200_000, domain.ServiceAmateur)
+	ssb.Mode = "USB"
+	fm := ch("2m FM Call", 146_520_000, 146_520_000, domain.ServiceAmateur)
+	p, err := Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), entries(ssb, fm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Memories[0].LeftOut || p.Memories[1].LeftOut || !strings.Contains(strings.Join(p.Warnings, "\n"), `memory 1 "2m SSB Call": left out: the radio doesn't have USB`) {
+		t.Fatalf("plan = %+v", p)
+	}
+	var out bytes.Buffer
+	n, err := Write(&out, p, false, &bytes.Buffer{})
+	lines := strings.Split(strings.TrimSpace(out.String()), "\r\n")
+	if err != nil || n != 1 || len(lines) != 2 || !strings.HasPrefix(lines[1], "2,2m FM Call,") {
+		t.Fatalf("export (%d, %v):\n%s", n, err, out.String())
+	}
+	if p.Memories[0].LeftOut != true {
+		t.Error("Write changed the plan")
+	}
+}

@@ -10,4 +10,5 @@ power:
   - {label: Mid1, watts: 20, intent: medium}
   - {label: High, watts: 50, intent: high}
 bands_mhz: [[26, 33], [47, 54], [108, 180], [220, 260], [350, 399.995], [400, 512], [750, 950]]
+modes: [FM, NFM, AM]
 source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/th9800.py (TYTTH9800Base)

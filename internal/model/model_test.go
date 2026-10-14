@@ -104,6 +104,20 @@ func TestTunes(t *testing.T) {
 	}
 }
 
+func TestReceives(t *testing.T) {
+	ssb := domain.Channel{Name: "2m SSB Call", ReceiveHz: 144_200_000, Mode: "USB"}
+	fm := domain.Channel{Name: "2m FM Call", ReceiveHz: 146_520_000, Mode: "FM"}
+	if uv := mustFind(t, "baofeng-uv5rm"); uv.Receives(ssb) || !uv.Receives(fm) || !uv.HasMode("AM") {
+		t.Error("UV-5RM modes")
+	}
+	if ft := mustFind(t, "yaesu-ft857"); !ft.Receives(ssb) {
+		t.Error("FT-857 takes USB")
+	}
+	if !(Model{}).HasMode("LSB") {
+		t.Error("models without modes accept any")
+	}
+}
+
 func TestValidate(t *testing.T) {
 	for _, tc := range []struct{ yaml, want string }{
 		{"name: x\nformat: kenwood\nmemories: {first: 1, last: 2}", "format must be"},
@@ -111,6 +125,8 @@ func TestValidate(t *testing.T) {
 		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\npower: [{label: H, watts: 5}, {label: L, watts: 1}]", "lowest to highest"},
 		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\npower: [{label: A, intent: low}, {label: B, intent: low}]", "more than one level"},
 		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\nnames: {charset: klingon}", "names.charset"},
+		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\nmodes: [FM, CW]", `mode "CW" must be one of`},
+		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\nmodes: [FM, FM]", "listed twice"},
 	} {
 		if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("err = %v, want %q", err, tc.want)

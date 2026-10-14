@@ -118,12 +118,12 @@ func (s *Service) QueryEnv(ctx context.Context) query.Env {
 			}
 			return s.lib.RadioChannelIDs(ctx, r.ID)
 		},
-		Tunes: func(ref string) (func(int64) bool, error) {
+		Tunes: func(ref string) (func(domain.Channel) bool, error) {
 			m, err := s.radioOrModel(ctx, ref)
 			if err != nil {
 				return nil, err
 			}
-			return m.Tunes, nil
+			return m.Receives, nil
 		},
 	}
 }

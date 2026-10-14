@@ -772,8 +772,24 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 		t.Errorf("stderr = %q", stderr)
 	}
 	cb19 := strings.Split(c.ok("channel", "list", "name:\"CB 19\""), "\t")[0]
-	if out := c.ok("radio", "channels", "add", "HT", "--id", cb19, "--any-band"); out != "Added 1 channels to HT" {
-		t.Errorf("--any-band = %q", out)
+	// CB is AM, which the UV-5G doesn't have: --any-band alone isn't enough.
+	out, stderr, err = c.exec("radio", "channels", "add", "HT", "--id", cb19, "--any-band")
+	if err != nil || strings.TrimSpace(out) != "Added 0 channels to HT; skipped 1 in modes it doesn't have" || !strings.Contains(stderr, "HT doesn't have AM") {
+		t.Errorf("--any-band = %q, %q, %v", out, stderr, err)
+	}
+	if out := c.ok("radio", "channels", "add", "HT", "--id", cb19, "--any-band", "--any-mode"); out != "Added 1 channels to HT" {
+		t.Errorf("--any-mode = %q", out)
+	}
+	// It's on the radio but left out of the export.
+	exported, stderr, err := c.exec("radio", "export", "HT")
+	if err != nil || strings.Contains(exported, "CB 19") || !strings.Contains(stderr, `"CB 19": left out: the radio doesn't have AM (it has FM, NFM)`) {
+		t.Errorf("export: %v\n%s\n%s", err, stderr, exported)
+	}
+	if _, stderr, err := c.exec("radio", "export", "HT", "--output", filepath.Join(t.TempDir(), "ht.csv")); err != nil || !strings.Contains(stderr, "Exported 7 channels") {
+		t.Errorf("export count: %v, %q", err, stderr)
+	}
+	if strings.Contains(c.ok("channel", "list", "tunes:HT"), "CB 19") {
+		t.Error("tunes: matched a channel in a mode the radio lacks")
 	}
 
 	c.ok("radio", "add", "Base", "--model", "radioddity-uv5g")

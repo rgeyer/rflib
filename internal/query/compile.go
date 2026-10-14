@@ -26,8 +26,8 @@ type Env struct {
 	// name), or on any radio when ref is empty.
 	RadioChannels func(ref string) (map[string]bool, error)
 	// Tunes reports whether a radio (by ID or name) or radio model can
-	// tune a frequency in Hz.
-	Tunes func(ref string) (func(hz int64) bool, error)
+	// receive a channel: its frequency and its mode.
+	Tunes func(ref string) (func(domain.Channel) bool, error)
 }
 
 // Compile turns a query into a Matcher, resolving saved searches, groups,
@@ -265,11 +265,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		if c.env.Tunes == nil {
 			return nil, fmt.Errorf("radios can't be used here")
 		}
-		tunes, err := c.env.Tunes(v)
-		if err != nil {
-			return nil, err
-		}
-		return func(ch domain.Channel) bool { return tunes(ch.ReceiveHz) }, nil
+		return c.env.Tunes(v)
 	case "created", "updated":
 		ok, err := rangeSpec(t.Op, v, parseDate)
 		if err != nil {
