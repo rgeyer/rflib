@@ -103,7 +103,18 @@ func channelColumns() []field[domain.Channel] {
 		{name: "skip", text: func(c c) string { return yesNo(c.Skip) }, json: func(c c) any { return c.Skip }},
 		{name: "tags", text: func(c c) string { return strings.Join(c.Tags, ",") }, json: func(c c) any { return nonNil(c.Tags) }},
 		{name: "shortnames", text: func(c c) string { return strings.Join(c.ShortNames, ",") }, json: func(c c) any { return nonNil(c.ShortNames) }},
-		{name: "group", text: groupName},
+		{name: "location", text: func(c c) string { return coordinates(c.Location) }},
+		{name: "radius_km", text: func(c c) string {
+			if c.Location == nil {
+				return ""
+			}
+			return strings.TrimSuffix(optionalKM(c.Location.RadiusKM), " km")
+		}, json: func(c c) any {
+			if c.Location == nil {
+				return nil
+			}
+			return c.Location.RadiusKM
+		}},
 		{name: "bandwidth", text: func(c c) string { return c.Bandwidth }},
 		{name: "notes", text: func(c c) string { return c.Notes }},
 		{name: "created", text: func(c c) string { return date(c.CreatedAt) }, json: func(c c) any { return c.CreatedAt }},

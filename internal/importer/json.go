@@ -19,17 +19,13 @@ func ParseJSON(r io.Reader) (Batch, error) {
 	if err := dec.Decode(&doc); err != nil {
 		return b, fmt.Errorf("read JSON backup: %w", err)
 	}
-	if doc.Format != export.DocumentFormat || doc.Version != export.DocumentVersion {
-		return b, fmt.Errorf("unsupported backup: format %q version %d (want %q version %d)", doc.Format, doc.Version, export.DocumentFormat, export.DocumentVersion)
+	if doc.Format != export.DocumentFormat || doc.Version < 1 || doc.Version > export.DocumentVersion {
+		return b, fmt.Errorf("unsupported backup: format %q version %d (want %q version 1 to %d)", doc.Format, doc.Version, export.DocumentFormat, export.DocumentVersion)
 	}
-	groups := make(map[string]domain.Group, len(doc.Groups))
+	// Version 1 backups have groups, which become tags and locations.
+	groups := make(map[string]export.GroupRecord, len(doc.Groups))
 	for _, g := range doc.Groups {
-		group := domain.Group{ID: g.ID, Name: g.Name, Description: g.Description, Latitude: g.Latitude, Longitude: g.Longitude, RadiusKM: g.RadiusKM, Notes: g.Notes, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt}
-		if err := domain.ValidateGroup(group); err != nil {
-			return b, fmt.Errorf("group %q: %w", g.ID, err)
-		}
-		groups[g.ID] = group
-		b.Groups = append(b.Groups, group)
+		groups[g.ID] = g
 	}
 	for i, rec := range doc.Channels {
 		row := i + 1
@@ -48,13 +44,20 @@ func ParseJSON(r io.Reader) (Batch, error) {
 			b.fail(row, "transmit_tone: %v", err)
 			continue
 		}
+		if c.Location, err = domain.NewLocation(rec.Latitude, rec.Longitude, rec.RadiusKM); err != nil {
+			b.fail(row, "location: %v", err)
+			continue
+		}
 		if rec.GroupID != nil {
 			g, ok := groups[*rec.GroupID]
 			if !ok {
 				b.fail(row, "group_id %q is not in the backup's groups", *rec.GroupID)
 				continue
 			}
-			c.Group = &g
+			if err := ungroup(&c, g.Name, g.Latitude, g.Longitude, g.RadiusKM); err != nil {
+				b.fail(row, "group %q: %v", g.Name, err)
+				continue
+			}
 		}
 		b.finish(row, c)
 	}

@@ -45,24 +45,21 @@ func level(m Memory) string {
 
 func TestPowerPrecedenceAndCaps(t *testing.T) {
 	m := mustModel(t, "tyt-th9800")
-	group := &domain.Group{Name: "Local", Power: domain.PowerLow}
-	inGroup := ch("Grouped", 146_520_000, 146_520_000, domain.ServiceAmateur)
-	inGroup.Group = group
 	own := ch("Own", 146_550_000, 146_550_000, domain.ServiceAmateur)
-	own.Group, own.Power = group, domain.PowerMax
+	own.Power = domain.PowerMax
 	plain := ch("Plain", 146_580_000, 146_580_000, domain.ServiceAmateur)
 	overridden := ch("Override", 146_490_000, 146_490_000, domain.ServiceAmateur)
 	overridden.Power = domain.PowerHigh
-	es := entries(inGroup, own, plain, overridden)
-	es[3].Power = domain.PowerLow
+	es := entries(own, plain, overridden)
+	es[2].Power = domain.PowerLow
 
 	p, err := Build(domain.Radio{Name: "Truck", DefaultPower: domain.PowerMedium}, m, es)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := []string{level(p.Memories[0]), level(p.Memories[1]), level(p.Memories[2]), level(p.Memories[3])}
-	if strings.Join(got, ",") != "Low,High,Mid1,Low" {
-		t.Errorf("levels = %v (group, channel over group, radio default, radio override)", got)
+	got := []string{level(p.Memories[0]), level(p.Memories[1]), level(p.Memories[2])}
+	if strings.Join(got, ",") != "High,Mid1,Low" {
+		t.Errorf("levels = %v (channel, radio default, radio override)", got)
 	}
 
 	// Service caps: GMRS 1-7 allows 5 W; the TH-9800's lowest level is 5 W.

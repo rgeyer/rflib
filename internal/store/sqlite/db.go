@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/query"
 	"github.com/ryan/rflib/internal/store"
 	_ "modernc.org/sqlite"
 )
@@ -68,6 +69,9 @@ type migration struct {
 	// to. It runs with foreign keys off, as SQLite's ALTER TABLE
 	// documentation prescribes, and checks them before committing.
 	rebuild bool
+	// after, when set, runs in the same transaction after sql, for steps
+	// SQL can't express.
+	after func(context.Context, *sql.Tx) error
 }
 
 // baselineVersion is the schema version that baselineSchema creates directly
@@ -159,6 +163,94 @@ DROP TABLE searches;
 ALTER TABLE new_searches RENAME TO searches;`},
 	// Sources that re-sort their channels on every sync.
 	{version: 8, sql: `ALTER TABLE radio_sources ADD COLUMN keep_sorted INTEGER NOT NULL DEFAULT 0;`},
+	// Groups give way to channel locations and tags: each grouped channel
+	// takes its group's location and power where it has none, and a tag
+	// named after the group (see ungroup), and group: in saved queries
+	// becomes tag:. The group sort becomes name.
+	{version: 9, rebuild: true, after: ungroup, sql: `
+CREATE TABLE new_channels (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, latitude REAL, longitude REAL, radius_km REAL, name TEXT NOT NULL, receive_hz INTEGER NOT NULL, transmit_hz INTEGER, mode TEXT NOT NULL, service TEXT NOT NULL DEFAULT '', rx_only INTEGER NOT NULL DEFAULT 0, receive_tone_kind TEXT NOT NULL, receive_ctcss_millihz INTEGER, receive_dcs_code INTEGER, receive_dcs_inverted INTEGER NOT NULL DEFAULT 0, transmit_tone_kind TEXT NOT NULL, transmit_ctcss_millihz INTEGER, transmit_dcs_code INTEGER, transmit_dcs_inverted INTEGER NOT NULL DEFAULT 0, tone_squelch INTEGER NOT NULL DEFAULT 0, power TEXT NOT NULL DEFAULT '', bandwidth TEXT NOT NULL DEFAULT '', skip INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+INSERT INTO new_channels SELECT c.id, c.library_id, g.latitude, g.longitude, CASE WHEN g.latitude IS NULL THEN NULL ELSE g.radius_km END, c.name, c.receive_hz, c.transmit_hz, c.mode, c.service, c.rx_only, c.receive_tone_kind, c.receive_ctcss_millihz, c.receive_dcs_code, c.receive_dcs_inverted, c.transmit_tone_kind, c.transmit_ctcss_millihz, c.transmit_dcs_code, c.transmit_dcs_inverted, c.tone_squelch, CASE WHEN c.power = '' THEN coalesce(g.power, '') ELSE c.power END, c.bandwidth, c.skip, c.notes, c.created_at, c.updated_at
+	FROM channels c LEFT JOIN groups g ON g.id = c.group_id;
+UPDATE radio_sources SET sort = 'name' WHERE sort = 'group';`},
+}
+
+// ungroup finishes migration 9 once new_channels holds the channels: it
+// tags each grouped channel with its group's name, rewrites group: terms in
+// saved searches and radio sources to tag:, and swaps the tables.
+func ungroup(ctx context.Context, tx *sql.Tx) error {
+	type group struct{ id, library, name string }
+	var groups []group
+	rows, err := tx.QueryContext(ctx, `SELECT id, library_id, name FROM groups`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var g group
+		if err := rows.Scan(&g.id, &g.library, &g.name); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		groups = append(groups, g)
+	}
+	_ = rows.Close()
+	tag := func(name string) string { return domain.NormalizeTags([]string{name})[0] }
+	for _, g := range groups {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO channel_tags (channel_id, tag) SELECT id, ? FROM channels WHERE group_id = ?`, tag(g.name), g.id); err != nil {
+			return err
+		}
+	}
+	// A group: term names a group by ID or name, in its own library.
+	rewrite := func(library, text string) string {
+		n, err := query.Parse(text)
+		if err != nil {
+			return text
+		}
+		return query.MapTerms(n, func(t query.Term) query.Term {
+			if t.Field != "group" {
+				return t
+			}
+			for _, g := range groups {
+				if g.library == library && (t.Value == g.id || strings.EqualFold(t.Value, g.name)) {
+					return query.Term{Field: "tag", Value: tag(g.name)}
+				}
+			}
+			return t
+		}).String()
+	}
+	for _, table := range []struct{ name, library string }{
+		{"searches", "library_id"},
+		{"radio_sources", "(SELECT library_id FROM radios WHERE radios.id = radio_sources.radio_id)"},
+	} {
+		type row struct{ id, library, query string }
+		var rs []row
+		rows, err := tx.QueryContext(ctx, `SELECT id, `+table.library+`, query FROM `+table.name+` WHERE query LIKE '%group:%'`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.id, &r.library, &r.query); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			rs = append(rs, r)
+		}
+		_ = rows.Close()
+		for _, r := range rs {
+			if q := rewrite(r.library, r.query); q != r.query {
+				if _, err := tx.ExecContext(ctx, `UPDATE `+table.name+` SET query = ? WHERE id = ?`, q, r.id); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
+DROP TABLE channels;
+ALTER TABLE new_channels RENAME TO channels;
+CREATE INDEX idx_channels_library ON channels(library_id, name);
+CREATE INDEX idx_channels_service ON channels(service);
+DROP TABLE groups;`)
+	return err
 }
 
 func latestVersion() int64 {
@@ -212,6 +304,11 @@ func (d *DB) migrate(ctx context.Context, m migration) error {
 	return d.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
 			return err
+		}
+		if m.after != nil {
+			if err := m.after(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if m.rebuild {
 			if err := checkForeignKeys(ctx, tx); err != nil {

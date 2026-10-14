@@ -10,21 +10,9 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 )
 
-type groupOut struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Latitude    *float64 `json:"latitude,omitempty"`
-	Longitude   *float64 `json:"longitude,omitempty"`
-	RadiusKM    *float64 `json:"radius_km,omitempty"`
-	Power       string   `json:"power"`
-	Notes       string   `json:"notes"`
-}
-
 type channelOut struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
-	Group       *groupOut `json:"group,omitempty"`
 	ReceiveHz   int64     `json:"receive_hz"`
 	ReceiveMHz  string    `json:"receive_mhz"`
 	TransmitHz  *int64    `json:"transmit_hz,omitempty"`
@@ -41,10 +29,9 @@ type channelOut struct {
 	Tags        []string  `json:"tags"`
 	ShortNames  []string  `json:"short_names"`
 	Notes       string    `json:"notes"`
-}
-
-func newGroupOut(g domain.Group) groupOut {
-	return groupOut{ID: g.ID, Name: g.Name, Description: g.Description, Latitude: g.Latitude, Longitude: g.Longitude, RadiusKM: g.RadiusKM, Power: string(g.Power), Notes: g.Notes}
+	Latitude    *float64  `json:"latitude,omitempty"`
+	Longitude   *float64  `json:"longitude,omitempty"`
+	RadiusKM    *float64  `json:"radius_km,omitempty"`
 }
 
 func newChannelOut(c domain.Channel) channelOut {
@@ -77,9 +64,8 @@ func newChannelOut(c domain.Channel) channelOut {
 		mhz := domain.FormatFrequencyMHz(*c.TransmitHz)
 		o.TransmitMHz = &mhz
 	}
-	if c.Group != nil {
-		g := newGroupOut(*c.Group)
-		o.Group = &g
+	if l := c.Location; l != nil {
+		o.Latitude, o.Longitude, o.RadiusKM = &l.Latitude, &l.Longitude, l.RadiusKM
 	}
 	return o
 }
@@ -97,50 +83,15 @@ func checkFormat(format string) error {
 	return nil
 }
 
-var groupListing = listing[domain.Group]{
-	fields: []field[domain.Group]{
-		{name: "id", id: true, text: func(g domain.Group) string { return g.ID }},
-		{name: "name", text: func(g domain.Group) string { return g.Name }},
-		{name: "coordinates", text: formatCoordinates},
-		{name: "radius_km", text: func(g domain.Group) string { return strings.TrimSuffix(optionalKM(g.RadiusKM), " km") }, json: func(g domain.Group) any { return g.RadiusKM }},
-		{name: "power", text: func(g domain.Group) string { return string(g.Power) }},
-		{name: "description", text: func(g domain.Group) string { return g.Description }},
-		{name: "notes", text: func(g domain.Group) string { return g.Notes }},
-	},
-	defaults: []string{"id", "name", "coordinates", "radius_km", "power"},
-	full: func(gs []domain.Group) any {
-		items := make([]groupOut, len(gs))
-		for i, g := range gs {
-			items[i] = newGroupOut(g)
-		}
-		return items
-	},
-}
-
-func writeGroup(out io.Writer, g domain.Group, format string) error {
-	if format == "json" {
-		return writeJSON(out, newGroupOut(g))
-	}
-	fmt.Fprintf(out, "%s\nname: %s\ncoordinates: %s\nradius: %s\npower: %s\ndescription: %s\nnotes: %s\n", g.ID, g.Name, formatCoordinates(g), optionalKM(g.RadiusKM), powerName(g.Power), g.Description, g.Notes)
-	return nil
-}
-
 func writeChannel(out io.Writer, c domain.Channel, format string) error {
 	if format == "json" {
 		return writeJSON(out, newChannelOut(c))
 	}
-	fmt.Fprintf(out, "%s\nname: %s\nshort names: %s\ngroup: %s\nservice: %s\nrx: %s MHz\ntx: %s\nmode: %s\nreceive tone: %s\ntransmit tone: %s\ntone squelch: %t\npower: %s\nbandwidth: %s\nskip: %t\ntags: %s\nnotes: %s\n",
-		c.ID, c.Name, strings.Join(c.ShortNames, ", "), groupName(c), serviceName(c.Service), domain.FormatFrequencyMHz(c.ReceiveHz), txText(c), c.Mode,
+	fmt.Fprintf(out, "%s\nname: %s\nshort names: %s\nlocation: %s\nservice: %s\nrx: %s MHz\ntx: %s\nmode: %s\nreceive tone: %s\ntransmit tone: %s\ntone squelch: %t\npower: %s\nbandwidth: %s\nskip: %t\ntags: %s\nnotes: %s\n",
+		c.ID, c.Name, strings.Join(c.ShortNames, ", "), locationText(c.Location), serviceName(c.Service), domain.FormatFrequencyMHz(c.ReceiveHz), txText(c), c.Mode,
 		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, powerName(c.Power), c.Bandwidth, c.Skip,
 		strings.Join(c.Tags, ","), c.Notes)
 	return nil
-}
-
-func optionalFloat(v *float64) string {
-	if v == nil {
-		return ""
-	}
-	return strconv.FormatFloat(*v, 'f', 6, 64)
 }
 
 func powerName(p domain.PowerIntent) string {
@@ -164,18 +115,23 @@ func optionalFreq(v *int64) string {
 	return domain.FormatFrequencyMHz(*v) + " MHz"
 }
 
-func formatCoordinates(g domain.Group) string {
-	if g.Latitude == nil {
+// locationText is a location for reading: coordinates, then the radius.
+func locationText(l *domain.Location) string {
+	if l == nil {
 		return ""
 	}
-	return optionalFloat(g.Latitude) + "," + optionalFloat(g.Longitude)
+	if l.RadiusKM == nil {
+		return coordinates(l)
+	}
+	return coordinates(l) + " within " + optionalKM(l.RadiusKM)
 }
 
-func groupName(c domain.Channel) string {
-	if c.Group == nil {
+// coordinates is a location's latitude and longitude, as near: takes them.
+func coordinates(l *domain.Location) string {
+	if l == nil {
 		return ""
 	}
-	return c.Group.Name
+	return strconv.FormatFloat(l.Latitude, 'f', -1, 64) + "," + strconv.FormatFloat(l.Longitude, 'f', -1, 64)
 }
 
 func serviceName(s domain.Service) string {

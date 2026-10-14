@@ -109,9 +109,8 @@ func ctcss(t *testing.T, v string) domain.Tone {
 // library is a small set of channels covering each field.
 func library(t *testing.T) []domain.Channel {
 	none := domain.Tone{Kind: domain.ToneNone}
-	home := &domain.Group{ID: "g-home", Name: "Home", Latitude: fl(34.64), Longitude: fl(-120.46), RadiusKM: fl(30)}
-	far := &domain.Group{ID: "g-far", Name: "Far", Latitude: fl(36.0), Longitude: fl(-120.46)}
-	noLoc := &domain.Group{ID: "g-noloc", Name: "Statewide"}
+	home := &domain.Location{Latitude: 34.64, Longitude: -120.46, RadiusKM: fl(30)}
+	far := &domain.Location{Latitude: 36.0, Longitude: -120.46}
 	day := func(s string) time.Time {
 		d, _ := time.ParseInLocation(time.DateOnly, s, time.Local)
 		return d.Add(12 * time.Hour)
@@ -119,12 +118,12 @@ func library(t *testing.T) []domain.Channel {
 	cs := []domain.Channel{
 		{ID: "call", Name: "2m FM Call", ShortNames: []string{"Call"}, ReceiveHz: 146_520_000, TransmitHz: hz(146_520_000), Mode: "FM",
 			Service: domain.ServiceAmateur, Tags: []string{"calling", "ham"}, TransmitTone: none, ReceiveTone: none, CreatedAt: day("2026-09-01")},
-		{ID: "marian", Name: "Marian", ReceiveHz: 147_300_000, TransmitHz: hz(147_900_000), Mode: "FM", Tags: []string{"ham"},
-			TransmitTone: ctcss(t, "ctcss:131.8"), ReceiveTone: none, Group: home, GroupID: &home.ID, Notes: "Hospital repeater", CreatedAt: day("2026-10-01")},
-		{ID: "uhf", Name: "Tranq UHF", ReceiveHz: 449_140_000, TransmitHz: hz(444_140_000), Mode: "FM", Tags: []string{"ham"},
-			TransmitTone: ctcss(t, "ctcss:131.8"), ReceiveTone: ctcss(t, "ctcss:131.8"), ToneSquelch: true, Group: far, GroupID: &far.ID, CreatedAt: day("2026-10-05")},
+		{ID: "marian", Name: "Marian", ReceiveHz: 147_300_000, TransmitHz: hz(147_900_000), Mode: "FM", Tags: []string{"ham", "home"},
+			TransmitTone: ctcss(t, "ctcss:131.8"), ReceiveTone: none, Location: home, Notes: "Hospital repeater", CreatedAt: day("2026-10-01")},
+		{ID: "uhf", Name: "Tranq UHF", ReceiveHz: 449_140_000, TransmitHz: hz(444_140_000), Mode: "FM", Tags: []string{"far", "ham"},
+			TransmitTone: ctcss(t, "ctcss:131.8"), ReceiveTone: ctcss(t, "ctcss:131.8"), ToneSquelch: true, Location: far, CreatedAt: day("2026-10-05")},
 		{ID: "sheriff", Name: "SBCoSO Ops 1D", ReceiveHz: 460_275_000, TransmitHz: hz(465_275_000), Mode: "NFM",
-			TransmitTone: ctcss(t, "dcs:023"), ReceiveTone: ctcss(t, "dcs:023"), ToneSquelch: true, Group: noLoc, GroupID: &noLoc.ID, CreatedAt: day("2026-10-05")},
+			TransmitTone: ctcss(t, "dcs:023"), ReceiveTone: ctcss(t, "dcs:023"), ToneSquelch: true, Tags: []string{"statewide"}, CreatedAt: day("2026-10-05")},
 		{ID: "wx", Name: "WX1", ReceiveHz: 162_550_000, Mode: "FM", Service: domain.ServiceNOAA, RXOnly: true, Skip: true,
 			TransmitTone: none, ReceiveTone: none, Power: domain.PowerLow, CreatedAt: day("2026-10-06")},
 		{ID: "gmrs", Name: "GMRS 15R", ReceiveHz: 462_550_000, TransmitHz: hz(467_550_000), Mode: "FM", Service: domain.ServiceGMRS,
@@ -154,14 +153,6 @@ var testEnv = Env{
 			return "frq:1", nil
 		}
 		return "", fmt.Errorf("no saved search named %q", name)
-	},
-	Group: func(ref string) (string, error) {
-		for _, g := range []string{"g-home", "g-far", "g-noloc"} {
-			if strings.EqualFold(ref, g) || strings.EqualFold("g-"+ref, g) {
-				return g, nil
-			}
-		}
-		return "", fmt.Errorf("no group %q", ref)
 	},
 	RadioChannels: func(ref string) (map[string]bool, error) {
 		switch strings.ToLower(ref) {
@@ -222,9 +213,8 @@ func TestMatch(t *testing.T) {
 		{"near:34.64,-120.46,10 OR -has:location", "call marian sheriff wx gmrs xband"},
 		{"-near:34.64,-120.46,10", "call uhf sheriff wx gmrs xband"},
 		{"has:location", "marian uhf"},
-		{"group:home", "marian"},
-		{"group:none", "call wx gmrs xband"},
-		{"has:group -group:far", "marian sheriff"},
+		{"group:home", "marian"}, // groups became tags
+		{"has:tag -group:far", "call marian sheriff"},
 		{"has:service", "call wx gmrs"},
 		{"has:notes", "marian"},
 		{"has:shortname", "call"},
@@ -238,7 +228,6 @@ func TestMatch(t *testing.T) {
 		{"name:call", "call"},
 		{"name:SBCo", "sheriff"},
 		{"hospital", "marian"},
-		{"statewide", "sheriff"}, // group name
 		{`"fm call"`, "call"},
 		{"@local", "marian"},
 		{"@ham", "call uhf"},
@@ -281,7 +270,8 @@ func TestCompileErrors(t *testing.T) {
 		{"near:34,-120,0", "must be positive"},
 		{"squelch:maybe", "use yes or no"},
 		{"created:yesterday", "dates are YYYY-MM-DD"},
-		{"group:nowhere", `no group "nowhere"`},
+		{"group:none", "groups are gone"},
+		{"has:group", "groups are gone"},
 		{"radio:car", `no radio "car"`},
 		{"tunes:car", `no radio "car"`},
 		{"mode:dmr", `unknown mode "dmr"`},

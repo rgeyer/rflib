@@ -27,23 +27,16 @@ type Tone struct {
 	Inverted     bool
 }
 
-type Group struct {
-	ID          string
-	Name        string
-	Description string
-	Latitude    *float64
-	Longitude   *float64
-	RadiusKM    *float64
-	// Power is the default power intent for the group's channels.
-	Power     PowerIntent
-	Notes     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+// Location is where a channel is: a point, or with RadiusKM a circle, such
+// as an approximate position or a repeater's coverage.
+type Location struct {
+	Latitude  float64
+	Longitude float64
+	RadiusKM  *float64
 }
 
 type Channel struct {
 	ID         string
-	GroupID    *string
 	Name       string
 	ReceiveHz  int64
 	TransmitHz *int64
@@ -64,12 +57,13 @@ type Channel struct {
 	// ShortNames are the user's own abbreviations of Name, for radios with
 	// narrow displays (see package naming).
 	ShortNames []string
+	// Location is where the channel is used, if known (see query near:).
+	Location *Location
 	// ProgrammedPower is the radio power level chosen for an export. It is
 	// set on export copies by a radio's power resolution and never stored.
 	ProgrammedPower *PowerLevel
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
-	Group           *Group
 }
 
 func NewID() (string, error) {
@@ -219,21 +213,29 @@ func NormalizeShortNames(name string, shortNames []string) []string {
 	return out
 }
 
-func ValidateGroup(g Group) error {
-	if strings.TrimSpace(g.Name) == "" {
-		return fmt.Errorf("group name is required")
+// NewLocation builds a location from optional parts, as flags and files
+// give them: latitude and longitude together, and a radius only with them.
+// All nil is no location.
+func NewLocation(lat, lon, radiusKM *float64) (*Location, error) {
+	if (lat == nil) != (lon == nil) {
+		return nil, fmt.Errorf("latitude and longitude must be given together")
 	}
-	if (g.Latitude == nil) != (g.Longitude == nil) {
-		return fmt.Errorf("latitude and longitude must be provided together")
+	if lat == nil {
+		if radiusKM != nil {
+			return nil, fmt.Errorf("a radius needs a latitude and longitude")
+		}
+		return nil, nil
 	}
-	if g.Latitude != nil && (*g.Latitude < -90 || *g.Latitude > 90 || *g.Longitude < -180 || *g.Longitude > 180) {
+	loc := &Location{Latitude: *lat, Longitude: *lon, RadiusKM: radiusKM}
+	return loc, ValidateLocation(*loc)
+}
+
+func ValidateLocation(l Location) error {
+	if l.Latitude < -90 || l.Latitude > 90 || l.Longitude < -180 || l.Longitude > 180 {
 		return fmt.Errorf("coordinates are outside valid latitude/longitude bounds")
 	}
-	if g.RadiusKM != nil && *g.RadiusKM <= 0 {
+	if l.RadiusKM != nil && *l.RadiusKM <= 0 {
 		return fmt.Errorf("radius must be positive")
-	}
-	if _, err := ParsePowerIntent(string(g.Power)); err != nil {
-		return err
 	}
 	return nil
 }
@@ -263,6 +265,9 @@ func ValidateChannel(c Channel) error {
 	}
 	if c.ToneSquelch && c.ReceiveTone.Kind == ToneNone {
 		return fmt.Errorf("tone squelch requires a receive tone")
+	}
+	if c.Location != nil {
+		return ValidateLocation(*c.Location)
 	}
 	return nil
 }

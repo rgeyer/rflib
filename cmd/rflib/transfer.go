@@ -34,7 +34,7 @@ func newExportCommand() *cobra.Command {
 	}
 
 	js := &cobra.Command{Use: "json", Short: "Export a full-fidelity JSON backup", Args: cobra.NoArgs,
-		Long: "Export a JSON backup of channels and their groups, including IDs and timestamps.\nWithout filters every group is included, even empty ones."}
+		Long: "Export a JSON backup of channels, including IDs and timestamps."}
 	js.Flags().String("output", "-", "Output path, or - for stdout")
 	filterFields(js)
 	js.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -43,14 +43,7 @@ func newExportCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			gs, err := a.ListGroups(ctx(cmd))
-			if err != nil {
-				return err
-			}
-			if filtered(cmd) {
-				gs = referencedGroups(gs, cs)
-			}
-			return writeOutput(cmd, func(w io.Writer) (int, error) { return len(cs), export.WriteJSON(w, gs, cs) })
+			return writeOutput(cmd, func(w io.Writer) (int, error) { return len(cs), export.WriteJSON(w, cs) })
 		})
 	}
 
@@ -71,7 +64,7 @@ is on.
 	cmd.Flags().String("output", "-", "Output path, or - for stdout")
 	cmd.Flags().Int("start", 1, "First memory location")
 	cmd.Flags().Int("max-name-len", 0, "Fit names to this many characters (0 keeps full names)")
-	cmd.Flags().String("sort", "name", "Memory order: name, freq, or group")
+	cmd.Flags().String("sort", "name", "Memory order: name or freq")
 	cmd.Flags().Bool("skip-invalid", false, "Leave out channels CHIRP can't represent instead of failing")
 	dedupeFlag(cmd)
 	filterFields(cmd)
@@ -98,7 +91,7 @@ order. Channels the profile can't represent fail the export unless
 ` + namesHelp}
 	cmd.Flags().String("output", "-", "Output path, or - for stdout")
 	cmd.Flags().Int("start", 1, "First memory location (default: the profile's)")
-	cmd.Flags().String("sort", "name", "Memory order: name, freq, or group")
+	cmd.Flags().String("sort", "name", "Memory order: name or freq")
 	cmd.Flags().Bool("skip-invalid", false, "Leave out channels the profile can't represent instead of failing")
 	dedupeFlag(cmd)
 	filterFields(cmd)
@@ -180,22 +173,6 @@ func validChannels(warn io.Writer, v export.Validator, cs []domain.Channel) []do
 	return out
 }
 
-func referencedGroups(groups []domain.Group, channels []domain.Channel) []domain.Group {
-	used := map[string]bool{}
-	for _, c := range channels {
-		if c.GroupID != nil {
-			used[*c.GroupID] = true
-		}
-	}
-	out := groups[:0]
-	for _, g := range groups {
-		if used[g.ID] {
-			out = append(out, g)
-		}
-	}
-	return out
-}
-
 // writeOutput writes to stdout or the --output file. A failed file export is
 // removed so it can't be mistaken for a complete one. The summary goes to
 // stderr so it never mixes with exported data on stdout.
@@ -262,8 +239,8 @@ const importHelp = `Reads FILE, or stdin when FILE is omitted or "-". The import
 any invalid row aborts it unless --skip-invalid is given.
 
 A channel is a duplicate when it has the same ID as an existing channel, or the
-same name, frequencies, tones, tone squelch, and group. Unknown groups are
-created.`
+same name, frequencies, tones, and tone squelch. Files written before groups
+were removed bring each channel's group in as a tag, and its location.`
 
 func fileImportFlags(cmd *cobra.Command) {
 	importFlags(cmd)
@@ -304,8 +281,7 @@ func runFileImport(cmd *cobra.Command, args []string, parse func(io.Reader) (imp
 func importFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("dry-run", false, "Report what would change without writing")
 	cmd.Flags().String("on-duplicate", "skip", "What to do with duplicates: skip, update, or create")
-	cmd.Flags().String("match", "exact", "What makes a duplicate: exact (name, frequencies, tones, and group) or programmed (frequencies and tones only)")
-	cmd.Flags().String("group", "", "Assign every imported channel to this existing group (ID or name)")
+	cmd.Flags().String("match", "exact", "What makes a duplicate: exact (name, frequencies, and tones) or programmed (frequencies and tones only)")
 	cmd.Flags().String("tags", "", "Comma-separated tags added to every imported channel")
 }
 
@@ -316,7 +292,7 @@ func importOptions(cmd *cobra.Command) (importer.Options, error) {
 	}
 	match, err := importer.ParseMatchRule(getString(cmd, "match"))
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	return importer.Options{OnDuplicate: policy, Match: match, Group: getString(cmd, "group"), Tags: splitTags(getString(cmd, "tags")), DryRun: dryRun}, err
+	return importer.Options{OnDuplicate: policy, Match: match, Tags: splitTags(getString(cmd, "tags")), DryRun: dryRun}, err
 }
 
 func applyImport(cmd *cobra.Command, a *app.Service, batch importer.Batch, opts importer.Options, invalid int) error {
@@ -356,9 +332,6 @@ func printSummary(out io.Writer, sum importer.Summary, invalid int, dryRun bool)
 		fmt.Fprintf(out, ", skipped %d invalid", invalid)
 	}
 	fmt.Fprintln(out)
-	if len(sum.GroupsCreated) > 0 {
-		fmt.Fprintf(out, "New groups: %s\n", strings.Join(sum.GroupsCreated, ", "))
-	}
 	if len(sum.Warnings) > 0 {
 		fmt.Fprintf(out, "%d band plan warnings (see above; rflib check lists them again)\n", len(sum.Warnings))
 	}

@@ -70,11 +70,7 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, er
 		if e.Name != "" {
 			c.Name, c.ShortNames = e.Name, nil
 		}
-		groupPower := domain.PowerUnset
-		if c.Group != nil {
-			groupPower = c.Group.Power
-		}
-		intent := domain.ResolvePower(e.Power, c.Power, groupPower, r.DefaultPower)
+		intent := domain.ResolvePower(e.Power, c.Power, r.DefaultPower)
 		c.ProgrammedPower = choosePower(m, c, intent, warn)
 		if c.TransmitHz != nil && !c.RXOnly && !domain.PersonalTransmitAllowed(*c.TransmitHz) {
 			c.RXOnly = true

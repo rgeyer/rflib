@@ -99,7 +99,6 @@ var Sources = map[string]string{
 	"notes":    "notes on one line",
 	"service":  "radio service",
 	"tags":     "tags joined with ;",
-	"group":    "group name",
 	"step_khz": "tuning step in kHz, chosen from steps_khz",
 	"const":    "the column's fixed value",
 }

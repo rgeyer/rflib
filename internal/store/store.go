@@ -1,6 +1,6 @@
 // Package store defines how rflib keeps its data, independent of the
 // database: a Store holds libraries, and a Library holds one library's
-// groups, channels, radios, and saved searches. Package sqlite implements
+// channels, radios, and saved searches. Package sqlite implements
 // it; package storetest is the contract every implementation must pass.
 //
 // Stores check what a database can check: that records are well formed,
@@ -54,21 +54,12 @@ type Library interface {
 	// the Library passed to fn may be used inside it.
 	InTx(ctx context.Context, fn func(Library) error) error
 
-	CreateGroup(ctx context.Context, g domain.Group) (domain.Group, error)
-	// GetGroup looks a group up by ID or name.
-	GetGroup(ctx context.Context, idOrName string) (domain.Group, error)
-	ListGroups(ctx context.Context) ([]domain.Group, error)
-	UpdateGroup(ctx context.Context, g domain.Group) (domain.Group, error)
-	// DeleteGroup deletes a group by ID or name; its channels become
-	// ungrouped.
-	DeleteGroup(ctx context.Context, idOrName string) error
-
 	// CreateChannel stores a channel. A supplied ID is kept, so restored
 	// backups keep their identity, unless another record already has it;
 	// then a new one is assigned.
 	CreateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error)
 	GetChannel(ctx context.Context, id string) (domain.Channel, error)
-	// ListChannels returns every channel, with its group, in
+	// ListChannels returns every channel in
 	// domain.CompareChannels order.
 	ListChannels(ctx context.Context) ([]domain.Channel, error)
 	UpdateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error)

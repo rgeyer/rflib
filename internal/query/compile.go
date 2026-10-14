@@ -20,8 +20,6 @@ type Matcher func(domain.Channel) bool
 type Env struct {
 	// Search returns a saved search's query text.
 	Search func(name string) (string, error)
-	// Group resolves a group ID or name to its ID.
-	Group func(ref string) (string, error)
 	// RadioChannels returns the IDs of the channels on a radio (by ID or
 	// name), or on any radio when ref is empty.
 	RadioChannels func(ref string) (map[string]bool, error)
@@ -30,7 +28,7 @@ type Env struct {
 	Tunes func(ref string) (func(domain.Channel) bool, error)
 }
 
-// Compile turns a query into a Matcher, resolving saved searches, groups,
+// Compile turns a query into a Matcher, resolving saved searches,
 // and radios through env.
 func Compile(n Node, env Env) (Matcher, error) {
 	c := compiler{env: env}
@@ -189,17 +187,13 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		v = strings.ToLower(strings.TrimSpace(v))
 		return func(ch domain.Channel) bool { return slices.Contains(ch.Tags, v) }, nil
 	case "group":
+		// Groups became tags named after them, so group:NAME still works
+		// in queries saved before.
 		if strings.EqualFold(v, "none") {
-			return func(ch domain.Channel) bool { return ch.GroupID == nil }, nil
+			return nil, fmt.Errorf("groups are gone; each became a tag, so use -has:tag or -tag:NAME")
 		}
-		if c.env.Group == nil {
-			return nil, fmt.Errorf("groups can't be used here")
-		}
-		id, err := c.env.Group(v)
-		if err != nil {
-			return nil, err
-		}
-		return func(ch domain.Channel) bool { return ch.GroupID != nil && *ch.GroupID == id }, nil
+		v = strings.ToLower(strings.TrimSpace(v))
+		return func(ch domain.Channel) bool { return slices.Contains(ch.Tags, v) }, nil
 	case "freq", "rx", "tx":
 		ok, err := rangeSpec(t.Op, v, domain.ParseFrequencyMHz)
 		if err != nil {
@@ -292,15 +286,12 @@ func serviceNames() string {
 	return strings.Join(names, ", ")
 }
 
-// textMatcher matches a bare word against names, short names, notes, and
-// the group name, ignoring case.
+// textMatcher matches a bare word against names, short names, and notes,
+// ignoring case.
 func textMatcher(v string) Matcher {
 	v = strings.ToLower(v)
 	return func(ch domain.Channel) bool {
 		fields := append([]string{ch.Name, ch.Notes}, ch.ShortNames...)
-		if ch.Group != nil {
-			fields = append(fields, ch.Group.Name)
-		}
 		return slices.ContainsFunc(fields, func(s string) bool { return strings.Contains(strings.ToLower(s), v) })
 	}
 }
@@ -396,7 +387,7 @@ func freqMatcher(field string, ok func(int64) bool) Matcher {
 // IsValues and HasValues are the words is: and has: take.
 var (
 	IsValues  = []string{"repeater", "simplex", "rxonly", "transmit", "skip"}
-	HasValues = []string{"location", "service", "group", "tag", "tone", "power", "notes", "shortname", "radio"}
+	HasValues = []string{"location", "service", "tag", "tone", "power", "notes", "shortname", "radio"}
 )
 
 func isMatcher(v string) (Matcher, error) {
@@ -421,13 +412,11 @@ func isMatcher(v string) (Matcher, error) {
 func (c *compiler) hasMatcher(v string) (Matcher, error) {
 	switch strings.ToLower(v) {
 	case "location":
-		return func(ch domain.Channel) bool {
-			return ch.Group != nil && ch.Group.Latitude != nil && ch.Group.Longitude != nil
-		}, nil
+		return func(ch domain.Channel) bool { return ch.Location != nil }, nil
 	case "service":
 		return func(ch domain.Channel) bool { return ch.Service != domain.ServiceUnspecified }, nil
 	case "group":
-		return func(ch domain.Channel) bool { return ch.GroupID != nil }, nil
+		return nil, fmt.Errorf("groups are gone; each became a tag, so use has:tag")
 	case "tag", "tags":
 		return func(ch domain.Channel) bool { return len(ch.Tags) > 0 }, nil
 	case "tone", "tones":
@@ -507,8 +496,8 @@ func toneMatcher(field, v string) (Matcher, error) {
 }
 
 // nearMatcher parses LAT,LON,KM (KM may end in "km"). A channel is near
-// when its group's location is within KM plus the group's own radius, so a
-// repeater's coverage counts. Channels without a location never match.
+// when its location is within KM plus its own radius, so a repeater's
+// coverage counts. Channels without a location never match.
 func nearMatcher(v string) (Matcher, error) {
 	parts := strings.Split(v, ",")
 	if len(parts) != 3 {
@@ -531,14 +520,14 @@ func nearMatcher(v string) (Matcher, error) {
 		return nil, fmt.Errorf("the distance must be positive")
 	}
 	return func(ch domain.Channel) bool {
-		g := ch.Group
-		if g == nil || g.Latitude == nil || g.Longitude == nil {
+		l := ch.Location
+		if l == nil {
 			return false
 		}
 		reach := km
-		if g.RadiusKM != nil {
-			reach += *g.RadiusKM
+		if l.RadiusKM != nil {
+			reach += *l.RadiusKM
 		}
-		return domain.DistanceKM(lat, lon, *g.Latitude, *g.Longitude) <= reach
+		return domain.DistanceKM(lat, lon, l.Latitude, l.Longitude) <= reach
 	}, nil
 }

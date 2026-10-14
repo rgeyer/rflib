@@ -9,9 +9,7 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 )
 
-// Record is one channel read from a source. When Channel.Group is non-nil it
-// identifies the group to attach by ID, then by name; Channel.GroupID is
-// ignored.
+// Record is one channel read from a source.
 type Record struct {
 	Row     int
 	Channel domain.Channel
@@ -26,11 +24,8 @@ type RowError struct {
 func (e RowError) Error() string { return fmt.Sprintf("row %d: %v", e.Row, e.Err) }
 func (e RowError) Unwrap() error { return e.Err }
 
-// Batch is everything parsed from one source. Groups holds groups the source
-// declares on their own (JSON backups do, CSV does not), so empty groups
-// survive a restore.
+// Batch is everything parsed from one source.
 type Batch struct {
-	Groups  []domain.Group
 	Records []Record
 	Errors  []RowError
 }
@@ -56,6 +51,22 @@ func (b *Batch) finish(row int, c domain.Channel) {
 // Add validates c and records it as a Record or a RowError. Parsers outside
 // this package use it so every source normalizes channels the same way.
 func (b *Batch) Add(row int, c domain.Channel) { b.finish(row, c) }
+
+// ungroup gives a channel what its group meant before groups became
+// locations and tags (see sqlite migration 9): the group's name as a tag,
+// and its location where the channel has none. Files written before then
+// still carry groups.
+func ungroup(c *domain.Channel, name string, lat, lon, radiusKM *float64) error {
+	if strings.TrimSpace(name) != "" {
+		c.Tags = append(c.Tags, name)
+	}
+	if c.Location != nil || lat == nil {
+		return nil
+	}
+	loc, err := domain.NewLocation(lat, lon, radiusKM)
+	c.Location = loc
+	return err
+}
 
 // Fail records a row that could not be parsed.
 func (b *Batch) Fail(row int, err error) {

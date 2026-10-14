@@ -13,19 +13,19 @@ import (
 
 const queryHelp = `Queries use field:value terms. A space means AND, OR binds tighter than
 AND, and a leading - (or NOT) negates. Parentheses group, and quotes keep
-spaces in a value. Bare words match names, short names, notes, and group
-names. @name uses a saved search.
+spaces in a value. Bare words match names, short names, and notes. @name uses
+a saved search.
 
   name:TEXT notes:TEXT      text, ignoring case
-  service:SVC|none          tag:TAG          group:NAME|none
+  service:SVC|none          tag:TAG
   freq: rx: tx:             MHz: 146.52, 144..148, >=420, ..30
   band:2m|70cm|gmrs|noaa|…  duplex:+|-|split|simplex|off
   tone: txtone: rxtone:     131.8, dcs:023, ctcss, dcs, or none (as programmed)
   mode:FM|NFM|AM|USB|LSB    power:low|medium|high|max|none
   squelch:yes|no            skip:yes|no
   is:repeater|simplex|rxonly|transmit|skip
-  has:location|service|group|tag|tone|power|notes|shortname|radio
-  near:LAT,LON,KM           within KM plus the group's radius; channels
+  has:location|service|tag|tone|power|notes|shortname|radio
+  near:LAT,LON,KM           within KM plus the channel's radius; channels
                             without a location never match
   radio:NAME|any|none       tunes:RADIO|MODEL  in its bands and modes
   created: updated:         YYYY-MM-DD, >=, <, ranges
@@ -43,7 +43,6 @@ a flag: rflib channel list -- -tag:hf. Quoting it or using -q also works.`
 // selects channels.
 func filterFields(cmd *cobra.Command) {
 	cmd.Flags().StringP("query", "q", "", "Search query (see rflib help search)")
-	cmd.Flags().String("group", "", "Shorthand for group:NAME")
 	cmd.Flags().String("tag", "", "Shorthand for tag:TAG")
 	cmd.Flags().String("service", "", "Shorthand for service:SVC")
 	cmd.Flags().String("lat", "", "With --lon and --radius-km, shorthand for near:LAT,LON,KM")
@@ -52,7 +51,7 @@ func filterFields(cmd *cobra.Command) {
 }
 
 func filtered(cmd *cobra.Command) bool {
-	for _, name := range []string{"query", "group", "tag", "service", "lat", "lon", "radius-km"} {
+	for _, name := range []string{"query", "tag", "service", "lat", "lon", "radius-km"} {
 		if cmd.Flags().Changed(name) {
 			return true
 		}
@@ -74,7 +73,7 @@ func channelQuery(cmd *cobra.Command, words []string) (query.Node, error) {
 		}
 		nodes = append(nodes, n)
 	}
-	for _, field := range []string{"group", "tag", "service"} {
+	for _, field := range []string{"tag", "service"} {
 		if v := strings.TrimSpace(getString(cmd, field)); v != "" {
 			nodes = append(nodes, query.Term{Field: field, Value: v})
 		}

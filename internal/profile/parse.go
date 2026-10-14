@@ -138,9 +138,6 @@ func (x Parser) channel(get func(string) string) (domain.Channel, error) {
 	if t := get("tags"); t != "" {
 		c.Tags = strings.Split(t, ";")
 	}
-	if g := get("group"); g != "" {
-		c.Group = &domain.Group{Name: g}
-	}
 	return c, nil
 }
 

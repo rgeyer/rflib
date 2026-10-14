@@ -136,6 +136,9 @@ type ChannelEdit struct {
 	Service *domain.Service
 	// RXOnly, when nil, is turned on (never off) by a listen-only Service.
 	RXOnly *bool
+	// SetLocation replaces the location with Location, which may be nil.
+	SetLocation bool
+	Location    *domain.Location
 }
 
 // Apply changes one channel as the edit says.
@@ -155,6 +158,9 @@ func (e ChannelEdit) Apply(c *domain.Channel) {
 	}
 	if e.RXOnly != nil {
 		c.RXOnly = *e.RXOnly
+	}
+	if e.SetLocation {
+		c.Location = e.Location
 	}
 }
 

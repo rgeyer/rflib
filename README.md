@@ -23,7 +23,7 @@ Back up the database by copying it while the CLI is not running.
 
 ## Libraries
 
-One database can hold several **libraries**, each a separate collection of groups, channels, radios, and saved searches. Names only have to be unique within a library, so two libraries can each have a group called "Home" and a radio called "HT".
+One database can hold several **libraries**, each a separate collection of channels, radios, and saved searches. Names only have to be unique within a library, so two libraries can each have a radio called "HT".
 
 Every command works on one library: `--library NAME`, else `$RFLIB_LIBRARY`, else `default`. Every database starts with a library called `default`, and upgrading an existing database moves everything already in it there.
 
@@ -36,23 +36,11 @@ RFLIB_LIBRARY=club ./rflib radio list
 ./rflib library delete "Club Radios" --yes   # deletes everything in it
 ```
 
-To copy channels from one library to another, export a backup from one and import it into the other. The copies get new IDs, and groups are matched by name:
+To copy channels from one library to another, export a backup from one and import it into the other. The copies get new IDs:
 
 ```sh
 ./rflib export json --library default | ./rflib import json --library club
 ```
-
-## Groups
-
-Groups are optional geographic collections. Provide latitude and longitude together; radius is optional metadata for the group itself.
-
-```sh
-./rflib group add --name "Portland Metro" \
-  --lat 45.5152 --lon -122.6784 --radius-km 40 --description "Local operating area"
-./rflib group list
-```
-
-Groups can be referenced by ID or by their unique name anywhere a group is expected. Deleting a group keeps its channels and leaves them ungrouped. `--power` sets a default power for the group's channels (see [Power](#power)).
 
 ## Channels
 
@@ -63,8 +51,8 @@ Channels record a receive frequency plus an optional transmit frequency. Use mat
   --rx 146.520 --tx 146.520 --mode FM --tags "ham,simplex"
 
 ./rflib channel add --name "Local Repeater" \
-  --group "Portland Metro" --rx 146.940 --tx 146.340 --mode FM \
-  --rx-tone ctcss:100.0 --tx-tone ctcss:100.0 --tone-squelch --tags "ham,repeater"
+  --rx 146.940 --tx 146.340 --mode FM --lat 45.5152 --lon -122.6784 --radius-km 40 \
+  --rx-tone ctcss:100.0 --tx-tone ctcss:100.0 --tone-squelch --tags "ham,repeater,portland"
 
 ./rflib channel list tag:repeater
 ./rflib channel list 'service:none freq:144..148 is:repeater'
@@ -81,12 +69,18 @@ Tone syntax is normalized and exporter-neutral:
 - **DCS normal:** `dcs:023`
 - **DCS inverted:** `dcs:023:inverted`
 
-Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--group`, or `--tags` clears that field, and boolean flags can be turned off explicitly (`--skip=false`). `--tags +x,-y` adds `x` and removes `y`, leaving other tags alone; `--tags x,y` replaces them.
+Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--lat` and `--lon`, or `--tags` clears that field, and boolean flags can be turned off explicitly (`--skip=false`). `--tags +x,-y` adds `x` and removes `y`, leaving other tags alone; `--tags x,y` replaces them.
 
 ```sh
 ./rflib channel update --id <channel-id> --power low
 ./rflib channel delete --id <channel-id> --yes
 ```
+
+**Location.** `--lat` and `--lon` say where a channel is used, such as a repeater's site, and `--radius-km` how far that reaches: either how rough the position is, or the repeater's coverage. Searches use it with `near:` (see [Search](#search)). `--radius-km` alone changes the radius and keeps the coordinates; an empty `--lat` and `--lon` clear the location.
+
+**Groups are gone.** Earlier versions collected channels into groups. Upgrading (`rflib init`) gives each grouped channel its group's location and power, where it had none, and a tag named after the group. Saved searches and radio sources that used `group:NAME` now say `tag:NAME`, and `group:NAME` still works as `tag:NAME`. Old backups and CSV files with groups import the same way.
+
+`--short-names` gives a channel your own abbreviations for radios with narrow displays, such as `--short-names "SB Sheriff Disp,SBSO Disp"`. See [Names on radio displays](#names-on-radio-displays).
 
 ### Changing many channels at once
 
@@ -100,7 +94,7 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--gro
 ./rflib radio channels remove HT -q service:cb --yes    # or --all
 ```
 
-- **Safe fields only:** updating many channels changes only `--tags`, `--skip`, `--power`, `--service`, and `--rx-only`. Frequencies, tones, mode, and names change one channel at a time, by `--id`. Likewise, `radio channels set` sets `--name` and `--section-start` one channel at a time.
+- **Safe fields only:** updating many channels changes only `--tags`, `--skip`, `--power`, `--service`, `--rx-only`, and the location (`--lat` and `--lon` together, with `--radius-km` if wanted). Frequencies, tones, mode, and names change one channel at a time, by `--id`. Likewise, `radio channels set` sets `--name` and `--section-start` one channel at a time.
 - **Confirmation:** deleting channels always needs `--yes`, and so does removing channels from a radio by query or `--all`.
 - **One transaction:** a bulk update or delete applies to every channel or to none.
 
@@ -109,7 +103,7 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--gro
 List commands print a table. On a terminal it has aligned columns, a header, and IDs shortened to 8 characters. Piped, it prints plain tab-separated rows with no header and full IDs, so scripts get a stable format.
 
 - **`--fields`** picks and orders the columns, such as `--fields name,rx,tone`. Each command's `--help` lists its fields. They are named like query fields, so a value can be copied into a search.
-- **`--format tsv|csv|json`** chooses another format, and `--no-header` drops the header row. With `--format json` and no `--fields`, channel and group lists write each full record, as `show --format json` does; other lists write every field.
+- **`--format tsv|csv|json`** chooses another format, and `--no-header` drops the header row. With `--format json` and no `--fields`, channel lists write each full record, as `show --format json` does; other lists write every field.
 - **IDs:** any unique prefix of an ID, 4 characters or more, works wherever an ID does.
 - **`--id -`** reads IDs from stdin, one per line, taking the first column. A list pipes straight into another command:
 
@@ -118,8 +112,6 @@ List commands print a table. On a terminal it has aligned columns, a header, and
   ```
 
 - **stdout is data only.** Status messages ("Added 7 channels to HT"), warnings, and errors go to stderr. Commands that create something print its ID on stdout.
-
-`--short-names` gives a channel your own abbreviations for radios with narrow displays, such as `--short-names "SB Sheriff Disp,SBSO Disp"`. See [Names on radio displays](#names-on-radio-displays).
 
 ## Search
 
@@ -134,14 +126,13 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 - **Combining:** terms are `field:value`, and a space between them means AND. `OR` binds tighter than AND, so `a b OR c` means `a AND (b OR c)`.
 - **Negating:** a leading `-` (or `NOT`) negates a term or a parenthesized group. When a negation comes first among the arguments, put `--` before it so it isn't read as a flag: `channel list -- -tag:hf`. Quoting a whole query, or passing it with `-q`, avoids this.
 - **Grouping and quoting:** parentheses group terms, and quotes keep spaces in a value: `name:"Lompoc PD"`.
-- **Bare words** match names, short names, notes, and group names, ignoring case.
+- **Bare words** match names, short names, and notes, ignoring case.
 
 | Field | Values |
 |---|---|
 | `name:`, `notes:` | Text the name (or a short name), or the notes, contains |
 | `service:` | A service, or `none` |
 | `tag:` | A tag |
-| `group:` | A group's name or ID, or `none` |
 | `freq:`, `rx:`, `tx:` | MHz: `146.52`, a range `144..148` (either end optional), or `>=420`, `<30`. `freq:` matches either frequency. |
 | `band:` | `160m` through `23cm`, `air`, `marine`, `cb`, `frs`, `gmrs`, `murs`, `noaa` (by receive frequency) |
 | `duplex:` | `+`, `-`, `split`, `simplex`, or `off` (no transmit frequency) |
@@ -150,16 +141,16 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 | `power:` | `low`, `medium`, `high`, `max`, or `none` |
 | `squelch:`, `skip:` | `yes` or `no` |
 | `is:` | `repeater` (transmit differs from receive), `simplex`, `rxonly`, `transmit` (a radio export would let it transmit; see [Where radios transmit](#where-radios-transmit)), `skip` |
-| `has:` | `location`, `service`, `group`, `tag`, `tone`, `power`, `notes`, `shortname`, `radio` |
+| `has:` | `location`, `service`, `tag`, `tone`, `power`, `notes`, `shortname`, `radio` |
 | `near:` | `LAT,LON,KM`, see below |
 | `radio:` | A radio's name, `any`, or `none` |
 | `tunes:` | A radio or model name: channels in its bands and in a mode it has |
 | `created:`, `updated:` | `YYYY-MM-DD`, with comparisons and ranges like `freq:` |
 | `id:` | A channel ID |
 
-**Location.** A channel's location is its group's. `near:` matches when the group is within the distance plus the group's own `--radius-km`, so a repeater whose coverage reaches you counts. Channels without a location never match `near:`. To keep them, say so: `near:34.64,-120.46,40 OR -has:location`.
+**Location.** `near:` matches when a channel's location is within the distance plus the channel's own `--radius-km`, so a repeater whose coverage reaches you counts. Channels without a location never match `near:`. To keep them, say so: `near:34.64,-120.46,40 OR -has:location`.
 
-**Shorthand flags.** `--tag`, `--group`, `--service`, and `--lat`/`--lon`/`--radius-km` still work and are added to the query.
+**Shorthand flags.** `--tag`, `--service`, and `--lat`/`--lon`/`--radius-km` still work and are added to the query.
 
 ### Saved searches
 
@@ -209,7 +200,7 @@ Saving or importing a channel warns, without failing, when it doesn't fit its se
 | `us-noaa` | NOAA Weather Radio WX1-WX7, receive only |
 | `us-ham-calling` | Amateur FM and SSB simplex calling frequencies, 10 m through 70 cm |
 
-Installing a list again skips the channels already added. `install` takes the same `--group`, `--tags`, `--on-duplicate`, and `--dry-run` flags as `import`.
+Installing a list again skips the channels already added. `install` takes the same `--tags`, `--on-duplicate`, and `--dry-run` flags as `import`.
 
 ## Radios
 
@@ -308,8 +299,7 @@ For each memory, the first of these that is set wins:
 
 1. the radio's override for that channel (`radio channels set --power`)
 2. the channel's power (`channel add/update --power`)
-3. its group's power (`group add/update --power`)
-4. the radio's default (`radio add/update --default-power`)
+3. the radio's default (`radio add/update --default-power`)
 
 If none is set, the memory gets `high`: a radio with power levels needs one on every memory, and CHIRP rejects a blank one. Set the radio's default to choose otherwise.
 
@@ -330,14 +320,14 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 
 ```sh
 ./rflib export csv --output channels.csv --tag ham
-./rflib export csv --group "Portland Metro" > metro.csv
+./rflib export csv near:45.52,-122.68,40 > metro.csv
 ./rflib export json --output backup.json
 ```
 
-- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and group coordinates. New columns are only ever added at the end.
+- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and location. New columns are only ever added at the end; the group columns were removed when groups were.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
 - **`export profile NAME`** writes a radio programming tool's own CSV format, such as Yaesu ADMS. See [Export profiles](#export-profiles) below.
-- **`export json`** is a full-fidelity backup, including IDs, timestamps, and group details that the CSV leaves out. Without filters it includes every group, even empty ones. With filters it includes only the groups the exported channels use.
+- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out.
 
 ## Import
 
@@ -353,8 +343,8 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 
 - **All or nothing:** any invalid row is reported with its line number and nothing is imported. Use `--skip-invalid` to import the valid rows anyway. A failure partway through also writes nothing.
 - **`--dry-run`** runs the whole import and then discards it, so its summary is exactly what a real import would do.
-- **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, tone squelch, and group. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `--match programmed` drops the name and group from the comparison and matches on frequencies, tones, and tone squelch alone. Use it for a file read from a radio, where names are shortened and there are no groups. With `--on-duplicate update`, the matched channel takes the file's name. Two rows in the same file with the same programming also match each other. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
-- **Groups:** channels are attached to groups by ID, then by name. Groups that don't exist yet are created and listed in the summary. `--group NAME` puts every imported channel in an existing group instead.
+- **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, and tone squelch. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `--match programmed` drops the name from the comparison and matches on frequencies, tones, and tone squelch alone. Use it for a file read from a radio, where names are shortened. With `--on-duplicate update`, the matched channel takes the file's name. Two rows in the same file with the same programming also match each other. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
+- **Old files with groups:** a group becomes a tag named after it, and its coordinates the channel's location (see [Channels](#channels)).
 - **`--tags`** adds tags to every imported channel.
 
 ## Names on radio displays
@@ -469,7 +459,7 @@ columns:
 | Source | Value |
 |---|---|
 | `location` | Memory number |
-| `name`, `notes`, `service`, `tags`, `group` | Channel fields (notes on one line, tags joined with `;`) |
+| `name`, `notes`, `service`, `tags` | Channel fields (notes on one line, tags joined with `;`) |
 | `rx_mhz`, `tx_mhz`, `offset_mhz` | Frequencies in MHz. `tx_mhz` is the receive frequency for receive-only channels. |
 | `duplex` | `none`, `plus`, `minus`, `split`, or `off` |
 | `mode`, `narrow` | `FM`/`NFM`/`AM`/`USB`/`LSB`; `true` for NFM |
@@ -488,7 +478,7 @@ columns:
 
 For your own radios, `radio export` is simpler: it knows the model, your order, power, and name length. `export chirp` exports a filtered set of channels without a radio.
 
-Open the radio's image in CHIRP, then use *File > Import* on the exported file. Memories are numbered from `--start` (default 1) in `--sort` order: `name` (the default), `freq`, or `group`. The `name` order compares numbers in names by value, so "GMRS 2" comes before "GMRS 10", and "GMRS 15" before "GMRS 15R". Use `--max-name-len` to fit names to the radio's display (see [Names on radio displays](#names-on-radio-displays)).
+Open the radio's image in CHIRP, then use *File > Import* on the exported file. Memories are numbered from `--start` (default 1) in `--sort` order: `name` (the default) or `freq`. The `name` order compares numbers in names by value, so "GMRS 2" comes before "GMRS 10", and "GMRS 15" before "GMRS 15R". Use `--max-name-len` to fit names to the radio's display (see [Names on radio displays](#names-on-radio-displays)).
 
 How library channels map to CHIRP:
 

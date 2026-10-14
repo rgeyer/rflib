@@ -5,8 +5,8 @@
 //
 // Terms are field:value. A space means AND; OR binds tighter than AND, so
 // "a b OR c" is a AND (b OR c). A leading - (or NOT) negates a term or a
-// parenthesized group. Bare words match names, short names, notes, and
-// group names. @name uses a saved search.
+// parenthesized group. Bare words match names, short names, and notes.
+// @name uses a saved search.
 //
 // Parse turns text into a syntax tree; Compile turns a tree into a
 // Matcher. The tree is the contract shared by every front end, and
@@ -229,6 +229,28 @@ func wordNode(t token) (Node, error) {
 
 // Refs returns the saved searches a query uses directly, in order, without
 // repeats.
+// MapTerms returns n with every Term replaced by fn's result.
+func MapTerms(n Node, fn func(Term) Term) Node {
+	each := func(ns []Node) []Node {
+		out := make([]Node, len(ns))
+		for i, c := range ns {
+			out[i] = MapTerms(c, fn)
+		}
+		return out
+	}
+	switch x := n.(type) {
+	case And:
+		return And{Nodes: each(x.Nodes)}
+	case Or:
+		return Or{Nodes: each(x.Nodes)}
+	case Not:
+		return Not{Node: MapTerms(x.Node, fn)}
+	case Term:
+		return fn(x)
+	}
+	return n
+}
+
 func Refs(n Node) []string {
 	var out []string
 	var walk func(Node)

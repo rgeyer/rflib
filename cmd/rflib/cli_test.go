@@ -96,64 +96,45 @@ func TestChannelUpdateOnlyChangesSuppliedFlags(t *testing.T) {
 
 func TestChannelUpdateClearsWithEmptyValues(t *testing.T) {
 	c := newCLI(t)
-	c.ok("group", "add", "--name", "Metro")
-	id := c.ok("channel", "add", "--name", "Repeater", "--rx", "146.940", "--tx", "146.340", "--group", "Metro", "--tags", "ham")
+	id := c.ok("channel", "add", "--name", "Repeater", "--rx", "146.940", "--tx", "146.340", "--lat", "45.5", "--lon", "-122.6", "--radius-km", "40", "--tags", "ham")
 
-	c.ok("channel", "update", "--id", id, "--tx", "", "--group", "", "--tags", "")
+	c.ok("channel", "update", "--id", id, "--tx", "", "--lat", "", "--lon", "", "--tags", "")
 
 	ch := c.channel(id)
-	if ch.TransmitHz != nil || ch.Group != nil || len(ch.Tags) != 0 {
+	if ch.TransmitHz != nil || ch.Latitude != nil || ch.RadiusKM != nil || len(ch.Tags) != 0 {
 		t.Fatalf("fields not cleared: %+v", ch)
 	}
 }
 
-func TestGroupDeleteByNameUngroupsChannels(t *testing.T) {
+func TestChannelLocations(t *testing.T) {
 	c := newCLI(t)
-	c.ok("group", "add", "--name", "Metro", "--lat", "45.5", "--lon", "-122.6")
-	id := c.ok("channel", "add", "--name", "Simplex", "--rx", "146.520", "--group", "Metro")
+	c.fails("latitude and longitude must be given together", "channel", "add", "--name", "Half", "--rx", "146.52", "--lat", "34.6")
+	c.fails("outside valid latitude/longitude bounds", "channel", "add", "--name", "Off", "--rx", "146.52", "--lat", "95", "--lon", "0")
+	id := c.ok("channel", "add", "--name", "Marian", "--rx", "147.30", "--tx", "147.90", "--lat", "34.95", "--lon", "-120.43", "--radius-km", "40")
+	c.ok("channel", "add", "--name", "Away", "--rx", "147.33", "--lat", "36.0", "--lon", "-120.43")
+	c.ok("channel", "add", "--name", "Nowhere", "--rx", "146.52")
 
-	c.fails("requires --yes", "group", "delete", "--id", "Metro")
-	c.ok("group", "delete", "--id", "Metro", "--yes")
-
-	if ch := c.channel(id); ch.Group != nil {
-		t.Fatalf("channel still grouped: %+v", ch.Group)
+	// Changing the radius keeps the coordinates.
+	c.ok("channel", "update", "--id", id, "--radius-km", "60")
+	if ch := c.channel(id); ch.Latitude == nil || *ch.Latitude != 34.95 || *ch.RadiusKM != 60 {
+		t.Errorf("after radius change: %+v", ch)
 	}
-}
-
-func TestGroupUpdateKeepsUnsuppliedFields(t *testing.T) {
-	c := newCLI(t)
-	c.ok("group", "add", "--name", "Metro", "--lat", "45.5", "--lon", "-122.6", "--radius-km", "40", "--notes", "keep")
-	c.ok("group", "update", "--id", "Metro", "--description", "Local area")
-
-	var g groupOut
-	if err := json.Unmarshal([]byte(c.ok("group", "show", "--id", "Metro", "--format", "json")), &g); err != nil {
-		t.Fatal(err)
+	if got := c.ok("channel", "list", "near:34.64,-120.46,10", "--fields", "name,location,radius_km"); got != "Marian\t34.95,-120.43\t60" {
+		t.Errorf("near = %q", got)
 	}
-	if g.Description != "Local area" || g.Notes != "keep" || g.Latitude == nil || g.RadiusKM == nil || *g.RadiusKM != 40 {
-		t.Fatalf("group = %+v", g)
+	if got := c.ok("channel", "list", "--lat", "36.1", "--lon", "-120.4", "--radius-km", "20", "--fields", "name"); got != "Away" {
+		t.Errorf("near shorthand = %q", got)
 	}
 
-	c.ok("group", "update", "--id", "Metro", "--lat", "", "--lon", "")
-	var cleared groupOut
-	if err := json.Unmarshal([]byte(c.ok("group", "show", "--id", "Metro", "--format", "json")), &cleared); err != nil {
-		t.Fatal(err)
+	// Many channels can share a new location; it needs both coordinates.
+	c.fails("needs --lat and --lon", "channel", "update", "-q", "-has:location", "--radius-km", "5")
+	if got := c.status("channel", "update", "-q", "-has:location", "--lat", "34.42", "--lon", "-119.70"); got != "Updated 1 channels" {
+		t.Errorf("bulk location = %q", got)
 	}
-	if cleared.Latitude != nil || cleared.Longitude != nil {
-		t.Fatalf("coordinates not cleared: %+v", cleared)
+	if got := c.ok("channel", "list", "has:location", "--fields", "name"); got != "Away\nMarian\nNowhere" {
+		t.Errorf("has:location = %q", got)
 	}
-}
-
-func TestListFiltersByGroupName(t *testing.T) {
-	c := newCLI(t)
-	c.ok("group", "add", "--name", "Metro")
-	c.ok("channel", "add", "--name", "In", "--rx", "146.520", "--group", "Metro")
-	c.ok("channel", "add", "--name", "Out", "--rx", "146.550")
-
-	out := c.ok("channel", "list", "--group", "Metro")
-	if !strings.Contains(out, "In") || strings.Contains(out, "Out") {
-		t.Fatalf("list output = %q", out)
-	}
-	c.fails("not found", "channel", "list", "--group", "Nowhere")
+	c.fails("groups are gone", "group", "list")
 }
 
 func TestExportToStdoutAndFile(t *testing.T) {
@@ -191,7 +172,7 @@ func TestErrors(t *testing.T) {
 
 func TestMissingLibraryIsNotCreated(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent.db")
-	err := run([]string{"--db", path, "group", "list"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+	err := run([]string{"--db", path, "channel", "list"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "run rflib init") {
 		t.Fatalf("err = %v", err)
 	}
@@ -242,18 +223,19 @@ func TestImportCSV(t *testing.T) {
 	}
 
 	out := c.status("import", "csv", file, "--skip-invalid", "--dry-run")
-	if !strings.Contains(out, "Dry run") || !strings.Contains(out, "created 1") || !strings.Contains(out, "New groups: Metro") {
+	if !strings.Contains(out, "Dry run") || !strings.Contains(out, "created 1") {
 		t.Fatalf("dry run output = %q", out)
 	}
-	if got := c.ok("group", "list"); got != "" {
-		t.Fatalf("dry run created groups: %q", got)
+	if got := c.ok("channel", "list"); got != "" {
+		t.Fatalf("dry run created channels: %q", got)
 	}
 
 	out = c.status("import", "csv", file, "--skip-invalid", "--tags", "imported")
 	if !strings.Contains(out, "created 1, updated 0, skipped 0 duplicates, skipped 1 invalid") {
 		t.Fatalf("import output = %q", out)
 	}
-	if got := c.ok("channel", "list", "--tag", "imported", "--group", "Metro"); !strings.Contains(got, "Calling") {
+	// An old file's group comes in as a tag.
+	if got := c.ok("channel", "list", "--tag", "imported", "tag:metro"); !strings.Contains(got, "Calling") {
 		t.Fatalf("imported channel missing: %q", got)
 	}
 
@@ -261,24 +243,22 @@ func TestImportCSV(t *testing.T) {
 	c.fails("unknown match rule", "import", "csv", file, "--match", "name")
 }
 
-func TestExportJSONFiltersGroups(t *testing.T) {
+func TestExportJSONRestoresExactly(t *testing.T) {
 	c := newCLI(t)
-	c.ok("group", "add", "--name", "Metro")
-	c.ok("group", "add", "--name", "Unused")
-	c.ok("channel", "add", "--name", "Calling", "--rx", "146.520", "--group", "Metro", "--tags", "ham")
+	c.ok("channel", "add", "--name", "Calling", "--rx", "146.520", "--lat", "45.5", "--lon", "-122.6", "--radius-km", "30", "--tags", "ham")
+	c.ok("channel", "add", "--name", "Other", "--rx", "146.550")
 
 	all := c.ok("export", "json")
-	if !strings.Contains(all, `"Unused"`) {
-		t.Fatalf("unfiltered backup should include every group: %s", all)
+	if !strings.Contains(all, `"version": 2`) || !strings.Contains(all, `"radius_km": 30`) || strings.Contains(all, "groups") {
+		t.Fatalf("backup = %s", all)
 	}
-	filtered := c.ok("export", "json", "--tag", "ham")
-	if strings.Contains(filtered, `"Unused"`) || !strings.Contains(filtered, `"Metro"`) {
-		t.Fatalf("filtered backup should include only referenced groups: %s", filtered)
+	if filtered := c.ok("export", "json", "--tag", "ham"); strings.Contains(filtered, "Other") {
+		t.Fatalf("filtered backup = %s", filtered)
 	}
 
 	restored := newCLI(t)
 	out := restored.status("import", "json", writeFile(t, all))
-	if !strings.Contains(out, "created 1") {
+	if !strings.Contains(out, "created 2") {
 		t.Fatalf("restore output = %q", out)
 	}
 	if got := restored.ok("export", "json"); got != all {
@@ -288,8 +268,7 @@ func TestExportJSONFiltersGroups(t *testing.T) {
 
 func TestExportCHIRP(t *testing.T) {
 	c := newCLI(t)
-	c.ok("group", "add", "--name", "Alpha")
-	c.ok("channel", "add", "--name", "Zulu", "--rx", "146.520", "--tx", "146.520", "--group", "Alpha")
+	c.ok("channel", "add", "--name", "Zulu", "--rx", "146.520", "--tx", "146.520")
 	c.ok("channel", "add", "--name", "Mike", "--rx", "446.000", "--tx", "446.000")
 	c.ok("channel", "add", "--name", "Alpha Rpt", "--rx", "147.000", "--tx", "147.600", "--tx-tone", "ctcss:100")
 	c.ok("channel", "add", "--name", "Odd", "--rx", "145.000", "--tx-tone", "ctcss:100.5")
@@ -321,10 +300,11 @@ func TestExportCHIRP(t *testing.T) {
 	if got := names("--sort", "freq", "--start", "0"); got != "0:Zulu 1:Alpha Rpt 2:Mike" {
 		t.Errorf("freq sort = %s", got)
 	}
-	if got := names("--sort", "group", "--max-name-len", "4"); got != "1:Zulu 2:ARpt 3:Mike" {
-		t.Errorf("group sort = %s", got)
+	if got := names("--max-name-len", "4"); got != "1:ARpt 2:Mike 3:Zulu" {
+		t.Errorf("short names = %s", got)
 	}
 	c.fails("unknown sort", "export", "chirp", "--sort", "power")
+	c.fails("sorting by group is gone", "export", "chirp", "--sort", "group")
 }
 
 func TestImportCHIRP(t *testing.T) {
@@ -827,15 +807,14 @@ func TestLibraries(t *testing.T) {
 	c.fails("already exists", "library", "add", "club")
 	c.fails(`no library named "nope"`, "--library", "nope", "channel", "list")
 
-	// Each library has its own groups, channels, radios, and searches, so
-	// the same names can be used in both.
+	// Each library has its own channels, radios, and searches, so the same
+	// names can be used in both.
 	for _, lib := range []string{"default", "club"} {
-		c.ok("--library", lib, "group", "add", "--name", "Home")
 		c.ok("--library", lib, "radio", "add", "HT", "--model", "baofeng-uv5rm")
 		c.ok("--library", lib, "search", "add", "wx", "band:noaa")
 	}
 	c.ok("seed", "install", "us-noaa")
-	clubCh := c.ok("--library", "club", "channel", "add", "--name", "Club Net", "--rx", "147.000", "--group", "Home")
+	clubCh := c.ok("--library", "club", "channel", "add", "--name", "Club Net", "--rx", "147.000", "--tags", "home")
 	if out := c.ok("--library", "club", "channel", "list"); !strings.Contains(out, "Club Net") || strings.Contains(out, "NOAA") {
 		t.Errorf("club channels = %q", out)
 	}
@@ -856,7 +835,7 @@ func TestLibraries(t *testing.T) {
 	t.Setenv("RFLIB_LIBRARY", "")
 
 	// Copy the default library's channels into the club's: the copies get
-	// new IDs, and groups are matched by name.
+	// new IDs.
 	backup := filepath.Join(t.TempDir(), "backup.json")
 	c.ok("export", "json", "--output", backup)
 	if out := c.status("--library", "club", "import", "json", backup); !strings.Contains(out, "created 7") {

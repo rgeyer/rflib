@@ -138,7 +138,7 @@ func (s *Service) SearchUsers(ctx context.Context, name string) ([]string, error
 
 // SearchSummary is a saved search with how many channels it matches now.
 // Err is set, and Matches is -1, when it no longer works, such as when a
-// group it names is gone.
+// radio it names is gone.
 type SearchSummary struct {
 	domain.SavedSearch
 	Matches int
