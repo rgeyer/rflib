@@ -39,8 +39,13 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await expect(row).toContainText("147.300000");
   await expect(row).toContainText("T131.8");
 
-  // Search narrows the table.
+  // Search narrows the table; a guided filter writes its term into the search.
   await page.getByLabel("Search", { exact: true }).fill("band:noaa");
+  await expect(page.getByText("7 channels")).toBeVisible();
+  await page.getByLabel("Search", { exact: true }).fill("");
+  await page.getByRole("button", { name: "Band filter" }).click();
+  await page.getByRole("menuitem", { name: "noaa" }).click();
+  await expect(page.getByLabel("Search", { exact: true })).toHaveValue("band:noaa");
   await expect(page.getByText("7 channels")).toBeVisible();
   await page.getByLabel("Search", { exact: true }).fill("");
 
@@ -71,10 +76,30 @@ test("lists, channels, radios, and export", async ({ page }) => {
 
   // Export downloads the CHIRP file.
   const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export" }).click();
+  await page.getByRole("button", { name: "Export", exact: true }).click();
   const file = await download;
   expect(file.suggestedFilename()).toBe("HT.csv");
   await expect(page.getByText("Exported 8 memories")).toBeVisible();
+
+  // Bulk changes: search the memories, select a range with shift-click,
+  // turn scan off, then take them off the radio.
+  await page.getByRole("button", { name: "Band filter" }).click();
+  await page.getByRole("menuitem", { name: "noaa" }).click();
+  await expect(page.getByText("7 of 8 memories")).toBeVisible();
+  const boxes = page.getByRole("checkbox", { name: /^Select memory/ });
+  await boxes.first().click();
+  await boxes.last().click({ modifiers: ["Shift"] });
+  await expect(page.getByText("7 selected")).toBeVisible();
+  await page.getByRole("button", { name: "Scan", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Off" }).click();
+  await expect(page.getByText("Changed 7 memories")).toBeVisible();
+  await page.getByRole("button", { name: "Scan filter" }).click();
+  await page.getByRole("menuitem", { name: "off" }).click();
+  await expect(page.getByText("7 of 8 memories")).toBeVisible();
+  await page.getByRole("button", { name: "Take off radio" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Take off" }).click();
+  await expect(page.getByText("Took 7 channels off HT")).toBeVisible();
+  await expect(page.getByText("0 of 1 memories")).toBeVisible();
 });
 
 test("the map shows located channels", async ({ page }) => {

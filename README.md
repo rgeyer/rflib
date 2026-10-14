@@ -544,9 +544,9 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 
 `rflib serve` also serves a web interface at `http://127.0.0.1:8080/`, built into the binary:
 
-- **Channels:** search with the query language, add and edit channels (with a tone picker), select several to tag, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
+- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
-- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves; its sources; sync with a preview; and the programming file to download.
+- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources; sync with a preview; and the programming file to download.
 - **Import:** a file, its options, a dry-run preview, then the import.
 - **Built-in lists** and **shared changes**, as `rflib seed install` and `rflib shared changes` do.
 

@@ -1,12 +1,13 @@
-import { Alert, Badge, Button, Checkbox, Group, Modal, Select, Stack, Switch, Table, TagsInput, Text, TextInput, Title, Tooltip } from "@mantine/core";
+import { Alert, Badge, Button, Checkbox, Group, Modal, Select, Stack, Switch, Table, TagsInput, Text, Title, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconLink, IconPlus, IconSearch } from "@tabler/icons-react";
+import { IconLink, IconPlus } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, call, type Channel, type Library, type Radio } from "../api/client";
 import { ChannelEditor } from "../components/ChannelEditor";
-import { useLib } from "../lib/library";
+import { QueryBar } from "../components/QueryBar";
+import { useLib, useTags } from "../lib/library";
 import { failed, ok } from "../lib/notify";
 import { duplex, formatMHz, offsetMHz, toneSummary } from "../lib/radio";
 
@@ -21,6 +22,7 @@ export function Channels() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [tagAction, setTagAction] = useState<"add" | "remove" | null>(null);
   const [radioAction, setRadioAction] = useState(false);
+  const tags = useTags(lib);
 
   const library = useQuery({
     queryKey: ["library", lib],
@@ -76,15 +78,8 @@ export function Channels() {
           </Button>
         )}
       </Group>
-      <Group align="end">
-        <TextInput
-          flex={1}
-          leftSection={<IconSearch size={16} />}
-          placeholder="Search: band:2m is:repeater, tag:ham, near:34.6,-120.4,40, or words"
-          aria-label="Search"
-          value={text}
-          onChange={(e) => setText(e.currentTarget.value)}
-        />
+      <Group align="start">
+        <QueryBar value={text} onChange={setText} tags={tags} />
         {!library.data?.shared && (
           <Switch label="Search the shared list" checked={shared} onChange={(e) => setShared(e.currentTarget.checked)} />
         )}

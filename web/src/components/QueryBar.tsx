@@ -1,0 +1,96 @@
+import { Button, Group, Menu, TextInput } from "@mantine/core";
+import { IconChevronDown, IconSearch } from "@tabler/icons-react";
+import { getTerm, setTerm } from "../lib/query";
+
+export type Option = { value: string; label: string };
+
+/** FilterMenu is a button that picks one value for a filter, or Any. */
+export function FilterMenu(props: { label: string; options: Option[]; value: string | null; onChange: (v: string | null) => void }) {
+  const current = props.options.find((o) => o.value === props.value);
+  return (
+    <Menu position="bottom-start" withinPortal>
+      <Menu.Target>
+        <Button
+          size="compact-sm"
+          variant={current ? "light" : "default"}
+          rightSection={<IconChevronDown size={14} />}
+          aria-label={`${props.label} filter`}
+        >
+          {current ? `${props.label}: ${current.label}` : props.label}
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown mah={320} style={{ overflowY: "auto" }}>
+        <Menu.Item onClick={() => props.onChange(null)}>Any</Menu.Item>
+        {props.options.map((o) => (
+          <Menu.Item key={o.value} onClick={() => props.onChange(o.value)} fw={o.value === props.value ? 600 : undefined}>
+            {o.label}
+          </Menu.Item>
+        ))}
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
+const opts = (values: string[]): Option[] => values.map((v) => ({ value: v, label: v }));
+
+/** The guided filters: each sets one field's term in the query. */
+const FILTERS: { field: string; label: string; options: Option[] }[] = [
+  { field: "band", label: "Band", options: opts(["2m", "1.25m", "70cm", "6m", "10m", "gmrs", "frs", "murs", "cb", "noaa", "air", "marine"]) },
+  {
+    field: "service",
+    label: "Service",
+    options: [...opts(["amateur", "gmrs", "frs", "murs", "cb", "noaa", "marine", "public_safety", "other"]), { value: "none", label: "none set" }],
+  },
+  {
+    field: "is",
+    label: "Type",
+    options: [
+      { value: "repeater", label: "repeater" },
+      { value: "simplex", label: "simplex" },
+      { value: "rxonly", label: "receive only" },
+      { value: "transmit", label: "can transmit" },
+      { value: "skip", label: "skipped in scan" },
+    ],
+  },
+  {
+    field: "tone",
+    label: "Tone",
+    options: [
+      { value: "none", label: "no tone" },
+      { value: "ctcss", label: "CTCSS" },
+      { value: "dcs", label: "DCS" },
+    ],
+  },
+  { field: "status", label: "Status", options: opts(["active", "off-air", "retired"]) },
+];
+
+/**
+ * QueryBar is the search box with guided filters. The text is always the
+ * search: each filter adds, changes, or removes its own term in it, and
+ * anything typed by hand is kept.
+ */
+export function QueryBar(props: { value: string; onChange: (v: string) => void; tags?: string[]; placeholder?: string }) {
+  const filters = props.tags?.length ? [...FILTERS, { field: "tag", label: "Tag", options: opts(props.tags) }] : FILTERS;
+  return (
+    <div style={{ flex: 1 }}>
+      <TextInput
+        leftSection={<IconSearch size={16} />}
+        placeholder={props.placeholder ?? "Search: band:2m is:repeater, tag:ham, near:34.6,-120.4,40, or words"}
+        aria-label="Search"
+        value={props.value}
+        onChange={(e) => props.onChange(e.currentTarget.value)}
+      />
+      <Group gap={6} mt={6}>
+        {filters.map((f) => (
+          <FilterMenu
+            key={f.field}
+            label={f.label}
+            options={f.options}
+            value={getTerm(props.value, f.field)}
+            onChange={(v) => props.onChange(setTerm(props.value, f.field, v))}
+          />
+        ))}
+      </Group>
+    </div>
+  );
+}
