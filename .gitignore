@@ -4,3 +4,10 @@
 *.db-journal
 *.db-wal
 *.db-shm
+/web/node_modules/
+/web/dist/*
+!/web/dist/.gitkeep
+/web/src/api/schema.d.ts
+/web/test-results/
+/web/playwright-report/
+/web/*.tsbuildinfo

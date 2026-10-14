@@ -538,9 +538,23 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 
 `import chirp` does the reverse. Memory locations aren't kept, unnamed memories are named after their frequency, and memories in modes the library doesn't support yet (digital modes such as DV, DMR, and P25) are reported as invalid rows. Pass `--service` to label everything you import.
 
+## Web interface
+
+`rflib serve` also serves a web interface at `http://127.0.0.1:8080/`, built into the binary:
+
+- **Channels:** search with the query language, add and edit channels (with a tone picker), select several to tag, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
+- **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
+- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves; its sources; sync with a preview; and the programming file to download.
+- **Import:** a file, its options, a dry-run preview, then the import.
+- **Built-in lists** and **shared changes**, as `rflib seed install` and `rflib shared changes` do.
+
+When the server needs a token (`$RFLIB_API_TOKEN`), the page asks for it once and keeps it in the browser.
+
+Building the interface needs Node.js: `make web` builds it into `web/dist`, and `make build` then embeds it. An rflib built without it serves a page saying so. See [Development](#development).
+
 ## HTTP API
 
-`rflib serve` offers everything above as a JSON API, for scripts and, later, the web interface.
+`rflib serve` offers everything above as a JSON API, for scripts and the web interface.
 
 ```sh
 ./rflib serve                                    # http://127.0.0.1:8080/api/v1
@@ -559,7 +573,13 @@ curl -H "Authorization: Bearer s3cret" 'localhost:8080/api/v1/libraries/default/
 ## Development
 
 ```sh
-make check    # go vet, golangci-lint, and go test
+make check      # go vet, golangci-lint, and go test
+make web        # build the web interface into web/dist (needs Node.js)
+make build      # build rflib, embedding web/dist when it's built
+make web-check  # type-check the interface and run its unit tests
+make e2e        # build everything and run the browser smoke tests
 ```
+
+The web interface lives in `web/`: React, TypeScript, Vite, Mantine, and TanStack Query. Its API types are generated from `internal/api/openapi.yaml` (`npm run gen`, run by every build), so an API change that breaks the interface fails its type check. For development, run `rflib serve` and `npm run dev` in `web/`; Vite serves the interface and passes `/api` through. `web/.npmrc` turns off npm's bin links, and the scripts call each tool through `node`, so `node_modules` works on filesystems without symlinks, such as network shares.
 
 The CLI (`cmd/rflib`) parses flags and prints results, and the HTTP API (`internal/api`) decodes requests and encodes responses. The operations themselves live in `internal/app`, which both share. Errors made by a request are `domain.ErrInvalid` (`domain.Invalidf`), which the API reports as 400; other failures are 500. `internal/app` works on one library through the `store.Store` and `store.Library` interfaces (`internal/store`); `internal/store/sqlite` implements them. Any other backend must pass the contract tests in `internal/store/storetest`.
