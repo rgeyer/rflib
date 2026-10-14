@@ -8,6 +8,13 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await expect(page).toHaveURL(/\/l\/default\/channels$/);
   await expect(page.getByText("0 channels")).toBeVisible();
 
+  // With one private library, the picker is a switch between it and the
+  // shared list.
+  await page.getByText("Shared list", { exact: true }).click();
+  await expect(page).toHaveURL(/\/l\/shared\/channels$/);
+  await page.getByText("My library", { exact: true }).click();
+  await expect(page).toHaveURL(/\/l\/default\/channels$/);
+
   // Install NOAA weather radio: seven links appear.
   await page.getByRole("link", { name: "Built-in lists" }).click();
   const noaa = page.locator(".mantine-Card-root", { hasText: "us-noaa" });

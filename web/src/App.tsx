@@ -1,7 +1,10 @@
 import { Loader } from "@mantine/core";
+import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { api, call, type Library } from "./api/client";
 import { Shell } from "./components/Shell";
+import { enc } from "./lib/library";
 import { Changes } from "./pages/Changes";
 import { Channels } from "./pages/Channels";
 import { ImportPage } from "./pages/Import";
@@ -15,7 +18,7 @@ const MapPage = lazy(() => import("./pages/Map").then((m) => ({ default: m.MapPa
 export function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/l/default/channels" replace />} />
+      <Route path="/" element={<Home />} />
       <Route path="/l/:lib" element={<Shell />}>
         <Route index element={<Navigate to="channels" replace />} />
         <Route path="channels" element={<Channels />} />
@@ -36,4 +39,15 @@ export function App() {
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
+}
+
+/** Home opens the default library, whatever it's named. */
+function Home() {
+  const libraries = useQuery({
+    queryKey: ["libraries"],
+    queryFn: () => call<{ libraries: Library[] }>(api.GET("/libraries")),
+  });
+  const def = libraries.data?.libraries.find((l) => l.default);
+  if (def) return <Navigate to={`/l/${enc(def.name)}/channels`} replace />;
+  return <Loader m="xl" />;
 }

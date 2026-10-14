@@ -1,4 +1,4 @@
-import { AppShell, Badge, Burger, Group, NavLink, Select, Text, Title } from "@mantine/core";
+import { AppShell, Badge, Burger, Group, NavLink, SegmentedControl, Select, Text, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { IconAntenna, IconBroadcast, IconFileImport, IconList, IconMap, IconRefresh } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
@@ -37,13 +37,10 @@ export function Shell() {
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Menu" />
             <Title order={3}>rflib</Title>
           </Group>
-          <Select
-            aria-label="Library"
-            w={220}
+          <LibraryPicker
+            libraries={libraries.data?.libraries ?? []}
             value={lib}
-            allowDeselect={false}
-            data={(libraries.data?.libraries ?? []).map((l) => ({ value: l.name, label: l.shared ? `${l.name} (shared)` : l.name }))}
-            onChange={(v) => v && navigate(`/l/${enc(v)}/${section}`)}
+            onChange={(v) => navigate(`/l/${enc(v)}/${section}`)}
           />
         </Group>
       </AppShell.Header>
@@ -68,5 +65,33 @@ export function Shell() {
       </AppShell.Main>
       <TokenPrompt />
     </AppShell>
+  );
+}
+
+/**
+ * LibraryPicker switches libraries. With one private library it's a
+ * two-way switch, "My library" and "Shared list"; with several, a list of
+ * their names.
+ */
+function LibraryPicker(props: { libraries: Library[]; value: string; onChange: (name: string) => void }) {
+  const mine = props.libraries.filter((l) => !l.shared);
+  const shared = props.libraries.find((l) => l.shared);
+  if (mine.length <= 1) {
+    const data = [
+      ...mine.map((l) => ({ value: l.name, label: "My library" })),
+      ...(shared ? [{ value: shared.name, label: "Shared list" }] : []),
+    ];
+    if (data.length < 2) return null;
+    return <SegmentedControl aria-label="Library" data={data} value={props.value} onChange={props.onChange} />;
+  }
+  return (
+    <Select
+      aria-label="Library"
+      w={220}
+      value={props.value}
+      allowDeselect={false}
+      data={props.libraries.map((l) => ({ value: l.name, label: l.shared ? "Shared list" : l.name }))}
+      onChange={(v) => v && props.onChange(v)}
+    />
   );
 }
