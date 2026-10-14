@@ -84,6 +84,26 @@ func TestPowerPrecedenceAndCaps(t *testing.T) {
 		}
 	}
 
+	// With no intent anywhere, a radio with levels still gets one on every
+	// memory, receive-only or not: CHIRP rejects a blank power.
+	sheriff := ch("Sheriff", 460_275_000, 460_275_000, "")
+	p, err = Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), entries(plain, sheriff))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if level(p.Memories[0]) != "High" || level(p.Memories[1]) != "High" {
+		t.Errorf("unset levels = %s, %s; want High", level(p.Memories[0]), level(p.Memories[1]))
+	}
+	var out bytes.Buffer
+	if _, err := Write(&out, p, false, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range strings.Split(strings.TrimSpace(out.String()), "\r\n")[1:] {
+		if power := strings.Split(row, ",")[15]; power != "8W" {
+			t.Errorf("CHIRP power %q in %s", power, row)
+		}
+	}
+
 	// A radio without per-memory power can only be warned about.
 	p, _ = Build(domain.Radio{Name: "Shack"}, mustModel(t, "yaesu-ft857"), entries(gmrs1))
 	if level(p.Memories[0]) != "-" || !strings.Contains(strings.Join(p.Warnings, ""), "set from its menu") {

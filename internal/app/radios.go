@@ -353,6 +353,9 @@ type SyncResult struct {
 type SourceSync struct {
 	Source domain.RadioSource
 	AddResult
+	// Resorted is how many of the source's channels already on the radio
+	// changed places when it was re-sorted.
+	Resorted int
 }
 
 // Added is how many channels the sync added in all.
@@ -364,11 +367,24 @@ func (r SyncResult) Added() int {
 	return n
 }
 
+// SyncOptions are a sync's choices. With DryRun nothing changes. AnyBand
+// adds channels the radio can't receive. Resort re-sorts every source, not
+// only those set to KeepSorted.
+type SyncOptions struct {
+	DryRun, AnyBand, Resort bool
+}
+
 // Sync adds each source's new matches to a radio (see AddSourceChannels).
 // An earlier source claims a channel first; channels the radio can't
-// receive are skipped, and stay unclaimed, unless anyBand. With dryRun
-// nothing changes and Add lists what would be added.
-func (s *Service) Sync(ctx context.Context, radio string, dryRun, anyBand bool) (SyncResult, error) {
+// receive are skipped, and stay unclaimed, unless AnyBand. With DryRun
+// nothing changes, Add lists what would be added, and Resorted counts the
+// channels already on the radio that would move.
+//
+// A re-sorted source's channels are put in its sort order within the
+// places in the list they hold; channels added or moved by hand keep
+// theirs, and section starts stay where they are.
+func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (SyncResult, error) {
+	dryRun, anyBand := opts.DryRun, opts.AnyBand
 	r, m, err := s.RadioModel(ctx, radio)
 	res := SyncResult{Radio: r}
 	if err != nil {
@@ -413,12 +429,66 @@ func (s *Service) Sync(ctx context.Context, radio string, dryRun, anyBand bool) 
 		}
 		res.Sources = append(res.Sources, ss)
 	}
+	if err := s.resort(ctx, r, &res, opts); err != nil {
+		return res, err
+	}
 	if !dryRun {
 		if _, _, err := s.Plan(ctx, r.ID); err != nil {
 			res.PlanErr = err
 		}
 	}
 	return res, nil
+}
+
+// resort re-sorts the sources that ask for it, or all of them with
+// opts.Resort, in one reorder of the radio's list.
+func (s *Service) resort(ctx context.Context, r domain.Radio, res *SyncResult, opts SyncOptions) error {
+	es, err := s.lib.RadioEntries(ctx, r.ID)
+	if err != nil {
+		return err
+	}
+	order := make([]string, len(es))
+	for i, e := range es {
+		order[i] = e.Channel.ID
+	}
+	moved := 0
+	for i := range res.Sources {
+		ss := &res.Sources[i]
+		if !opts.Resort && !ss.Source.KeepSorted {
+			continue
+		}
+		var slots []int
+		var cs []domain.Channel
+		for j, e := range es {
+			if e.SourceID == ss.Source.ID {
+				slots = append(slots, j)
+				cs = append(cs, e.Channel)
+			}
+		}
+		if err := domain.SortChannels(cs, ss.Source.Sort); err != nil {
+			return err
+		}
+		for k, j := range slots {
+			if order[j] != cs[k].ID {
+				order[j] = cs[k].ID
+				ss.Resorted++
+			}
+		}
+		moved += ss.Resorted
+	}
+	if opts.DryRun || moved == 0 {
+		return nil
+	}
+	return s.lib.ReorderRadioChannels(ctx, r.ID, order)
+}
+
+// Resorted is how many channels the sync moved in all.
+func (r SyncResult) Resorted() int {
+	n := 0
+	for _, s := range r.Sources {
+		n += s.Resorted
+	}
+	return n
 }
 
 // SourceLabel describes a source for messages: its number and query.

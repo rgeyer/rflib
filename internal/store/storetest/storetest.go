@@ -28,6 +28,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"ShortNamesKeepOrder", testShortNamesKeepOrder},
 		{"RadioOrderAndOverrides", testRadioOrderAndOverrides},
 		{"SourcePlacement", testSourcePlacement},
+		{"ReorderKeepsSections", testReorderKeepsSections},
 		{"SavedSearches", testSavedSearches},
 		{"LibraryIsolation", testLibraryIsolation},
 		{"DeleteLibraryCascades", testDeleteLibraryCascades},
@@ -153,9 +154,9 @@ func testChannelRoundTrip(t *testing.T, s store.Store) {
 	if err != nil || len(all) != 1 || all[0].Name != "Metro 2" || all[0].TransmitHz != nil {
 		t.Fatalf("after update: %+v, %v", all, err)
 	}
-	channel(t, l, "Alpha", 146_520_000)
-	if all, _ := l.ListChannels(ctx()); len(all) != 2 || all[0].Name != "Alpha" {
-		t.Errorf("list not in name order: %+v", all)
+	channel(t, l, "Metro 10", 146_520_000)
+	if all, _ := l.ListChannels(ctx()); len(all) != 2 || all[0].Name != "Metro 2" {
+		t.Errorf("list not in name order, with numbers by value: %+v", all)
 	}
 	if err := l.DeleteChannel(ctx(), c.ID); err != nil {
 		t.Fatal(err)
@@ -418,6 +419,62 @@ func testSourcePlacement(t *testing.T, s store.Store) {
 	}
 	if es, _ := l.RadioEntries(ctx(), r.ID); es[0].SourceID != "" {
 		t.Errorf("removed source still on its channels: %+v", es[0])
+	}
+}
+
+func testReorderKeepsSections(t *testing.T, s store.Store) {
+	l := newLibrary(t, s, "L")
+	ids := map[string]string{}
+	for i, name := range []string{"A", "B", "C", "D"} {
+		ids[name] = channel(t, l, name, int64(146_520_000+i*15_000)).ID
+	}
+	r, err := l.CreateRadio(ctx(), domain.Radio{Name: "HT", Model: "baofeng-uv5rm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	twenty := 20
+	src, err := l.AddRadioSource(ctx(), domain.RadioSource{RadioID: r.ID, Query: "x", Sort: "name", SectionStart: &twenty, KeepSorted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := l.RadioSources(ctx(), r.ID); len(got) != 1 || !got[0].KeepSorted {
+		t.Fatalf("KeepSorted not stored: %+v", got)
+	}
+	src.KeepSorted = false
+	if err := l.UpdateRadioSource(ctx(), src); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := l.RadioSources(ctx(), r.ID); got[0].KeepSorted {
+		t.Fatalf("KeepSorted not cleared: %+v", got)
+	}
+	if _, err := l.AddSourceChannels(ctx(), src, []string{ids["C"], ids["B"], ids["A"]}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.AddRadioChannels(ctx(), r.ID, []string{ids["D"]}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.SetRadioEntry(ctx(), r.ID, domain.RadioEntry{Channel: domain.Channel{ID: ids["C"]}, SectionStart: &twenty, Name: "See"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.ReorderRadioChannels(ctx(), r.ID, []string{ids["A"], ids["B"], ids["C"]}); err == nil {
+		t.Error("an order missing a channel was accepted")
+	}
+	if err := l.ReorderRadioChannels(ctx(), r.ID, []string{ids["A"], ids["B"], ids["C"], ids["D"]}); err != nil || radioOrder(t, l, r.ID) != "ABCD" {
+		t.Fatalf("reorder: %v, %s", err, radioOrder(t, l, r.ID))
+	}
+	es, _ := l.RadioEntries(ctx(), r.ID)
+	switch {
+	case es[0].SectionStart == nil || *es[0].SectionStart != 20 || es[2].SectionStart != nil:
+		t.Errorf("section start didn't stay first: %+v", es)
+	case es[2].Name != "See" || es[2].SourceID != src.ID || es[3].SourceID != "":
+		t.Errorf("overrides or sources didn't go with their channels: %+v", es)
+	}
+	// Moving a channel by hand takes it from its source.
+	if err := l.MoveRadioChannel(ctx(), r.ID, ids["B"], 3); err != nil {
+		t.Fatal(err)
+	}
+	if es, _ := l.RadioEntries(ctx(), r.ID); es[3].Channel.ID != ids["B"] || es[3].SourceID != "" {
+		t.Errorf("moved channel kept its source: %+v", es[3])
 	}
 }
 

@@ -359,7 +359,38 @@ func (l *library) MoveRadioChannel(ctx context.Context, radioID, channelID strin
 		order = append(order[:from], order[from+1:]...)
 		to = max(0, min(to, len(order)))
 		order = append(order[:to], append([]string{channelID}, order[to:]...)...)
+		// A channel placed by hand is no longer its source's to place.
+		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET source_id=NULL WHERE radio_id=? AND channel_id=?`, radioID, channelID); err != nil {
+			return err
+		}
 		return renumber(ctx, tx.q, radioID, order)
+	})
+}
+
+func (l *library) ReorderRadioChannels(ctx context.Context, radioID string, channelIDs []string) error {
+	return l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, radioID); err != nil {
+			return err
+		}
+		order, err := radioOrder(ctx, tx.q, radioID)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(slices.Sorted(slices.Values(order)), slices.Sorted(slices.Values(channelIDs))) {
+			return fmt.Errorf("a new order must list the radio's channels exactly once each")
+		}
+		sections := make([]sql.NullInt64, len(order))
+		for i, id := range order {
+			if err := tx.q.QueryRowContext(ctx, `SELECT section_start FROM radio_channels WHERE radio_id=? AND channel_id=?`, radioID, id).Scan(&sections[i]); err != nil {
+				return err
+			}
+		}
+		for i, id := range channelIDs {
+			if _, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET section_start=? WHERE radio_id=? AND channel_id=?`, sections[i], radioID, id); err != nil {
+				return err
+			}
+		}
+		return renumber(ctx, tx.q, radioID, channelIDs)
 	})
 }
 
@@ -391,7 +422,7 @@ func (l *library) SetRadioEntry(ctx context.Context, radioID string, e domain.Ra
 	return nil
 }
 
-const sourceColumns = `id,radio_id,position,query,sort,section_start`
+const sourceColumns = `id,radio_id,position,query,sort,section_start,keep_sorted`
 
 func listRadioSources(ctx context.Context, q querier, radioID string) ([]domain.RadioSource, error) {
 	rows, err := q.QueryContext(ctx, `SELECT `+sourceColumns+` FROM radio_sources WHERE radio_id=? ORDER BY position`, radioID)
@@ -425,8 +456,8 @@ func (l *library) AddRadioSource(ctx context.Context, src domain.RadioSource) (d
 			return err
 		}
 		src.Position = len(existing)
-		_, err = tx.q.ExecContext(ctx, `INSERT INTO radio_sources (`+sourceColumns+`) VALUES (?,?,?,?,?,?)`,
-			src.ID, src.RadioID, src.Position, src.Query, src.Sort, intOrNil(src.SectionStart))
+		_, err = tx.q.ExecContext(ctx, `INSERT INTO radio_sources (`+sourceColumns+`) VALUES (?,?,?,?,?,?,?)`,
+			src.ID, src.RadioID, src.Position, src.Query, src.Sort, intOrNil(src.SectionStart), src.KeepSorted)
 		if err != nil {
 			return fmt.Errorf("add radio source: %w", err)
 		}
@@ -452,8 +483,8 @@ func (l *library) UpdateRadioSource(ctx context.Context, src domain.RadioSource)
 			return fmt.Errorf("radio source %q: %w", src.ID, store.ErrNotFound)
 		}
 		old := sources[i]
-		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_sources SET query=?,sort=?,section_start=? WHERE id=?`,
-			src.Query, src.Sort, intOrNil(src.SectionStart), src.ID); err != nil {
+		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_sources SET query=?,sort=?,section_start=?,keep_sorted=? WHERE id=?`,
+			src.Query, src.Sort, intOrNil(src.SectionStart), src.KeepSorted, src.ID); err != nil {
 			return fmt.Errorf("update radio source: %w", err)
 		}
 		switch {
@@ -549,7 +580,7 @@ func scanSources(rows *sql.Rows) ([]domain.RadioSource, error) {
 	for rows.Next() {
 		var src domain.RadioSource
 		var section sql.NullInt64
-		if err := rows.Scan(&src.ID, &src.RadioID, &src.Position, &src.Query, &src.Sort, &section); err != nil {
+		if err := rows.Scan(&src.ID, &src.RadioID, &src.Position, &src.Query, &src.Sort, &section, &src.KeepSorted); err != nil {
 			return nil, err
 		}
 		if section.Valid {

@@ -90,7 +90,8 @@ func (s *Service) DeleteChannel(ctx context.Context, id string) error {
 	return s.lib.DeleteChannel(ctx, id)
 }
 
-// ListChannels returns every channel in name order.
+// ListChannels returns every channel in name order (see
+// domain.CompareChannels).
 func (s *Service) ListChannels(ctx context.Context) ([]domain.Channel, error) {
 	return s.lib.ListChannels(ctx)
 }

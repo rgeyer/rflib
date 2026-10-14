@@ -264,8 +264,9 @@ A radio's **sources** are searches that `radio sync` adds new matching channels 
 - **Placement:** each source's new channels go after the last channel that source added. A source with none yet goes after the channels of earlier sources and before those of later ones.
 - **Order and claims:** sources are numbered from 1. An earlier source claims a channel first, and `radio sources move HT 3 --to 1` changes the order.
 - **Bands:** like `radio channels add`, sync skips channels outside the radio's bands, reports how many, and takes `--any-band`.
-- **What sync leaves alone:** it never removes or reorders anything. Channels you add by hand stay where you put them, and so do channels you move.
-- **Changing a source:** `radio sources set HT 2 --query ... --sort ... --section-start ...` changes a source. A new section start moves to the source's first channel right away.
+- **What sync leaves alone:** it never removes anything, and channels already on the radio keep their places unless re-sorted (below). Channels you add by hand stay where you put them. Moving a source's channel by hand (`radio channels move`) makes it yours: it keeps its new place and no longer counts as the source's.
+- **Re-sorting:** `radio sync HT --resort` also puts each source's channels in its sort order, within the places in the list they already hold. Channels added or moved by hand keep their places, and section starts stay put. Memory numbers change, so program the radio again afterwards; `--dry-run --resort` counts what would move. To re-sort a source on every sync, set it with `radio sources set HT 2 --keep-sorted` (or `--keep-sorted` on `radio sources add`).
+- **Changing a source:** `radio sources set HT 2 --query ... --sort ... --section-start ... --keep-sorted` changes a source. A new section start moves to the source's first channel right away.
 - **Removing a source:** `radio sources remove HT 2` removes a source and leaves its channels on the radio. Add `--with-channels` to take them off too.
 
 Sync warns when the result no longer fits the radio, such as a source running past the next section start.
@@ -281,14 +282,16 @@ For each memory, the first of these that is set wins:
 3. its group's power (`group add/update --power`)
 4. the radio's default (`radio add/update --default-power`)
 
+If none is set, the memory gets `high`: a radio with power levels needs one on every memory, and CHIRP rejects a blank one. Set the radio's default to choose otherwise.
+
 If a model has no level for the intent, `low` takes its lowest level, and `medium`, `high`, and `max` take its high level. A missing middle level errs toward being heard.
 
-**Service limits.** FRS, GMRS, MURS, and CB channels are held to their US limits: FRS 2 W (0.5 W on channels 8-14), GMRS 5 W on channels 1-7, 0.5 W on 8-14, and 50 W otherwise, MURS 2 W, and CB 4 W. The radio's highest level within the limit is used, even when no power is set. When even the lowest level is over the limit, or the model doesn't know its watts, the export warns.
+**Service limits.** FRS, GMRS, MURS, and CB channels are held to their US limits: FRS 2 W (0.5 W on channels 8-14), GMRS 5 W on channels 1-7, 0.5 W on 8-14, and 50 W otherwise, MURS 2 W, and CB 4 W. When no power is set, the radio's highest level within the limit is used rather than `high`. When even the lowest level is over the limit, or the model doesn't know its watts, the export warns.
 
 **In the files:**
 - **CHIRP radios** get the level's watts in CHIRP's Power column, which is the only form CHIRP accepts, and CHIRP picks the radio's nearest level.
 - **ADMS radios** get the level name (`HIGH`, `MID`, `LOW`).
-- **Exports without a radio** (`export chirp`, `export profile`) have no model to map through. CHIRP's Power column is left blank, so CHIRP uses its default, and profiles map the intent name.
+- **Exports without a radio** (`export chirp`, `export profile`) have no model to map through. CHIRP's Power column is left blank, which some CHIRP radios reject; export through a radio (`radio export`) for those. Profiles map the intent name.
 
 **Older power text.** Power written as text before this version is migrated: HIGH, MID, LOW, and similar become intents, and anything else, such as `50W`, is dropped. Imports read power the same way. Watts in a RadioReference or CHIRP file describe the source's radio, not yours.
 
@@ -456,7 +459,7 @@ columns:
 
 For your own radios, `radio export` is simpler: it knows the model, your order, power, and name length. `export chirp` exports a filtered set of channels without a radio.
 
-Open the radio's image in CHIRP, then use *File > Import* on the exported file. Memories are numbered from `--start` (default 1) in `--sort` order: `name` (the default), `freq`, or `group`. Use `--max-name-len` to fit names to the radio's display (see [Names on radio displays](#names-on-radio-displays)).
+Open the radio's image in CHIRP, then use *File > Import* on the exported file. Memories are numbered from `--start` (default 1) in `--sort` order: `name` (the default), `freq`, or `group`. The `name` order compares numbers in names by value, so "GMRS 2" comes before "GMRS 10", and "GMRS 15" before "GMRS 15R". Use `--max-name-len` to fit names to the radio's display (see [Names on radio displays](#names-on-radio-displays)).
 
 How library channels map to CHIRP:
 

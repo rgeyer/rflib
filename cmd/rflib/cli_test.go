@@ -704,6 +704,31 @@ func TestRadioSources(t *testing.T) {
 	if out := c.ok("radio", "show", "HT"); !strings.Contains(out, "sources:\n1\t") {
 		t.Errorf("radio show = %q", out)
 	}
+	// Re-sorting by name puts numbers in order; the NOAA section and the
+	// hand-added channel stay where they are.
+	c.ok("radio", "sources", "set", "HT", "1", "--sort", "name", "--keep-sorted")
+	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t-\tsort name, kept sorted\t23 channels") {
+		t.Errorf("sources list = %q", out)
+	}
+	if got := c.ok("radio", "sync", "HT", "--dry-run"); !strings.Contains(got, "would re-sort\tsource 1\t") || strings.Contains(got, "source 2\t") {
+		t.Errorf("dry run = %q", got)
+	}
+	if got := c.ok("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (band:gmrs -is:repeater): re-sorted") || !strings.HasSuffix(got, "program the radio again") {
+		t.Errorf("sync = %q", got)
+	}
+	rows = nil
+	if err := json.Unmarshal([]byte(c.ok("radio", "channels", "list", "HT", "--format", "json")), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].ChannelName != "AAA New" || rows[1].ChannelName != "GMRS 1" || rows[2].ChannelName != "GMRS 2" || rows[10].ChannelName != "GMRS 10" ||
+		rows[22].ChannelName != "GMRS 22" || rows[23].Memory != 100 || rows[30].ChannelID != hand {
+		t.Errorf("after re-sort: %+v", rows)
+	}
+	if got := c.ok("radio", "sync", "HT"); got != "Added 0 channels to HT" {
+		t.Errorf("sorted source re-sorted again: %q", got)
+	}
+	c.ok("radio", "sources", "set", "HT", "1", "--keep-sorted=false")
+
 	// Moving the section start applies now; removing it clears it.
 	c.ok("radio", "sources", "set", "HT", "2", "--section-start", "50")
 	if !strings.Contains(c.ok("radio", "channels", "list", "HT"), "§50\t") {

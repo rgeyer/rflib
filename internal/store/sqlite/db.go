@@ -157,6 +157,8 @@ CREATE TABLE new_searches (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFEREN
 INSERT INTO new_searches SELECT id, (SELECT id FROM libraries), name, query, notes, created_at, updated_at FROM searches;
 DROP TABLE searches;
 ALTER TABLE new_searches RENAME TO searches;`},
+	// Sources that re-sort their channels on every sync.
+	{version: 8, sql: `ALTER TABLE radio_sources ADD COLUMN keep_sorted INTEGER NOT NULL DEFAULT 0;`},
 }
 
 func latestVersion() int64 {
