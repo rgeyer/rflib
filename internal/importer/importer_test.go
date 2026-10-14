@@ -36,14 +36,7 @@ func newStore(t *testing.T) store.Library {
 func seed(t *testing.T, s store.Library) {
 	t.Helper()
 	ctx := context.Background()
-	lat, lon, radius := 45.5152, -122.6784, 40.0
-	metro, err := s.CreateGroup(ctx, domain.Group{Name: "Metro", Description: "Local", Latitude: &lat, Longitude: &lon, RadiusKM: &radius, Notes: "n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.CreateGroup(ctx, domain.Group{Name: "Empty"}); err != nil {
-		t.Fatal(err)
-	}
+	radius := 40.0
 	tone := func(v string) domain.Tone {
 		x, err := domain.ParseTone(v)
 		if err != nil {
@@ -54,7 +47,7 @@ func seed(t *testing.T, s store.Library) {
 	tx := int64(146340000)
 	simplex := int64(146520000)
 	for _, c := range []domain.Channel{
-		{Name: "Repeater, Main", GroupID: &metro.ID, ReceiveHz: 146940000, TransmitHz: &tx, Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: tone("ctcss:69.3"), TransmitTone: tone("ctcss:69.3"), ToneSquelch: true, Power: domain.PowerHigh, Bandwidth: "25kHz", Tags: []string{"ham", "repeater"}, ShortNames: []string{"Rpt Main", "RptM"}, Notes: "quoted \"note\""},
+		{Name: "Repeater, Main", Location: &domain.Location{Latitude: 45.5152, Longitude: -122.6784, RadiusKM: &radius}, ReceiveHz: 146940000, TransmitHz: &tx, Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: tone("ctcss:69.3"), TransmitTone: tone("ctcss:69.3"), ToneSquelch: true, Power: domain.PowerHigh, Bandwidth: "25kHz", Tags: []string{"ham", "repeater"}, ShortNames: []string{"Rpt Main", "RptM"}, Notes: "quoted \"note\""},
 		{Name: "Calling", ReceiveHz: 146520000, TransmitHz: &simplex, Mode: "NFM", ReceiveTone: tone("none"), TransmitTone: tone("dcs:023:inverted"), Skip: true},
 		{Name: "Air", ReceiveHz: 121500000, Mode: "AM", Service: domain.ServiceOther, RXOnly: true, ReceiveTone: tone("dcs:754"), TransmitTone: tone("none")},
 	} {
@@ -84,12 +77,8 @@ func exportJSON(t *testing.T, s store.Library) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gs, err := s.ListGroups(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var buf bytes.Buffer
-	if err := export.WriteJSON(&buf, gs, cs); err != nil {
+	if err := export.WriteJSON(&buf, cs); err != nil {
 		t.Fatal(err)
 	}
 	return buf.String()
@@ -117,7 +106,7 @@ func TestCSVRoundTripIsLossless(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := newStore(t)
-	if sum := mustApply(t, dst, b, Options{}); sum.Created != 3 || len(sum.GroupsCreated) != 1 {
+	if sum := mustApply(t, dst, b, Options{}); sum.Created != 3 {
 		t.Fatalf("summary = %+v", sum)
 	}
 	if second := exportCSV(t, dst); second != first {
@@ -135,7 +124,7 @@ func TestJSONRoundTripIsLossless(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := newStore(t)
-	if sum := mustApply(t, dst, b, Options{}); sum.Created != 3 || len(sum.GroupsCreated) != 2 {
+	if sum := mustApply(t, dst, b, Options{}); sum.Created != 3 {
 		t.Fatalf("summary = %+v", sum)
 	}
 	if second := exportJSON(t, dst); second != first {
@@ -177,7 +166,7 @@ func TestDuplicatesMatchEveryProgrammedField(t *testing.T) {
 	csv := "name,receive_mhz,transmit_mhz,receive_tone,transmit_tone,tone_squelch,group_name,power\n" +
 		"Calling,146.520,,,,,Metro,\n" +
 		"Calling,146.520,,,,,Metro,5W\n" + // duplicate: only power differs
-		"Calling,146.520,,,,,,\n" + // different group
+		"Calling,146.520,,,,,,\n" + // duplicate: the old group is only a tag
 		"Calling,146.520,146.520,,,,Metro,\n" + // different TX
 		"Calling,146.520,,,ctcss:100,,Metro,\n" + // different TX tone
 		"Calling,146.520,,ctcss:100,,true,Metro,\n" // different squelch tone
@@ -185,14 +174,14 @@ func TestDuplicatesMatchEveryProgrammedField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum := mustApply(t, s, b, Options{}); sum.Created != 5 || sum.Skipped != 1 {
+	if sum := mustApply(t, s, b, Options{}); sum.Created != 4 || sum.Skipped != 2 {
 		t.Fatalf("summary = %+v", sum)
 	}
 }
 
-// A radio's own file shortens names and has no groups; matching on what is
-// programmed still finds the library's channels.
-func TestMatchProgrammedIgnoresNameAndGroup(t *testing.T) {
+// A radio's own file shortens names; matching on what is programmed still
+// finds the library's channels.
+func TestMatchProgrammedIgnoresName(t *testing.T) {
 	s := newStore(t)
 	library := "name,receive_mhz,transmit_mhz,receive_tone,transmit_tone,tone_squelch,group_name\n" +
 		"2m FM Call,146.520,,,,,Calling\n" +
@@ -246,27 +235,24 @@ func TestCHIRPSameNameDifferentToneIsNotDuplicate(t *testing.T) {
 
 func TestDryRunWritesNothing(t *testing.T) {
 	s := newStore(t)
-	b, err := ParseGenericCSV(strings.NewReader("name,receive_mhz,group_name\nCalling,146.520,New Group\n"))
+	b, err := ParseGenericCSV(strings.NewReader("name,receive_mhz\nCalling,146.520\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := mustApply(t, s, b, Options{DryRun: true})
-	if sum.Created != 1 || len(sum.GroupsCreated) != 1 {
+	if sum := mustApply(t, s, b, Options{DryRun: true}); sum.Created != 1 {
 		t.Fatalf("summary = %+v", sum)
 	}
-	cs, _ := s.ListChannels(context.Background())
-	gs, _ := s.ListGroups(context.Background())
-	if len(cs) != 0 || len(gs) != 0 {
-		t.Fatalf("dry run wrote %d channels, %d groups", len(cs), len(gs))
+	if cs, _ := s.ListChannels(context.Background()); len(cs) != 0 {
+		t.Fatalf("dry run wrote %d channels", len(cs))
 	}
 }
 
 func TestApplyIsAtomic(t *testing.T) {
 	s := newStore(t)
-	// The second record names a group by ID only, which can't be created.
+	// The second record has a mode the store refuses.
 	b := Batch{Records: []Record{
 		{Row: 2, Channel: domain.Channel{Name: "ok", ReceiveHz: 146520000, Mode: "FM", ReceiveTone: domain.Tone{Kind: domain.ToneNone}, TransmitTone: domain.Tone{Kind: domain.ToneNone}}},
-		{Row: 3, Channel: domain.Channel{Name: "bad", ReceiveHz: 146550000, Mode: "FM", ReceiveTone: domain.Tone{Kind: domain.ToneNone}, TransmitTone: domain.Tone{Kind: domain.ToneNone}, Group: &domain.Group{ID: "missing"}}},
+		{Row: 3, Channel: domain.Channel{Name: "bad", ReceiveHz: 146550000, Mode: "DMR", ReceiveTone: domain.Tone{Kind: domain.ToneNone}, TransmitTone: domain.Tone{Kind: domain.ToneNone}}},
 	}}
 	_, err := Apply(context.Background(), s, b, Options{})
 	if err == nil || !strings.Contains(err.Error(), "row 3") {
@@ -277,22 +263,34 @@ func TestApplyIsAtomic(t *testing.T) {
 	}
 }
 
-func TestGroupAndTagOverrides(t *testing.T) {
+// Files from before groups became tags and locations import as if the
+// library had been migrated: the group's name is a tag, and its location the
+// channel's.
+func TestOldGroupsBecomeTagsAndLocations(t *testing.T) {
 	s := newStore(t)
-	g, err := s.CreateGroup(context.Background(), domain.Group{Name: "Target"})
-	if err != nil {
-		t.Fatal(err)
+	b, err := ParseGenericCSV(strings.NewReader("name,receive_mhz,group_id,group_name,group_latitude,group_longitude,tags\n" +
+		"Calling,146.520,g1,Santa Barbara,34.42,-119.7,ham\n" +
+		"Own,146.550,g1,Santa Barbara,34.42,-119.7,\n"))
+	if err != nil || len(b.Errors) > 0 {
+		t.Fatal(err, b.Errors)
 	}
-	b, err := ParseGenericCSV(strings.NewReader("name,receive_mhz,group_name,tags\nCalling,146.520,Elsewhere,ham\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sum := mustApply(t, s, b, Options{Group: "Target", Tags: []string{"Imported"}}); len(sum.GroupsCreated) != 0 {
-		t.Fatalf("override still created groups: %v", sum.GroupsCreated)
-	}
+	mustApply(t, s, b, Options{Tags: []string{"Imported"}})
 	cs, _ := s.ListChannels(context.Background())
-	if len(cs) != 1 || *cs[0].GroupID != g.ID || strings.Join(cs[0].Tags, ",") != "ham,imported" {
-		t.Fatalf("channel = %+v", cs[0])
+	if len(cs) != 2 || strings.Join(cs[0].Tags, ",") != "ham,imported,santa barbara" || cs[0].Location == nil || cs[0].Location.Latitude != 34.42 {
+		t.Fatalf("CSV channel = %+v", cs[0])
+	}
+
+	b, err = ParseJSON(strings.NewReader(`{"format":"rflib","version":1,
+		"groups":[{"id":"g1","name":"Metro","latitude":45.5,"longitude":-122.6,"radius_km":30},{"id":"g2","name":"Statewide"}],
+		"channels":[
+			{"id":"a","group_id":"g1","name":"A","receive_hz":146940000,"mode":"FM","receive_tone":"none","transmit_tone":"none","tags":[]},
+			{"id":"b","group_id":"g2","name":"B","receive_hz":146970000,"mode":"FM","receive_tone":"none","transmit_tone":"none","tags":[]}]}`))
+	if err != nil || len(b.Errors) > 0 {
+		t.Fatal(err, b.Errors)
+	}
+	a, bb := b.Records[0].Channel, b.Records[1].Channel
+	if strings.Join(a.Tags, ",") != "Metro" || a.Location == nil || *a.Location.RadiusKM != 30 || strings.Join(bb.Tags, ",") != "Statewide" || bb.Location != nil {
+		t.Fatalf("v1 backup channels = %+v, %+v", a, bb)
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 
 // PowerIntent is how strongly a channel should transmit, independent of any
 // radio: each radio model maps intents to its own power levels. Empty means
-// no preference, so a group's or radio's default applies.
+// no preference, so the radio's default applies.
 type PowerIntent string
 
 const (
@@ -48,7 +48,7 @@ func PowerFromText(v string) PowerIntent {
 }
 
 // ResolvePower picks the effective intent: the first one set, most specific
-// first (radio override, channel, group, radio default).
+// first (radio override, channel, radio default).
 func ResolvePower(intents ...PowerIntent) PowerIntent {
 	for _, p := range intents {
 		if p != PowerUnset {

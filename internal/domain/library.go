@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Library is a separate collection of groups, channels, radios, and saved
+// Library is a separate collection of channels, radios, and saved
 // searches. Names are unique within a library, not across them.
 type Library struct {
 	ID          string

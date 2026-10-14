@@ -14,8 +14,7 @@ type Radio struct {
 	ID    string
 	Name  string
 	Model string
-	// DefaultPower applies to channels without a power intent of their own
-	// or from their group.
+	// DefaultPower applies to channels without a power intent of their own.
 	DefaultPower PowerIntent
 	// Dedupe is how duplicate names on this radio are told apart: none,
 	// index, or freq (see package naming).
@@ -36,7 +35,7 @@ type RadioSource struct {
 	Position int
 	// Query is the search, in package query's language.
 	Query string
-	// Sort orders the channels a sync adds: name, freq, or group.
+	// Sort orders the channels a sync adds: name or freq.
 	Sort string
 	// SectionStart, when set, starts the source's first channel at that
 	// memory number.
@@ -47,14 +46,14 @@ type RadioSource struct {
 }
 
 // SortOrders are the orders channels can be added in.
-var SortOrders = []string{"name", "freq", "group"}
+var SortOrders = []string{"name", "freq"}
 
 func ValidateRadioSource(src RadioSource) error {
 	if strings.TrimSpace(src.Query) == "" {
 		return fmt.Errorf("a source needs a query")
 	}
 	if !slices.Contains(SortOrders, src.Sort) {
-		return fmt.Errorf("unknown sort %q; use name, freq, or group", src.Sort)
+		return sortError(src.Sort)
 	}
 	if src.SectionStart != nil && *src.SectionStart < 0 {
 		return fmt.Errorf("section start must not be negative")
@@ -154,27 +153,25 @@ func ValidateRadio(r Radio) error {
 	return nil
 }
 
-// SortChannels orders channels by name (see CompareChannels), freq
-// (receive frequency), or group (by group name, ungrouped last). The sort
-// is stable.
+// SortChannels orders channels by name (see CompareChannels) or freq
+// (receive frequency). The sort is stable.
 func SortChannels(cs []Channel, by string) error {
 	switch by {
 	case "name":
 		slices.SortStableFunc(cs, CompareChannels)
 	case "freq":
 		slices.SortStableFunc(cs, func(a, b Channel) int { return cmp.Compare(a.ReceiveHz, b.ReceiveHz) })
-	case "group":
-		key := func(c Channel) string {
-			if c.Group == nil {
-				return "￿"
-			}
-			return c.Group.Name
-		}
-		slices.SortStableFunc(cs, func(a, b Channel) int { return cmp.Compare(key(a), key(b)) })
 	default:
-		return fmt.Errorf("unknown sort %q; use name, freq, or group", by)
+		return sortError(by)
 	}
 	return nil
+}
+
+func sortError(by string) error {
+	if by == "group" {
+		return fmt.Errorf("sorting by group is gone with groups; use name or freq")
+	}
+	return fmt.Errorf("unknown sort %q; use name or freq", by)
 }
 
 // CompareChannels orders channels by name (see CompareNames), then by

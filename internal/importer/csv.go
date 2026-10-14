@@ -108,15 +108,27 @@ func channelFromCSV(get func(string) string) (domain.Channel, error) {
 	if v := get("short_names"); v != "" {
 		c.ShortNames = strings.Split(v, ";")
 	}
-	if id, name := get("group_id"), get("group_name"); id != "" || name != "" {
-		g := domain.Group{ID: id, Name: name}
-		if g.Latitude, err = parseOptionalFloat(get("group_latitude")); err != nil {
+	var loc [3]*float64
+	for i, name := range []string{"latitude", "longitude", "radius_km"} {
+		if loc[i], err = parseOptionalFloat(get(name)); err != nil {
+			return c, fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	if c.Location, err = domain.NewLocation(loc[0], loc[1], loc[2]); err != nil {
+		return c, err
+	}
+	// Files written before groups became tags and locations.
+	if name := get("group_name"); name != "" || get("group_latitude") != "" {
+		var lat, lon *float64
+		if lat, err = parseOptionalFloat(get("group_latitude")); err != nil {
 			return c, fmt.Errorf("group_latitude: %w", err)
 		}
-		if g.Longitude, err = parseOptionalFloat(get("group_longitude")); err != nil {
+		if lon, err = parseOptionalFloat(get("group_longitude")); err != nil {
 			return c, fmt.Errorf("group_longitude: %w", err)
 		}
-		c.Group = &g
+		if err := ungroup(&c, name, lat, lon, nil); err != nil {
+			return c, fmt.Errorf("group: %w", err)
+		}
 	}
 	return c, nil
 }

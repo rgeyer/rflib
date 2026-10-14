@@ -129,11 +129,6 @@ func (r row) raw(p Profile, col Column) (string, error) {
 		return string(c.Service), nil
 	case "tags":
 		return strings.Join(c.Tags, ";"), nil
-	case "group":
-		if c.Group == nil {
-			return "", nil
-		}
-		return c.Group.Name, nil
 	case "step_khz":
 		for _, s := range col.StepsKHz {
 			if milliHz, _ := parseKHz(s); c.ReceiveHz*1000%milliHz == 0 {

@@ -39,28 +39,6 @@ func Open(ctx context.Context, s store.Store, library string) (*Service, error) 
 // LibraryID is the ID of the Service's library.
 func (s *Service) LibraryID() string { return s.lib.ID() }
 
-// --- groups ---
-
-func (s *Service) CreateGroup(ctx context.Context, g domain.Group) (domain.Group, error) {
-	return s.lib.CreateGroup(ctx, g)
-}
-
-func (s *Service) GetGroup(ctx context.Context, idOrName string) (domain.Group, error) {
-	return s.lib.GetGroup(ctx, idOrName)
-}
-
-func (s *Service) ListGroups(ctx context.Context) ([]domain.Group, error) {
-	return s.lib.ListGroups(ctx)
-}
-
-func (s *Service) UpdateGroup(ctx context.Context, g domain.Group) (domain.Group, error) {
-	return s.lib.UpdateGroup(ctx, g)
-}
-
-func (s *Service) DeleteGroup(ctx context.Context, idOrName string) error {
-	return s.lib.DeleteGroup(ctx, idOrName)
-}
-
 // --- channels ---
 
 // CreateChannel stores a channel and returns its band-plan warnings (see
@@ -106,17 +84,13 @@ func (s *Service) ListChannels(ctx context.Context) ([]domain.Channel, error) {
 	return s.lib.ListChannels(ctx)
 }
 
-// QueryEnv resolves what queries refer to: saved searches, groups, radios,
-// and radio models.
+// QueryEnv resolves what queries refer to: saved searches, radios, and
+// radio models.
 func (s *Service) QueryEnv(ctx context.Context) query.Env {
 	return query.Env{
 		Search: func(name string) (string, error) {
 			x, err := s.lib.GetSearch(ctx, name)
 			return x.Query, err
-		},
-		Group: func(ref string) (string, error) {
-			g, err := s.lib.GetGroup(ctx, ref)
-			return g.ID, err
 		},
 		RadioChannels: func(ref string) (map[string]bool, error) {
 			if ref == "" {

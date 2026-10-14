@@ -22,7 +22,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite database path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
 	root.PersistentFlags().String("library", "", "Library to use, by name or ID (default $RFLIB_LIBRARY, then \"default\"; see rflib library)")
-	root.AddCommand(newInitCommand(), newGroupCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newLibraryCommand())
+	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newLibraryCommand())
 	return root
 }
 
@@ -57,148 +57,12 @@ func requireYes(cmd *cobra.Command, what string) error {
 	return nil
 }
 
-// --- groups ---
-
-func newGroupCommand() *cobra.Command {
-	group := &cobra.Command{Use: "group", Short: "Manage geotagged channel groups"}
-	group.AddCommand(newGroupAddCommand(), newGroupListCommand(), newGroupShowCommand(), newGroupUpdateCommand(), newGroupDeleteCommand())
-	return group
-}
-
-func groupFields(cmd *cobra.Command) {
-	cmd.Flags().String("name", "", "Group name")
-	cmd.Flags().String("description", "", "Description")
-	cmd.Flags().String("lat", "", "Latitude (empty clears on update)")
-	cmd.Flags().String("lon", "", "Longitude (empty clears on update)")
-	cmd.Flags().String("radius-km", "", "Radius in kilometers (empty clears on update)")
-	cmd.Flags().String("power", "", "Default power intent for the group's channels: low, medium, high, or max (empty clears on update)")
-	cmd.Flags().String("notes", "", "Notes")
-}
-
-// applyGroupFlags copies flags onto g. With all=false only flags the user
-// explicitly set are applied, so an update leaves other fields untouched.
-func applyGroupFlags(cmd *cobra.Command, g *domain.Group, all bool) error {
-	set := func(name string) bool { return all || cmd.Flags().Changed(name) }
-	if set("name") {
-		g.Name = getString(cmd, "name")
-	}
-	if set("description") {
-		g.Description = getString(cmd, "description")
-	}
-	if set("notes") {
-		g.Notes = getString(cmd, "notes")
-	}
-	if set("power") {
-		p, err := domain.ParsePowerIntent(getString(cmd, "power"))
-		if err != nil {
-			return err
-		}
-		g.Power = p
-	}
-	for _, f := range []struct {
-		name string
-		dst  **float64
-	}{{"lat", &g.Latitude}, {"lon", &g.Longitude}, {"radius-km", &g.RadiusKM}} {
-		if set(f.name) {
-			v, err := parseOptionalFloat(f.name, getString(cmd, f.name))
-			if err != nil {
-				return err
-			}
-			*f.dst = v
-		}
-	}
-	return nil
-}
-
-func newGroupAddCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "add", Short: "Create a group", Args: cobra.NoArgs}
-	groupFields(cmd)
-	_ = cmd.MarkFlagRequired("name")
-	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		var g domain.Group
-		if err := applyGroupFlags(cmd, &g, true); err != nil {
-			return err
-		}
-		return withApp(cmd, func(a *app.Service) error {
-			g, err := a.CreateGroup(ctx(cmd), g)
-			if err == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), g.ID)
-			}
-			return err
-		})
-	}
-	return cmd
-}
-
-func newGroupListCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "list", Short: "List groups", Args: cobra.NoArgs}
-	groupListing.flags(cmd)
-	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		if err := groupListing.check(cmd); err != nil {
-			return err
-		}
-		return withApp(cmd, func(a *app.Service) error {
-			gs, err := a.ListGroups(ctx(cmd))
-			if err != nil {
-				return err
-			}
-			return groupListing.write(cmd, gs)
-		})
-	}
-	return cmd
-}
-
-func newGroupShowCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "show", Short: "Show a group", Args: cobra.NoArgs}
-	idFlag(cmd, "Group ID or name (required)")
-	formatFlag(cmd)
-	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		format, err := getFormat(cmd)
-		if err != nil {
-			return err
-		}
-		return withApp(cmd, func(a *app.Service) error {
-			g, err := a.GetGroup(ctx(cmd), getString(cmd, "id"))
-			if err != nil {
-				return err
-			}
-			return writeGroup(cmd.OutOrStdout(), g, format)
-		})
-	}
-	return cmd
-}
-
-func newGroupUpdateCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "update", Short: "Update a group; only supplied flags change", Args: cobra.NoArgs}
-	idFlag(cmd, "Group ID or name (required)")
-	groupFields(cmd)
-	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withApp(cmd, func(a *app.Service) error {
-			g, err := a.GetGroup(ctx(cmd), getString(cmd, "id"))
-			if err != nil {
-				return err
-			}
-			if err := applyGroupFlags(cmd, &g, false); err != nil {
-				return err
-			}
-			_, err = a.UpdateGroup(ctx(cmd), g)
-			return err
-		})
-	}
-	return cmd
-}
-
-func newGroupDeleteCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "delete", Short: "Delete a group; its channels become ungrouped", Args: cobra.NoArgs}
-	idFlag(cmd, "Group ID or name (required)")
-	cmd.Flags().Bool("yes", false, "Confirm deletion")
-	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		if err := requireYes(cmd, "group"); err != nil {
-			return err
-		}
-		return withApp(cmd, func(a *app.Service) error { return a.DeleteGroup(ctx(cmd), getString(cmd, "id")) })
-	}
-	return cmd
+// newGroupGoneCommand explains where groups went to anyone who still
+// types rflib group.
+func newGroupGoneCommand() *cobra.Command {
+	return &cobra.Command{Use: "group", Hidden: true, DisableFlagParsing: true, RunE: func(*cobra.Command, []string) error {
+		return fmt.Errorf("groups are gone: each became a tag named after it, and channels now have their own location (channel update --lat --lon --radius-km)")
+	}}
 }
 
 // --- channels ---
@@ -211,7 +75,9 @@ func newChannelCommand() *cobra.Command {
 
 func channelFields(cmd *cobra.Command) {
 	cmd.Flags().String("name", "", "Channel name")
-	cmd.Flags().String("group", "", "Group ID or name (empty clears on update)")
+	cmd.Flags().String("lat", "", "Latitude of where the channel is used, with --lon (empty clears on update)")
+	cmd.Flags().String("lon", "", "Longitude, with --lat")
+	cmd.Flags().String("radius-km", "", "How far the location reaches, in km: its uncertainty or the coverage (empty clears on update)")
 	cmd.Flags().String("rx", "", "Receive frequency in MHz")
 	cmd.Flags().String("tx", "", "Transmit frequency in MHz; omit for receive-only (empty clears on update)")
 	cmd.Flags().String("mode", "FM", "FM, NFM, AM, USB, or LSB")
@@ -229,7 +95,7 @@ func channelFields(cmd *cobra.Command) {
 }
 
 // applyChannelFlags copies flags onto c. With all=false only flags the user
-// explicitly set are applied; an explicitly empty --tx, --group, or --tags
+// explicitly set are applied; an explicitly empty --tx, --lat/--lon, or --tags
 // clears that field.
 func applyChannelFlags(cmd *cobra.Command, a *app.Service, c *domain.Channel, all bool) error {
 	set := func(name string) bool { return all || cmd.Flags().Changed(name) }
@@ -306,15 +172,31 @@ func applyChannelFlags(cmd *cobra.Command, a *app.Service, c *domain.Channel, al
 	if set("short-names") {
 		c.ShortNames = splitTags(getString(cmd, "short-names"))
 	}
-	if set("group") {
-		c.GroupID, c.Group = nil, nil
-		if ref := getString(cmd, "group"); strings.TrimSpace(ref) != "" {
-			g, err := a.GetGroup(ctx(cmd), ref)
-			if err != nil {
-				return err
-			}
-			c.GroupID, c.Group = &g.ID, &g
+	if set("lat") || set("lon") || set("radius-km") {
+		var lat, lon, radius *float64
+		if l := c.Location; l != nil {
+			lat, lon, radius = &l.Latitude, &l.Longitude, l.RadiusKM
 		}
+		for _, f := range []struct {
+			name string
+			dst  **float64
+		}{{"lat", &lat}, {"lon", &lon}, {"radius-km", &radius}} {
+			if set(f.name) {
+				v, err := parseOptionalFloat(f.name, getString(cmd, f.name))
+				if err != nil {
+					return err
+				}
+				*f.dst = v
+			}
+		}
+		if lat == nil && lon == nil {
+			radius = nil
+		}
+		loc, err := domain.NewLocation(lat, lon, radius)
+		if err != nil {
+			return err
+		}
+		c.Location = loc
 	}
 	return nil
 }
@@ -390,7 +272,7 @@ func newChannelShowCommand() *cobra.Command {
 }
 
 // bulkFields are the channel flags that can change many channels at once.
-var bulkFields = []string{"tags", "skip", "power", "service", "rx-only"}
+var bulkFields = []string{"tags", "skip", "power", "service", "rx-only", "lat", "lon", "radius-km"}
 
 func newChannelUpdateCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "update", Short: "Update channels; only supplied flags change", Args: cobra.NoArgs,
@@ -399,8 +281,9 @@ field. Choose channels with --id, --query, or both (a channel must match
 both).
 
 One channel can change anything. Many at once (--query, or several IDs) can
-change only --tags, --skip, --power, --service, and --rx-only: frequencies,
-tones, mode, and names are changed one channel at a time. --tags +x,-y adds
+change only --tags, --skip, --power, --service, --rx-only, and the location
+(--lat and --lon together, with --radius-km if wanted): frequencies, tones,
+mode, and names are changed one channel at a time. --tags +x,-y adds
 x and removes y, leaving other tags alone; --tags x,y replaces them.
 
 ` + stdinIDHelp}
@@ -468,14 +351,14 @@ x and removes y, leaving other tags alone; --tags x,y replaces them.
 func channelEdit(cmd *cobra.Command) (app.ChannelEdit, error) {
 	var e app.ChannelEdit
 	var refused []string
-	channelFieldNames := []string{"name", "group", "rx", "tx", "mode", "service", "rx-only", "rx-tone", "tx-tone", "tone-squelch", "power", "bandwidth", "skip", "notes", "tags", "short-names"}
+	channelFieldNames := []string{"name", "lat", "lon", "radius-km", "rx", "tx", "mode", "service", "rx-only", "rx-tone", "tx-tone", "tone-squelch", "power", "bandwidth", "skip", "notes", "tags", "short-names"}
 	for _, name := range channelFieldNames {
 		if cmd.Flags().Changed(name) && !slices.Contains(bulkFields, name) {
 			refused = append(refused, "--"+name)
 		}
 	}
 	if len(refused) > 0 {
-		return e, fmt.Errorf("%s can't change many channels at once; update them one at a time with --id, or use --tags, --skip, --power, --service, or --rx-only", strings.Join(refused, ", "))
+		return e, fmt.Errorf("%s can't change many channels at once; update them one at a time with --id, or use --tags, --skip, --power, --service, --rx-only, or --lat and --lon", strings.Join(refused, ", "))
 	}
 	if cmd.Flags().Changed("tags") {
 		t, err := parseTagEdit(getString(cmd, "tags"))
@@ -506,8 +389,26 @@ func channelEdit(cmd *cobra.Command) (app.ChannelEdit, error) {
 		v, _ := cmd.Flags().GetBool("rx-only")
 		e.RXOnly = &v
 	}
+	if cmd.Flags().Changed("lat") || cmd.Flags().Changed("lon") || cmd.Flags().Changed("radius-km") {
+		if !cmd.Flags().Changed("lat") || !cmd.Flags().Changed("lon") {
+			return e, fmt.Errorf("a location for many channels needs --lat and --lon (both empty to clear it)")
+		}
+		var parts [3]*float64
+		for i, name := range []string{"lat", "lon", "radius-km"} {
+			v, err := parseOptionalFloat(name, getString(cmd, name))
+			if err != nil {
+				return e, err
+			}
+			parts[i] = v
+		}
+		loc, err := domain.NewLocation(parts[0], parts[1], parts[2])
+		if err != nil {
+			return e, err
+		}
+		e.SetLocation, e.Location = true, loc
+	}
 	if e == (app.ChannelEdit{}) {
-		return e, fmt.Errorf("nothing to change; give --tags, --skip, --power, --service, or --rx-only")
+		return e, fmt.Errorf("nothing to change; give --tags, --skip, --power, --service, --rx-only, or --lat and --lon")
 	}
 	return e, nil
 }

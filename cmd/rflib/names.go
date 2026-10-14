@@ -26,7 +26,7 @@ characters from an export profile instead of the flags.`}
 	cmd.Flags().Bool("upper", false, "Upper-case names")
 	cmd.Flags().String("charset", "ascii", `Allowed characters: ascii, alnum, or a set such as "A-Z0-9 -/"`)
 	cmd.Flags().String("profile", "", "Take display rules from this export profile")
-	cmd.Flags().String("sort", "name", "Order: name, freq, or group")
+	cmd.Flags().String("sort", "name", "Order: name or freq")
 	dedupeFlag(cmd)
 	filterFields(cmd)
 	nameListing.flags(cmd)

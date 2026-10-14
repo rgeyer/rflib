@@ -71,8 +71,8 @@ from the model's first memory; a channel can start a section at a chosen
 memory number, and the channels after it continue from there.
 
 Power: each channel's power comes from the radio's override for it, else the
-channel's power, else its group's, else the radio's default, mapped to the
-model's levels and held to FRS, GMRS, MURS, and CB limits.
+channel's power, else the radio's default, mapped to the model's levels and
+held to FRS, GMRS, MURS, and CB limits.
 
 Sources: a radio can keep searches (rflib radio sources) that radio sync uses
 to add new matching channels, each in its own part of the list.`}
@@ -83,7 +83,7 @@ to add new matching channels, each in its own part of the list.`}
 
 func radioFields(cmd *cobra.Command) {
 	cmd.Flags().String("model", "", "Radio model (see rflib model list)")
-	cmd.Flags().String("default-power", "", "Power for channels without their own or their group's: low, medium, high, or max")
+	cmd.Flags().String("default-power", "", "Power for channels without their own: low, medium, high, or max")
 	cmd.Flags().String("dedupe", "", "Tell apart duplicate names: none, index, or freq")
 	cmd.Flags().String("notes", "", "Notes")
 }
@@ -330,7 +330,7 @@ func skippedNote(res app.AddResult) string {
 func newRadioChannelsAddCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "add RADIO", Short: "Append channels to the end of a radio's list", Args: cobra.ExactArgs(1),
 		Long: `Append channels to the end of a radio's list, by --id or by --query (or the
-shorthand --tag, --group, --service, --lat/--lon/--radius-km), in --sort
+shorthand --tag, --service, --lat/--lon/--radius-km), in --sort
 order. Channels already on the radio are skipped, so the existing order never
 changes, and so are channels outside the radio's bands unless --any-band, and
 channels in a mode the radio doesn't have (such as USB) unless --any-mode. To
@@ -339,7 +339,7 @@ sources add. With both --id and a query, a channel must match both.
 
 ` + stdinIDHelp}
 	idsFlag(cmd, "Channel IDs, added in the order given")
-	cmd.Flags().String("sort", "name", "Order for channels added by query: name, freq, or group")
+	cmd.Flags().String("sort", "name", "Order for channels added by query: name or freq")
 	fitFlags(cmd)
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -690,7 +690,7 @@ func newRadioSourcesListCommand() *cobra.Command {
 
 func newRadioSourcesAddCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "add RADIO QUERY...", Short: "Add a source to the end of a radio's sources", Args: cobra.MinimumNArgs(2)}
-	cmd.Flags().String("sort", "name", "Order its channels are added in: name, freq, or group")
+	cmd.Flags().String("sort", "name", "Order its channels are added in: name or freq")
 	cmd.Flags().String("section-start", "", "Start the source's channels at this memory number")
 	keepSortedFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -717,7 +717,7 @@ func newRadioSourcesSetCommand() *cobra.Command {
 radio sync adds the new matches. A new section start moves to the source's
 first channel now.`}
 	cmd.Flags().String("query", "", "New query")
-	cmd.Flags().String("sort", "", "Order its channels are added in: name, freq, or group")
+	cmd.Flags().String("sort", "", "Order its channels are added in: name or freq")
 	cmd.Flags().String("section-start", "", "Start the source's channels at this memory number (empty ends it)")
 	keepSortedFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {

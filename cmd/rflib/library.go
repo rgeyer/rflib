@@ -12,9 +12,9 @@ import (
 
 func newLibraryCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "library", Short: "Manage separate libraries in one database",
-		Long: `A library is a separate collection of groups, channels, radios, and saved
-searches; names only have to be unique within one. Every command works on
-one library: --library NAME, else $RFLIB_LIBRARY, else "default", which every
+		Long: `A library is a separate collection of channels, radios, and saved
+searches; names only have to be unique within one. Every command works on one
+library: --library NAME, else $RFLIB_LIBRARY, else "default", which every
 database starts with.
 
 To copy channels between libraries, export from one and import into the

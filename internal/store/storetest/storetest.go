@@ -22,7 +22,6 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"DefaultLibrary", testDefaultLibrary},
 		{"LibraryCRUD", testLibraryCRUD},
 		{"ChannelRoundTrip", testChannelRoundTrip},
-		{"GroupDeleteUngroups", testGroupDeleteUngroups},
 		{"NotFound", testNotFound},
 		{"NamesUniquePerLibrary", testNamesUniquePerLibrary},
 		{"ShortNamesKeepOrder", testShortNamesKeepOrder},
@@ -114,15 +113,11 @@ func testLibraryCRUD(t *testing.T, s store.Store) {
 
 func testChannelRoundTrip(t *testing.T, s store.Store) {
 	l := newLibrary(t, s, "L")
-	lat, lon, radius := 45.52, -122.68, 30.0
-	g, err := l.CreateGroup(ctx(), domain.Group{Name: "Portland", Latitude: &lat, Longitude: &lon, RadiusKM: &radius, Power: domain.PowerLow})
-	if err != nil {
-		t.Fatal(err)
-	}
+	radius := 30.0
 	tone, _ := domain.ParseTone("ctcss:100.0")
 	dcs, _ := domain.ParseTone("dcs:023:inverted")
 	tx := int64(146_340_000)
-	c, err := l.CreateChannel(ctx(), domain.Channel{Name: "Metro", GroupID: &g.ID, ReceiveHz: 146_940_000, TransmitHz: &tx, Mode: "fm",
+	c, err := l.CreateChannel(ctx(), domain.Channel{Name: "Metro", Location: &domain.Location{Latitude: 45.52, Longitude: -122.68, RadiusKM: &radius}, ReceiveHz: 146_940_000, TransmitHz: &tx, Mode: "fm",
 		Service: domain.ServiceAmateur, ReceiveTone: dcs, TransmitTone: tone, ToneSquelch: true, Power: domain.PowerHigh, Skip: true,
 		Notes: "n", Tags: []string{"HAM", "local", "ham"}})
 	if err != nil {
@@ -141,17 +136,17 @@ func testChannelRoundTrip(t *testing.T, s store.Store) {
 		t.Errorf("tones = %s, %s", domain.FormatTone(got.ReceiveTone), domain.FormatTone(got.TransmitTone))
 	case strings.Join(got.Tags, ",") != "ham,local":
 		t.Errorf("tags = %v, want normalized and sorted", got.Tags)
-	case got.Group == nil || got.Group.Name != "Portland" || got.Group.RadiusKM == nil || got.Group.Power != domain.PowerLow:
-		t.Errorf("group = %+v", got.Group)
+	case got.Location == nil || got.Location.Latitude != 45.52 || got.Location.Longitude != -122.68 || got.Location.RadiusKM == nil || *got.Location.RadiusKM != 30:
+		t.Errorf("location = %+v", got.Location)
 	case got.CreatedAt.IsZero() || got.UpdatedAt.IsZero():
 		t.Error("timestamps not set")
 	}
-	got.Name, got.TransmitHz = "Metro 2", nil
+	got.Name, got.TransmitHz, got.Location = "Metro 2", nil, nil
 	if _, err := l.UpdateChannel(ctx(), got); err != nil {
 		t.Fatal(err)
 	}
 	all, err := l.ListChannels(ctx())
-	if err != nil || len(all) != 1 || all[0].Name != "Metro 2" || all[0].TransmitHz != nil {
+	if err != nil || len(all) != 1 || all[0].Name != "Metro 2" || all[0].TransmitHz != nil || all[0].Location != nil {
 		t.Fatalf("after update: %+v, %v", all, err)
 	}
 	channel(t, l, "Metro 10", 146_520_000)
@@ -161,38 +156,14 @@ func testChannelRoundTrip(t *testing.T, s store.Store) {
 	if err := l.DeleteChannel(ctx(), c.ID); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func testGroupDeleteUngroups(t *testing.T, s store.Store) {
-	l := newLibrary(t, s, "L")
-	g, err := l.CreateGroup(ctx(), domain.Group{Name: "Metro"})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := l.CreateChannel(ctx(), domain.Channel{Name: "Nowhere", Location: &domain.Location{Latitude: 91}, ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none}); err == nil {
+		t.Error("a location off the globe was accepted")
 	}
-	c, err := l.CreateChannel(ctx(), domain.Channel{Name: "Simplex", GroupID: &g.ID, ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := l.DeleteGroup(ctx(), "Metro"); err != nil {
-		t.Fatalf("delete group by name: %v", err)
-	}
-	got, err := l.GetChannel(ctx(), c.ID)
-	if err != nil || got.GroupID != nil || got.Group != nil {
-		t.Fatalf("channel after group delete: %+v, %v", got, err)
-	}
-	missing := "no-such-group"
-	_, err = l.CreateChannel(ctx(), domain.Channel{Name: "Bad", GroupID: &missing, ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
-	mustNotFound(t, "channel in a missing group", err)
 }
 
 func testNotFound(t *testing.T, s store.Store) {
 	l := newLibrary(t, s, "L")
-	_, err := l.GetGroup(ctx(), "nope")
-	mustNotFound(t, "GetGroup", err)
-	_, err = l.UpdateGroup(ctx(), domain.Group{ID: "nope", Name: "x"})
-	mustNotFound(t, "UpdateGroup", err)
-	mustNotFound(t, "DeleteGroup", l.DeleteGroup(ctx(), "nope"))
-	_, err = l.GetChannel(ctx(), "nope")
+	_, err := l.GetChannel(ctx(), "nope")
 	mustNotFound(t, "GetChannel", err)
 	_, err = l.UpdateChannel(ctx(), domain.Channel{ID: "nope", Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none})
 	mustNotFound(t, "UpdateChannel", err)
@@ -212,9 +183,6 @@ func testNotFound(t *testing.T, s store.Store) {
 func testNamesUniquePerLibrary(t *testing.T, s store.Store) {
 	a, b := newLibrary(t, s, "A"), newLibrary(t, s, "B")
 	for _, l := range []store.Library{a, b} {
-		if _, err := l.CreateGroup(ctx(), domain.Group{Name: "Home"}); err != nil {
-			t.Fatal(err)
-		}
 		if _, err := l.CreateRadio(ctx(), domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
 			t.Fatal(err)
 		}
@@ -222,22 +190,19 @@ func testNamesUniquePerLibrary(t *testing.T, s store.Store) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := a.CreateGroup(ctx(), domain.Group{Name: "Home"}); !errors.Is(err, store.ErrConflict) {
-		t.Errorf("duplicate group: %v", err)
-	}
 	if _, err := a.CreateRadio(ctx(), domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); !errors.Is(err, store.ErrConflict) {
 		t.Errorf("duplicate radio: %v", err)
 	}
 	if _, err := a.CreateSearch(ctx(), domain.SavedSearch{Name: "wx", Query: "x"}); !errors.Is(err, store.ErrConflict) {
 		t.Errorf("duplicate search: %v", err)
 	}
-	g, err := a.CreateGroup(ctx(), domain.Group{Name: "Away"})
+	r, err := a.CreateRadio(ctx(), domain.Radio{Name: "Truck", Model: "yaesu-ftm150"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	g.Name = "Home"
-	if _, err := a.UpdateGroup(ctx(), g); !errors.Is(err, store.ErrConflict) {
-		t.Errorf("rename group onto another: %v", err)
+	r.Name = "HT"
+	if _, err := a.UpdateRadio(ctx(), r); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("rename radio onto another: %v", err)
 	}
 }
 
@@ -508,10 +473,6 @@ func testSavedSearches(t *testing.T, s store.Store) {
 
 func testLibraryIsolation(t *testing.T, s store.Store) {
 	a, b := newLibrary(t, s, "A"), newLibrary(t, s, "B")
-	g, err := a.CreateGroup(ctx(), domain.Group{Name: "Home"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	c := channel(t, a, "Calling", 146_520_000)
 	ra, err := a.CreateRadio(ctx(), domain.Radio{Name: "HT", Model: "baofeng-uv5rm"})
 	if err != nil {
@@ -527,9 +488,6 @@ func testLibraryIsolation(t *testing.T, s store.Store) {
 	if cs, _ := b.ListChannels(ctx()); len(cs) != 0 {
 		t.Errorf("B lists A's channels: %+v", cs)
 	}
-	if gs, _ := b.ListGroups(ctx()); len(gs) != 0 {
-		t.Errorf("B lists A's groups: %+v", gs)
-	}
 	if rs, _ := b.ListRadios(ctx()); len(rs) != 0 {
 		t.Errorf("B lists A's radios: %+v", rs)
 	}
@@ -544,8 +502,6 @@ func testLibraryIsolation(t *testing.T, s store.Store) {
 	}
 	_, err = b.GetChannel(ctx(), c.ID)
 	mustNotFound(t, "B gets A's channel", err)
-	_, err = b.GetGroup(ctx(), "Home")
-	mustNotFound(t, "B gets A's group", err)
 	_, err = b.GetRadio(ctx(), ra.ID)
 	mustNotFound(t, "B gets A's radio", err)
 	_, err = b.GetSearch(ctx(), "wx")
@@ -554,15 +510,12 @@ func testLibraryIsolation(t *testing.T, s store.Store) {
 	mustNotFound(t, "B lists A's radio entries", err)
 	mustNotFound(t, "B deletes A's channel", b.DeleteChannel(ctx(), c.ID))
 	mustNotFound(t, "B deletes A's radio", b.DeleteRadio(ctx(), ra.ID))
-	mustNotFound(t, "B deletes A's group", b.DeleteGroup(ctx(), g.ID))
 	moved := c
 	moved.Name = "Hijacked"
 	_, err = b.UpdateChannel(ctx(), moved)
 	mustNotFound(t, "B updates A's channel", err)
 
 	// References can't cross libraries.
-	_, err = b.CreateChannel(ctx(), domain.Channel{Name: "X", GroupID: &g.ID, ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
-	mustNotFound(t, "B channel in A's group", err)
 	rb, err := b.CreateRadio(ctx(), domain.Radio{Name: "HT", Model: "baofeng-uv5rm"})
 	if err != nil {
 		t.Fatal(err)
@@ -609,25 +562,17 @@ func testDeleteLibraryCascades(t *testing.T, s store.Store) {
 // new ones where they're taken.
 func testSuppliedIDs(t *testing.T, s store.Store) {
 	a, b := newLibrary(t, s, "A"), newLibrary(t, s, "B")
-	const gid, cid = "11111111-2222-3333-4444-555555555555", "66666666-7777-8888-9999-000000000000"
-	ga, err := a.CreateGroup(ctx(), domain.Group{ID: gid, Name: "Home"})
-	if err != nil || ga.ID != gid {
-		t.Fatalf("group ID not kept: %+v, %v", ga, err)
-	}
-	ca, err := a.CreateChannel(ctx(), domain.Channel{ID: cid, Name: "Calling", GroupID: &ga.ID, ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
+	const cid = "66666666-7777-8888-9999-000000000000"
+	ca, err := a.CreateChannel(ctx(), domain.Channel{ID: cid, Name: "Calling", ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
 	if err != nil || ca.ID != cid {
 		t.Fatalf("channel ID not kept: %+v, %v", ca, err)
 	}
-	gb, err := b.CreateGroup(ctx(), domain.Group{ID: gid, Name: "Home"})
-	if err != nil || gb.ID == gid || gb.ID == "" {
-		t.Fatalf("taken group ID: %+v, %v", gb, err)
-	}
-	cb, err := b.CreateChannel(ctx(), domain.Channel{ID: cid, Name: "Calling", GroupID: &gb.ID, ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
+	cb, err := b.CreateChannel(ctx(), domain.Channel{ID: cid, Name: "Calling", ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
 	if err != nil || cb.ID == cid || cb.ID == "" {
 		t.Fatalf("taken channel ID: %+v, %v", cb, err)
 	}
-	if got, _ := a.GetChannel(ctx(), cid); got.Group == nil || got.Group.ID != gid {
-		t.Errorf("A's channel changed: %+v", got)
+	if got, err := a.GetChannel(ctx(), cid); err != nil || got.Name != "Calling" {
+		t.Errorf("A's channel changed: %+v, %v", got, err)
 	}
 }
 
@@ -635,7 +580,7 @@ func testTransactionRollsBack(t *testing.T, s store.Store) {
 	l := newLibrary(t, s, "L")
 	boom := errors.New("boom")
 	err := l.InTx(ctx(), func(tx store.Library) error {
-		if _, err := tx.CreateGroup(ctx(), domain.Group{Name: "Temp"}); err != nil {
+		if _, err := tx.CreateRadio(ctx(), domain.Radio{Name: "Temp", Model: "yaesu-ftm150"}); err != nil {
 			return err
 		}
 		channel(t, tx, "Temp", 146_520_000)
@@ -650,7 +595,7 @@ func testTransactionRollsBack(t *testing.T, s store.Store) {
 	if cs, _ := l.ListChannels(ctx()); len(cs) != 0 {
 		t.Errorf("rolled-back channel kept: %+v", cs)
 	}
-	if gs, _ := l.ListGroups(ctx()); len(gs) != 0 {
-		t.Errorf("rolled-back group kept: %+v", gs)
+	if rs, _ := l.ListRadios(ctx()); len(rs) != 0 {
+		t.Errorf("rolled-back radio kept: %+v", rs)
 	}
 }
