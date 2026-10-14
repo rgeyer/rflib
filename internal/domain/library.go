@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"fmt"
 	"strings"
 	"time"
 )
@@ -28,10 +27,10 @@ const SharedLibrary = "shared"
 
 func ValidateLibrary(l Library) error {
 	if strings.TrimSpace(l.Name) == "" {
-		return fmt.Errorf("library name is required")
+		return Invalidf("library name is required")
 	}
 	if l.Name != strings.TrimSpace(l.Name) {
-		return fmt.Errorf("library name must not start or end with spaces")
+		return Invalidf("library name must not start or end with spaces")
 	}
 	return nil
 }

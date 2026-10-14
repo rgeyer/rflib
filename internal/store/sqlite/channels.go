@@ -75,7 +75,7 @@ func (tx *library) writeChannel(ctx context.Context, c domain.Channel, old *doma
 	}
 	if c.Link != nil {
 		if isShared {
-			return c, fmt.Errorf("a shared channel can't link to another")
+			return c, domain.Invalidf("a shared channel can't link to another")
 		}
 		target, err := tx.sharedChannel(ctx, c.Link.SharedID)
 		if err != nil {
@@ -442,4 +442,38 @@ func (l *library) ChannelRevisions(ctx context.Context, id string) ([]domain.Rev
 		out = append(out, rev)
 	}
 	return out, rows.Err()
+}
+
+func (l *library) ChangedSince(ctx context.Context, since time.Time) ([]domain.Channel, time.Time, error) {
+	// Revision times are compared parsed: RFC 3339 text with trimmed
+	// fractions doesn't sort.
+	rows, err := l.q.QueryContext(ctx, `SELECT r.channel_id, r.changed_at FROM channel_revisions r JOIN channels c ON c.id=r.channel_id WHERE c.library_id=?`, l.id)
+	if err != nil {
+		return nil, since, err
+	}
+	latest := since
+	var ids []any
+	seen := map[string]bool{}
+	for rows.Next() {
+		var id, at string
+		if err := rows.Scan(&id, &at); err != nil {
+			_ = rows.Close()
+			return nil, since, err
+		}
+		if t := parseTime(at); t.After(since) {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+			if t.After(latest) {
+				latest = t
+			}
+		}
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil || len(ids) == 0 {
+		return nil, since, err
+	}
+	cs, err := l.listChannels(ctx, `c.library_id=? AND c.id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`)`, append([]any{l.id}, ids...)...)
+	return cs, latest, err
 }

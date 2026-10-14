@@ -31,7 +31,7 @@ func ParseStatus(v string) (Status, error) {
 	case StatusActive, StatusOffAir, StatusRetired:
 		return s, nil
 	}
-	return "", fmt.Errorf("unknown status %q; use active, off-air, or retired", v)
+	return "", Invalidf("unknown status %q; use active, off-air, or retired", v)
 }
 
 // OrActive is the status, with empty read as active.
@@ -173,7 +173,7 @@ var CuratedTags = []struct{ Name, Meaning string }{
 func ValidateSharedTags(tags []string) error {
 	for _, t := range tags {
 		if !slices.ContainsFunc(CuratedTags, func(c struct{ Name, Meaning string }) bool { return c.Name == t }) {
-			return fmt.Errorf("tag %q isn't one of the shared tags (see rflib tag list)", t)
+			return Invalidf("tag %q isn't one of the shared tags (see rflib tag list)", t)
 		}
 	}
 	return nil

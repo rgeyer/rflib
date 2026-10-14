@@ -57,7 +57,7 @@ func (d *DB) Ready(ctx context.Context) error {
 		return fmt.Errorf("library is not initialized; run rflib init: %w", err)
 	}
 	if !version.Valid || version.Int64 < latestVersion() {
-		return fmt.Errorf("library schema is out of date; run rflib init to upgrade it")
+		return domain.Invalidf("library schema is out of date; run rflib init to upgrade it")
 	}
 	return nil
 }
@@ -351,7 +351,7 @@ func checkForeignKeys(ctx context.Context, tx *sql.Tx) error {
 		if err := rows.Scan(&table, &rowid, &parent, &fk); err != nil {
 			return err
 		}
-		return fmt.Errorf("broken reference from %s to %s", table, parent)
+		return domain.Invalidf("broken reference from %s to %s", table, parent)
 	}
 	return rows.Err()
 }

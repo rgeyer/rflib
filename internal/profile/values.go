@@ -135,11 +135,11 @@ func (r row) raw(p Profile, col Column) (string, error) {
 				return s, nil
 			}
 		}
-		return "", fmt.Errorf("receive frequency %s MHz isn't a multiple of any step in %v kHz", domain.FormatFrequencyMHz(c.ReceiveHz), col.StepsKHz)
+		return "", domain.Invalidf("receive frequency %s MHz isn't a multiple of any step in %v kHz", domain.FormatFrequencyMHz(c.ReceiveHz), col.StepsKHz)
 	case "const":
 		return col.Value, nil
 	}
-	return "", fmt.Errorf("unknown source %q", col.Source)
+	return "", domain.Invalidf("unknown source %q", col.Source)
 }
 
 func (r row) duplex() string {
@@ -188,7 +188,7 @@ func formatHz(hz int64, col Column) (string, error) {
 	full := domain.FormatFrequencyMHz(hz) // always 6 decimals
 	cut := len(full) - (6 - d)
 	if strings.Trim(full[cut:], "0") != "" {
-		return "", fmt.Errorf("%s MHz needs more than %d decimals for column %s", full, d, col.Name)
+		return "", domain.Invalidf("%s MHz needs more than %d decimals for column %s", full, d, col.Name)
 	}
 	return strings.TrimSuffix(full[:cut], "."), nil
 }
@@ -215,12 +215,12 @@ func formatDCS(t domain.Tone) string {
 func parseKHz(s string) (int64, error) {
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil || f <= 0 {
-		return 0, fmt.Errorf("must be a positive number of kHz")
+		return 0, domain.Invalidf("must be a positive number of kHz")
 	}
 	scaled := f * 1_000_000
 	milliHz := int64(math.Round(scaled))
 	if math.Abs(scaled-float64(milliHz)) > 1e-6 {
-		return 0, fmt.Errorf("must be a whole number of millihertz")
+		return 0, domain.Invalidf("must be a whole number of millihertz")
 	}
 	return milliHz, nil
 }

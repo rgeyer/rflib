@@ -378,7 +378,7 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 
 	// The shared library is read-only to everyday changes, and a link's
 	// shared fields belong to it.
-	if _, _, err := sh.CreateChannel(ctx, domain.Channel{Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none}); !errors.Is(err, errSharedReadOnly) {
+	if _, _, err := sh.CreateChannel(ctx, domain.Channel{Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none}); !errors.Is(err, ErrReadOnly) {
 		t.Errorf("shared create: %v", err)
 	}
 	edited := link

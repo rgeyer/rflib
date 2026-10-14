@@ -74,7 +74,7 @@ func (x Parser) lookup(fields []string) (func(string) string, error) {
 		if v != "" && len(col.Map) > 0 {
 			lib, ok := reverse(col.Map, v)
 			if !ok {
-				return nil, fmt.Errorf("column %s: unknown value %q", col.Name, v)
+				return nil, domain.Invalidf("column %s: unknown value %q", col.Name, v)
 			}
 			v = lib
 		}
@@ -168,7 +168,7 @@ func (x Parser) transmit(get func(string) string, rx int64) (*int64, error) {
 	case "minus":
 		tx = rx - offset
 	default:
-		return nil, fmt.Errorf("duplex %q needs a transmit frequency column", duplex)
+		return nil, domain.Invalidf("duplex %q needs a transmit frequency column", duplex)
 	}
 	return &tx, nil
 }
@@ -231,7 +231,7 @@ func (x Parser) tones(get func(string) string) (tx, rx domain.Tone, err error) {
 	case "rx_dcs":
 		tx, rx, err = both(off, rxD)
 	default:
-		return none, none, fmt.Errorf("unknown tone mode %q", mode)
+		return none, none, domain.Invalidf("unknown tone mode %q", mode)
 	}
 	if err != nil {
 		err = fmt.Errorf("tone mode %s: %w", mode, err)

@@ -99,7 +99,7 @@ func (c *compiler) node(n Node) (Matcher, error) {
 		}
 		return m, nil
 	}
-	return nil, fmt.Errorf("query: unknown node %T", n)
+	return nil, domain.Invalidf("query: unknown node %T", n)
 }
 
 func (c *compiler) nodes(ns []Node) ([]Matcher, error) {
@@ -160,7 +160,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 	case "freq", "rx", "tx", "created", "updated":
 	default:
 		if t.Op != "" {
-			return nil, fmt.Errorf("doesn't take %s; comparisons work on freq, rx, tx, created, and updated", t.Op)
+			return nil, domain.Invalidf("doesn't take %s; comparisons work on freq, rx, tx, created, and updated", t.Op)
 		}
 	}
 	v := t.Value
@@ -178,7 +178,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		if !strings.EqualFold(v, "none") {
 			s, err := domain.ParseService(v)
 			if err != nil || s == domain.ServiceUnspecified {
-				return nil, fmt.Errorf("unknown service %q; use none or one of %s", v, serviceNames())
+				return nil, domain.Invalidf("unknown service %q; use none or one of %s", v, serviceNames())
 			}
 			svc = s
 		}
@@ -189,16 +189,16 @@ func (c *compiler) term(t Term) (Matcher, error) {
 	case "status":
 		st, err := domain.ParseStatus(v)
 		if err != nil || strings.TrimSpace(v) == "" {
-			return nil, fmt.Errorf("unknown status %q; use active, off-air, or retired", v)
+			return nil, domain.Invalidf("unknown status %q; use active, off-air, or retired", v)
 		}
 		return func(ch domain.Channel) bool { return ch.Status.OrActive() == st }, nil
 	case "in":
-		return nil, fmt.Errorf("in: chooses which channels to search, so it can't be negated or inside OR or parentheses")
+		return nil, domain.Invalidf("in: chooses which channels to search, so it can't be negated or inside OR or parentheses")
 	case "group":
 		// Groups became tags named after them, so group:NAME still works
 		// in queries saved before.
 		if strings.EqualFold(v, "none") {
-			return nil, fmt.Errorf("groups are gone; each became a tag, so use -has:tag or -tag:NAME")
+			return nil, domain.Invalidf("groups are gone; each became a tag, so use -has:tag or -tag:NAME")
 		}
 		v = strings.ToLower(strings.TrimSpace(v))
 		return func(ch domain.Channel) bool { return slices.Contains(ch.AllTags(), v) }, nil
@@ -213,14 +213,14 @@ func (c *compiler) term(t Term) (Matcher, error) {
 	case "duplex":
 		want := strings.ToLower(v)
 		if !slices.Contains([]string{"+", "-", "split", "simplex", "off"}, want) {
-			return nil, fmt.Errorf("use +, -, split, simplex, or off")
+			return nil, domain.Invalidf("use +, -, split, simplex, or off")
 		}
 		return func(ch domain.Channel) bool { return domain.Duplex(ch) == want }, nil
 	case "tone", "txtone", "rxtone":
 		return toneMatcher(t.Field, v)
 	case "mode":
 		if !slices.ContainsFunc(domain.Modes, func(m string) bool { return strings.EqualFold(m, v) }) {
-			return nil, fmt.Errorf("unknown mode %q; use %s", v, strings.Join(domain.Modes, ", "))
+			return nil, domain.Invalidf("unknown mode %q; use %s", v, strings.Join(domain.Modes, ", "))
 		}
 		return func(ch domain.Channel) bool { return strings.EqualFold(ch.Mode, v) }, nil
 	case "power":
@@ -228,7 +228,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		if !strings.EqualFold(v, "none") {
 			var err error
 			if p, err = domain.ParsePowerIntent(v); err != nil || p == domain.PowerUnset {
-				return nil, fmt.Errorf("use none, low, medium, high, or max")
+				return nil, domain.Invalidf("use none, low, medium, high, or max")
 			}
 		}
 		return func(ch domain.Channel) bool { return ch.Power == p }, nil
@@ -249,7 +249,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		return nearMatcher(v)
 	case "radio":
 		if c.env.RadioChannels == nil {
-			return nil, fmt.Errorf("radios can't be used here")
+			return nil, domain.Invalidf("radios can't be used here")
 		}
 		ref, invert := v, false
 		switch strings.ToLower(v) {
@@ -265,7 +265,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		return func(ch domain.Channel) bool { return on[ch.ID] != invert }, nil
 	case "tunes":
 		if c.env.Tunes == nil {
-			return nil, fmt.Errorf("radios can't be used here")
+			return nil, domain.Invalidf("radios can't be used here")
 		}
 		return c.env.Tunes(v)
 	case "created", "updated":
@@ -283,7 +283,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 	case "id":
 		return func(ch domain.Channel) bool { return ch.ID == v }, nil
 	}
-	return nil, fmt.Errorf("unknown field")
+	return nil, domain.Invalidf("unknown field")
 }
 
 func serviceNames() string {
@@ -310,7 +310,7 @@ func rangeSpec[T cmp.Ordered](op, v string, parse func(string) (T, error)) (func
 	one := func(s string) (T, error) {
 		x, err := parse(s)
 		if err != nil {
-			return x, fmt.Errorf("%q is not a valid value", s)
+			return x, domain.Invalidf("%q is not a valid value", s)
 		}
 		return x, nil
 	}
@@ -339,7 +339,7 @@ func rangeSpec[T cmp.Ordered](op, v string, parse func(string) (T, error)) (func
 		return func(y T) bool { return y == x }, nil
 	}
 	if lo == "" && hi == "" {
-		return nil, fmt.Errorf("a range needs at least one end")
+		return nil, domain.Invalidf("a range needs at least one end")
 	}
 	var low, high T
 	var err error
@@ -354,7 +354,7 @@ func rangeSpec[T cmp.Ordered](op, v string, parse func(string) (T, error)) (func
 		}
 	}
 	if lo != "" && hi != "" && high < low {
-		return nil, fmt.Errorf("range %s runs backwards", v)
+		return nil, domain.Invalidf("range %s runs backwards", v)
 	}
 	return func(y T) bool { return (lo == "" || y >= low) && (hi == "" || y <= high) }, nil
 }
@@ -374,7 +374,7 @@ func parseBool(v string) (bool, error) {
 	case "no", "false", "off":
 		return false, nil
 	}
-	return false, fmt.Errorf("use yes or no")
+	return false, domain.Invalidf("use yes or no")
 }
 
 // freqMatcher: freq matches either frequency; tx matches only a recorded
@@ -414,7 +414,7 @@ func isMatcher(v string) (Matcher, error) {
 	case "skip":
 		return func(ch domain.Channel) bool { return ch.Skip }, nil
 	}
-	return nil, fmt.Errorf("unknown value %q; use %s", v, strings.Join(IsValues, ", "))
+	return nil, domain.Invalidf("unknown value %q; use %s", v, strings.Join(IsValues, ", "))
 }
 
 func (c *compiler) hasMatcher(v string) (Matcher, error) {
@@ -424,7 +424,7 @@ func (c *compiler) hasMatcher(v string) (Matcher, error) {
 	case "service":
 		return func(ch domain.Channel) bool { return ch.Service != domain.ServiceUnspecified }, nil
 	case "group":
-		return nil, fmt.Errorf("groups are gone; each became a tag, so use has:tag")
+		return nil, domain.Invalidf("groups are gone; each became a tag, so use has:tag")
 	case "tag", "tags":
 		return func(ch domain.Channel) bool { return len(ch.AllTags()) > 0 }, nil
 	case "tone", "tones":
@@ -441,7 +441,7 @@ func (c *compiler) hasMatcher(v string) (Matcher, error) {
 	case "radio":
 		return c.term(Term{Field: "radio", Value: "any"})
 	}
-	return nil, fmt.Errorf("unknown value %q; use %s", v, strings.Join(HasValues, ", "))
+	return nil, domain.Invalidf("unknown value %q; use %s", v, strings.Join(HasValues, ", "))
 }
 
 // toneSpec is a tone to look for: a kind alone, or an exact tone.
@@ -465,7 +465,7 @@ func parseToneSpec(v string) (toneSpec, error) {
 	}
 	t, err := domain.ParseTone(lv)
 	if err != nil {
-		return toneSpec{}, fmt.Errorf("%q: use a CTCSS frequency such as 131.8, dcs:023, ctcss, dcs, or none", v)
+		return toneSpec{}, domain.Invalidf("%q: use a CTCSS frequency such as 131.8, dcs:023, ctcss, dcs, or none", v)
 	}
 	return toneSpec{kind: t.Kind, exact: &t}, nil
 }
@@ -509,23 +509,23 @@ func toneMatcher(field, v string) (Matcher, error) {
 func nearMatcher(v string) (Matcher, error) {
 	parts := strings.Split(v, ",")
 	if len(parts) != 3 {
-		return nil, fmt.Errorf("use LAT,LON,KM, such as 34.64,-120.46,40km")
+		return nil, domain.Invalidf("use LAT,LON,KM, such as 34.64,-120.46,40km")
 	}
 	var nums [3]float64
 	for i, p := range parts {
 		p = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(p)), "km")
 		n, err := strconv.ParseFloat(p, 64)
 		if err != nil {
-			return nil, fmt.Errorf("%q is not a number; use LAT,LON,KM", parts[i])
+			return nil, domain.Invalidf("%q is not a number; use LAT,LON,KM", parts[i])
 		}
 		nums[i] = n
 	}
 	lat, lon, km := nums[0], nums[1], nums[2]
 	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
-		return nil, fmt.Errorf("latitude must be -90 to 90 and longitude -180 to 180")
+		return nil, domain.Invalidf("latitude must be -90 to 90 and longitude -180 to 180")
 	}
 	if km <= 0 {
-		return nil, fmt.Errorf("the distance must be positive")
+		return nil, domain.Invalidf("the distance must be positive")
 	}
 	return func(ch domain.Channel) bool {
 		l := ch.Location

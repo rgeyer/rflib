@@ -95,7 +95,7 @@ func NewID() (string, error) {
 func ParseFrequencyMHz(value string) (int64, error) {
 	hz, err := parseDecimalUnits(value, 6)
 	if err != nil || hz <= 0 {
-		return 0, fmt.Errorf("frequency must be a positive MHz value with at most 6 decimal places")
+		return 0, Invalidf("frequency must be a positive MHz value with at most 6 decimal places")
 	}
 	return hz, nil
 }
@@ -105,15 +105,15 @@ func FormatFrequencyMHz(hz int64) string { return formatDecimalUnits(hz, 6) }
 func parseDecimalUnits(value string, places int) (int64, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.HasPrefix(value, "-") || strings.HasPrefix(value, "+") {
-		return 0, fmt.Errorf("must be an unsigned decimal")
+		return 0, Invalidf("must be an unsigned decimal")
 	}
 	parts := strings.Split(value, ".")
 	if len(parts) > 2 || parts[0] == "" || len(parts) == 2 && len(parts[1]) > places {
-		return 0, fmt.Errorf("invalid decimal")
+		return 0, Invalidf("invalid decimal")
 	}
 	whole, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || whole < 0 {
-		return 0, fmt.Errorf("invalid whole number")
+		return 0, Invalidf("invalid whole number")
 	}
 	fraction := ""
 	if len(parts) == 2 {
@@ -121,7 +121,7 @@ func parseDecimalUnits(value string, places int) (int64, error) {
 	}
 	if fraction != "" {
 		if _, err := strconv.ParseUint(fraction, 10, 64); err != nil {
-			return 0, fmt.Errorf("invalid fractional number")
+			return 0, Invalidf("invalid fractional number")
 		}
 	}
 	for len(fraction) < places {
@@ -139,7 +139,7 @@ func parseDecimalUnits(value string, places int) (int64, error) {
 		scale *= 10
 	}
 	if whole > (int64(^uint64(0)>>1)-frac)/scale {
-		return 0, fmt.Errorf("number is too large")
+		return 0, Invalidf("number is too large")
 	}
 	return whole*scale + frac, nil
 }
@@ -161,28 +161,28 @@ func ParseTone(value string) (Tone, error) {
 	if strings.HasPrefix(value, "ctcss:") {
 		milliHz, err := parseDecimalUnits(strings.TrimPrefix(value, "ctcss:"), 3)
 		if err != nil || milliHz < 50_000 || milliHz > 300_000 {
-			return Tone{}, fmt.Errorf("CTCSS tone must be between 50 and 300 Hz with at most 3 decimal places")
+			return Tone{}, Invalidf("CTCSS tone must be between 50 and 300 Hz with at most 3 decimal places")
 		}
 		return Tone{Kind: ToneCTCSS, CTCSSMilliHz: &milliHz}, nil
 	}
 	if strings.HasPrefix(value, "dcs:") {
 		parts := strings.Split(strings.TrimPrefix(value, "dcs:"), ":")
 		if len(parts) > 2 || parts[0] == "" {
-			return Tone{}, fmt.Errorf("DCS tone must be dcs:<code> or dcs:<code>:inverted")
+			return Tone{}, Invalidf("DCS tone must be dcs:<code> or dcs:<code>:inverted")
 		}
 		// DCS codes are octal; keep the digits as written (023 stores as 23).
 		_, octErr := strconv.ParseUint(parts[0], 8, 16)
 		code, err := strconv.Atoi(parts[0])
 		if octErr != nil || err != nil || code < 1 || code > 777 {
-			return Tone{}, fmt.Errorf("DCS code must be an octal code between 001 and 777")
+			return Tone{}, Invalidf("DCS code must be an octal code between 001 and 777")
 		}
 		inverted := len(parts) == 2 && parts[1] == "inverted"
 		if len(parts) == 2 && !inverted {
-			return Tone{}, fmt.Errorf("DCS polarity must be inverted when specified")
+			return Tone{}, Invalidf("DCS polarity must be inverted when specified")
 		}
 		return Tone{Kind: ToneDCS, DCSCode: &code, Inverted: inverted}, nil
 	}
-	return Tone{}, fmt.Errorf("tone must be none, ctcss:<Hz>, dcs:<code>, or dcs:<code>:inverted")
+	return Tone{}, Invalidf("tone must be none, ctcss:<Hz>, dcs:<code>, or dcs:<code>:inverted")
 }
 
 func FormatTone(t Tone) string {
@@ -236,11 +236,11 @@ func NormalizeShortNames(name string, shortNames []string) []string {
 // All nil is no location.
 func NewLocation(lat, lon, radiusKM *float64) (*Location, error) {
 	if (lat == nil) != (lon == nil) {
-		return nil, fmt.Errorf("latitude and longitude must be given together")
+		return nil, Invalidf("latitude and longitude must be given together")
 	}
 	if lat == nil {
 		if radiusKM != nil {
-			return nil, fmt.Errorf("a radius needs a latitude and longitude")
+			return nil, Invalidf("a radius needs a latitude and longitude")
 		}
 		return nil, nil
 	}
@@ -250,39 +250,39 @@ func NewLocation(lat, lon, radiusKM *float64) (*Location, error) {
 
 func ValidateLocation(l Location) error {
 	if l.Latitude < -90 || l.Latitude > 90 || l.Longitude < -180 || l.Longitude > 180 {
-		return fmt.Errorf("coordinates are outside valid latitude/longitude bounds")
+		return Invalidf("coordinates are outside valid latitude/longitude bounds")
 	}
 	if l.RadiusKM != nil && *l.RadiusKM <= 0 {
-		return fmt.Errorf("radius must be positive")
+		return Invalidf("radius must be positive")
 	}
 	return nil
 }
 
 func ValidateChannel(c Channel) error {
 	if strings.TrimSpace(c.Name) == "" {
-		return fmt.Errorf("channel name is required")
+		return Invalidf("channel name is required")
 	}
 	if c.ReceiveHz <= 0 {
-		return fmt.Errorf("receive frequency is required")
+		return Invalidf("receive frequency is required")
 	}
 	if c.TransmitHz != nil && *c.TransmitHz <= 0 {
-		return fmt.Errorf("transmit frequency must be positive")
+		return Invalidf("transmit frequency must be positive")
 	}
 	c.Mode = strings.ToUpper(strings.TrimSpace(c.Mode))
 	if !slices.Contains(Modes, c.Mode) {
-		return fmt.Errorf("mode must be one of %s", strings.Join(Modes, ", "))
+		return Invalidf("mode must be one of %s", strings.Join(Modes, ", "))
 	}
 	if _, err := ParseService(string(c.Service)); err != nil {
 		return err
 	}
 	if c.ReceiveTone.Kind == "" || c.TransmitTone.Kind == "" {
-		return fmt.Errorf("receive and transmit tones are required; use none when unset")
+		return Invalidf("receive and transmit tones are required; use none when unset")
 	}
 	if _, err := ParsePowerIntent(string(c.Power)); err != nil {
 		return err
 	}
 	if c.ToneSquelch && c.ReceiveTone.Kind == ToneNone {
-		return fmt.Errorf("tone squelch requires a receive tone")
+		return Invalidf("tone squelch requires a receive tone")
 	}
 	if _, err := ParseStatus(string(c.Status)); err != nil {
 		return err

@@ -1,7 +1,6 @@
 package query
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -62,7 +61,7 @@ func bandMatcher(v string) (Matcher, error) {
 	}
 	i := slices.IndexFunc(Bands, func(b band) bool { return b.name == name })
 	if i < 0 {
-		return nil, fmt.Errorf("unknown band %q; use %s", v, strings.Join(BandNames(), ", "))
+		return nil, domain.Invalidf("unknown band %q; use %s", v, strings.Join(BandNames(), ", "))
 	}
 	b := Bands[i]
 	if b.channels != nil {

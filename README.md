@@ -538,10 +538,28 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 
 `import chirp` does the reverse. Memory locations aren't kept, unnamed memories are named after their frequency, and memories in modes the library doesn't support yet (digital modes such as DV, DMR, and P25) are reported as invalid rows. Pass `--service` to label everything you import.
 
+## HTTP API
+
+`rflib serve` offers everything above as a JSON API, for scripts and, later, the web interface.
+
+```sh
+./rflib serve                                    # http://127.0.0.1:8080/api/v1
+RFLIB_API_TOKEN=s3cret ./rflib serve --addr :8080
+curl -H "Authorization: Bearer s3cret" 'localhost:8080/api/v1/libraries/default/channels?q=band:2m%20is:repeater'
+```
+
+- **The description:** `GET /api/v1/openapi.yaml` is the OpenAPI document, which lists every endpoint and shape. Its source is `internal/api/openapi.yaml`, and the tests hold every route and response to it.
+- **Authentication:** with `$RFLIB_API_TOKEN` set, every request but `/health` and the document needs `Authorization: Bearer TOKEN`. Serving on anything but a loopback address requires a token.
+- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-delete`, `link`, and `copy`), `radios` (memories, channels, overrides, sources, sync, and export), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), `seeds/{list}/install`, and `feed`. `models`, `profiles`, `seeds`, and `tags` sit beside `libraries`.
+- **Values:** frequencies are exact integer Hz, and tones use the library's syntax (`ctcss:100.000`, `dcs:023`). Queries are the same as the CLI's, in a `q` parameter or a `query` field. Channel IDs can be shortened to a unique prefix.
+- **Changes:** `PATCH` changes only the fields given, and `null` clears `tx_hz` and `location`. Changes to the `shared` library need a `reason`.
+- **Errors** are `{"error": {"code", "message"}}`: 400 for a request to fix, 401 without a valid token, 403 for everyday changes to the shared library, 404, 409 for a name in use, and 500 for anything else (the detail goes to the server's log).
+- **The feed:** `GET /libraries/shared/feed?since=CURSOR` returns shared channels changed since a previous response's `cursor`. It's how a local copy will keep up with a hosted shared list.
+
 ## Development
 
 ```sh
 make check    # go vet, golangci-lint, and go test
 ```
 
-The CLI (`cmd/rflib`) parses flags and prints results. The operations themselves live in `internal/app`, which the coming web API shares. `internal/app` works on one library through the `store.Store` and `store.Library` interfaces (`internal/store`); `internal/store/sqlite` implements them. Any other backend must pass the contract tests in `internal/store/storetest`.
+The CLI (`cmd/rflib`) parses flags and prints results, and the HTTP API (`internal/api`) decodes requests and encodes responses. The operations themselves live in `internal/app`, which both share. Errors made by a request are `domain.ErrInvalid` (`domain.Invalidf`), which the API reports as 400; other failures are 500. `internal/app` works on one library through the `store.Store` and `store.Library` interfaces (`internal/store`); `internal/store/sqlite` implements them. Any other backend must pass the contract tests in `internal/store/storetest`.

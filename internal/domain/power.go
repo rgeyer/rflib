@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 )
@@ -27,7 +26,7 @@ func ParsePowerIntent(v string) (PowerIntent, error) {
 	if p == PowerUnset || slices.Contains(PowerIntents, p) {
 		return p, nil
 	}
-	return "", fmt.Errorf("unknown power %q; use low, medium, high, or max (or empty for none)", v)
+	return "", Invalidf("unknown power %q; use low, medium, high, or max (or empty for none)", v)
 }
 
 // PowerFromText reads power as other tools write it: intents and common

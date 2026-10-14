@@ -1,7 +1,6 @@
 package naming
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -22,7 +21,7 @@ func ParseDedupe(v string) (Dedupe, error) {
 	case DedupeNone, DedupeIndex, DedupeFreq:
 		return d, nil
 	}
-	return "", fmt.Errorf("unknown dedupe %q; use none, index, or freq", v)
+	return "", domain.Invalidf("unknown dedupe %q; use none, index, or freq", v)
 }
 
 // Apply fits every channel's name to the rules, then resolves names that

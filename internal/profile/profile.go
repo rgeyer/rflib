@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/naming"
 	"gopkg.in/yaml.v3"
 )
@@ -266,7 +267,7 @@ func Find(ref string) (Entry, error) {
 		names = append(names, e.Profile.Name)
 	}
 	slices.Sort(names)
-	return Entry{}, fmt.Errorf("unknown profile %q; available: %s", ref, strings.Join(names, ", "))
+	return Entry{}, domain.Invalidf("unknown profile %q; available: %s", ref, strings.Join(names, ", "))
 }
 
 // BuiltinYAML returns a built-in profile's source, for `profile show`.

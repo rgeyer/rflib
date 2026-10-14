@@ -43,25 +43,25 @@ type GroupRecord struct {
 type ChannelRecord struct {
 	ID string `json:"id"`
 	// GroupID is the channel's group in a version 1 backup.
-	GroupID      *string   `json:"group_id,omitempty"`
-	Name         string    `json:"name"`
-	ReceiveHz    int64     `json:"receive_hz"`
-	TransmitHz   *int64    `json:"transmit_hz,omitempty"`
-	Mode         string    `json:"mode"`
-	Service      string    `json:"service,omitempty"`
-	RXOnly       bool      `json:"rx_only,omitempty"`
-	ReceiveTone  string    `json:"receive_tone"`
-	TransmitTone string    `json:"transmit_tone"`
-	ToneSquelch  bool      `json:"tone_squelch"`
-	Power        string    `json:"power"`
-	Bandwidth    string    `json:"bandwidth"`
-	Skip         bool      `json:"skip"`
-	Tags         []string  `json:"tags"`
-	ShortNames   []string  `json:"short_names,omitempty"`
-	Notes        string    `json:"notes"`
-	Latitude     *float64  `json:"latitude,omitempty"`
-	Longitude    *float64  `json:"longitude,omitempty"`
-	RadiusKM     *float64  `json:"radius_km,omitempty"`
+	GroupID      *string  `json:"group_id,omitempty"`
+	Name         string   `json:"name"`
+	ReceiveHz    int64    `json:"receive_hz"`
+	TransmitHz   *int64   `json:"transmit_hz,omitempty"`
+	Mode         string   `json:"mode"`
+	Service      string   `json:"service,omitempty"`
+	RXOnly       bool     `json:"rx_only,omitempty"`
+	ReceiveTone  string   `json:"receive_tone"`
+	TransmitTone string   `json:"transmit_tone"`
+	ToneSquelch  bool     `json:"tone_squelch"`
+	Power        string   `json:"power"`
+	Bandwidth    string   `json:"bandwidth"`
+	Skip         bool     `json:"skip"`
+	Tags         []string `json:"tags"`
+	ShortNames   []string `json:"short_names,omitempty"`
+	Notes        string   `json:"notes"`
+	Latitude     *float64 `json:"latitude,omitempty"`
+	Longitude    *float64 `json:"longitude,omitempty"`
+	RadiusKM     *float64 `json:"radius_km,omitempty"`
 	// Status and the fields after it are a shared channel's (version 3).
 	Status     string `json:"status,omitempty"`
 	StatusNote string `json:"status_note,omitempty"`

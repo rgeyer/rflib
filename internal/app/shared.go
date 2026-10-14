@@ -53,7 +53,7 @@ func LinkedEdit(old, c domain.Channel) error {
 	a.Tags, a.Notes, b.Tags, b.Notes = nil, "", nil, ""
 	if changes := domain.SharedChanges(a, b); len(changes) > 0 {
 		field, _, _ := strings.Cut(changes[0], ":")
-		return fmt.Errorf("%s is linked to a shared channel, so its %s can't change here; make it a private copy with rflib channel copy --id %s", old.Name, field, old.ID)
+		return domain.Invalidf("%s is linked to a shared channel, so its %s can't change here; make it a private copy with rflib channel copy --id %s", old.Name, field, old.ID)
 	}
 	return nil
 }
@@ -64,7 +64,7 @@ func localQuery(n query.Node) error {
 	if scope, _, err := query.SplitScope(n); err != nil || scope != "shared" {
 		return err
 	}
-	return errors.New("in:shared finds shared channels to link; link them first (rflib channel link), then use them here")
+	return domain.Invalidf("in:shared finds shared channels to link; link them first (rflib channel link), then use them here")
 }
 
 // --- linking ---
@@ -430,7 +430,7 @@ func (s *Service) History(ctx context.Context, ref string) (domain.Channel, []do
 // --- maintainer operations on the shared library ---
 
 // errNotShared is a maintainer operation run on another library.
-var errNotShared = errors.New("this changes the shared library; run it there (rflib shared ...)")
+var errNotShared = domain.Invalidf("this changes the shared library; run it there (rflib shared ...)")
 
 // UpdateShared saves a change to a shared channel, recording reason in its
 // revision. Its tags must be curated ones.
@@ -467,17 +467,17 @@ func (s *Service) SetStatus(ctx context.Context, ref string, ch StatusChange, re
 		return c, err
 	}
 	if ch.BackOn != nil && ch.Status != domain.StatusOffAir {
-		return c, fmt.Errorf("an expected-back date is only for off-air channels")
+		return c, domain.Invalidf("an expected-back date is only for off-air channels")
 	}
 	if ch.ReplacedBy != "" {
 		if ch.Status != domain.StatusRetired {
-			return c, fmt.Errorf("a replacement is only for retired channels")
+			return c, domain.Invalidf("a replacement is only for retired channels")
 		}
 		if ch.ReplacedBy, err = s.ChannelID(ctx, ch.ReplacedBy); err != nil {
 			return c, fmt.Errorf("replacement: %w", err)
 		}
 		if ch.ReplacedBy == c.ID {
-			return c, fmt.Errorf("a channel can't replace itself")
+			return c, domain.Invalidf("a channel can't replace itself")
 		}
 	}
 	c.Status, c.StatusNote, c.BackOn, c.ReplacedBy = ch.Status, ch.Note, ch.BackOn, ch.ReplacedBy

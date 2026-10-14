@@ -710,12 +710,30 @@ func testSharedRevisions(t *testing.T, s store.Store) {
 	if got.BackOn == nil || !got.BackOn.Equal(back) {
 		t.Errorf("back on = %v", got.BackOn)
 	}
+	// The feed returns what changed after a time, and a cursor for next time.
+	all, cursor, err := shared.ChangedSince(ctx(), time.Time{})
+	if err != nil || len(all) != 1 || cursor.IsZero() {
+		t.Fatalf("changed since the start = %+v, %v, %v", all, cursor, err)
+	}
+	if none, next, err := shared.ChangedSince(ctx(), cursor); err != nil || len(none) != 0 || !next.Equal(cursor) {
+		t.Errorf("changed since the cursor = %+v, %v, %v", none, next, err)
+	}
+	if _, err := shared.UpdateChannel(ctx(), func() domain.Channel { c.StatusNote = "mast work"; return c }()); err != nil {
+		t.Fatal(err)
+	}
+	if again, next, _ := shared.ChangedSince(ctx(), cursor); len(again) != 1 || !next.After(cursor) {
+		t.Errorf("after another change = %+v, %v", again, next)
+	}
+	if mineChanged, _, _ := mine.ChangedSince(ctx(), time.Time{}); len(mineChanged) != 0 {
+		t.Errorf("a private library has changes: %+v", mineChanged)
+	}
+
 	// A link reads its shared channel's history; a private channel has none.
 	link, err := mine.CreateChannel(ctx(), domain.Channel{Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none, Link: &domain.Link{SharedID: c.ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if revs, _ := mine.ChannelRevisions(ctx(), link.ID); len(revs) != 2 {
+	if revs, _ := mine.ChannelRevisions(ctx(), link.ID); len(revs) != 3 {
 		t.Errorf("link revisions = %+v", revs)
 	}
 	if revs, err := mine.ChannelRevisions(ctx(), channel(t, mine, "Private", 1).ID); err != nil || len(revs) != 0 {

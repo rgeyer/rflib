@@ -2,7 +2,6 @@ package domain
 
 import (
 	"cmp"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -50,13 +49,13 @@ var SortOrders = []string{"name", "freq"}
 
 func ValidateRadioSource(src RadioSource) error {
 	if strings.TrimSpace(src.Query) == "" {
-		return fmt.Errorf("a source needs a query")
+		return Invalidf("a source needs a query")
 	}
 	if !slices.Contains(SortOrders, src.Sort) {
 		return sortError(src.Sort)
 	}
 	if src.SectionStart != nil && *src.SectionStart < 0 {
-		return fmt.Errorf("section start must not be negative")
+		return Invalidf("section start must not be negative")
 	}
 	return nil
 }
@@ -91,10 +90,10 @@ func ValidSearchName(name string) bool {
 
 func ValidateSavedSearch(s SavedSearch) error {
 	if !ValidSearchName(s.Name) {
-		return fmt.Errorf("search name %q must be lower-case letters, digits, -, _, and ., starting with a letter or digit", s.Name)
+		return Invalidf("search name %q must be lower-case letters, digits, -, _, and ., starting with a letter or digit", s.Name)
 	}
 	if strings.TrimSpace(s.Query) == "" {
-		return fmt.Errorf("a saved search needs a query")
+		return Invalidf("a saved search needs a query")
 	}
 	return nil
 }
@@ -125,7 +124,7 @@ func MemoryNumbers(entries []RadioEntry, first int) ([]int, error) {
 	for i, e := range entries {
 		if e.SectionStart != nil {
 			if *e.SectionStart < next {
-				return nil, fmt.Errorf("%q starts a section at memory %d, but the channels before it already reach memory %d", e.Channel.Name, *e.SectionStart, next-1)
+				return nil, Invalidf("%q starts a section at memory %d, but the channels before it already reach memory %d", e.Channel.Name, *e.SectionStart, next-1)
 			}
 			next = *e.SectionStart
 		}
@@ -137,10 +136,10 @@ func MemoryNumbers(entries []RadioEntry, first int) ([]int, error) {
 
 func ValidateRadio(r Radio) error {
 	if strings.TrimSpace(r.Name) == "" {
-		return fmt.Errorf("radio name is required")
+		return Invalidf("radio name is required")
 	}
 	if strings.TrimSpace(r.Model) == "" {
-		return fmt.Errorf("radio model is required")
+		return Invalidf("radio model is required")
 	}
 	if _, err := ParsePowerIntent(string(r.DefaultPower)); err != nil {
 		return err
@@ -148,7 +147,7 @@ func ValidateRadio(r Radio) error {
 	switch r.Dedupe {
 	case "", "none", "index", "freq":
 	default:
-		return fmt.Errorf("unknown dedupe %q; use none, index, or freq", r.Dedupe)
+		return Invalidf("unknown dedupe %q; use none, index, or freq", r.Dedupe)
 	}
 	return nil
 }
@@ -169,9 +168,9 @@ func SortChannels(cs []Channel, by string) error {
 
 func sortError(by string) error {
 	if by == "group" {
-		return fmt.Errorf("sorting by group is gone with groups; use name or freq")
+		return Invalidf("sorting by group is gone with groups; use name or freq")
 	}
-	return fmt.Errorf("unknown sort %q; use name or freq", by)
+	return Invalidf("unknown sort %q; use name or freq", by)
 }
 
 // CompareChannels orders channels by name (see CompareNames), then by

@@ -21,7 +21,7 @@ func ParseJSON(r io.Reader) (Batch, error) {
 		return b, fmt.Errorf("read JSON backup: %w", err)
 	}
 	if doc.Format != export.DocumentFormat || doc.Version < 1 || doc.Version > export.DocumentVersion {
-		return b, fmt.Errorf("unsupported backup: format %q version %d (want %q version 1 to %d)", doc.Format, doc.Version, export.DocumentFormat, export.DocumentVersion)
+		return b, domain.Invalidf("unsupported backup: format %q version %d (want %q version 1 to %d)", doc.Format, doc.Version, export.DocumentFormat, export.DocumentVersion)
 	}
 	// Version 1 backups have groups, which become tags and locations.
 	groups := make(map[string]export.GroupRecord, len(doc.Groups))

@@ -3,7 +3,6 @@ package importer
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/store"
@@ -25,7 +24,7 @@ func ParseDuplicatePolicy(v string) (DuplicatePolicy, error) {
 	case SkipDuplicates, UpdateDuplicates, CreateDuplicates:
 		return p, nil
 	}
-	return "", fmt.Errorf("unknown duplicate policy %q; use skip, update, or create", v)
+	return "", domain.Invalidf("unknown duplicate policy %q; use skip, update, or create", v)
 }
 
 // MatchRule chooses which fields make two channels duplicates.
@@ -45,7 +44,7 @@ func ParseMatchRule(v string) (MatchRule, error) {
 	case MatchExact, MatchProgrammed:
 		return m, nil
 	}
-	return "", fmt.Errorf("unknown match rule %q; use exact or programmed", v)
+	return "", domain.Invalidf("unknown match rule %q; use exact or programmed", v)
 }
 
 type Options struct {
@@ -196,6 +195,6 @@ func (a *applier) channel(r Record) error {
 
 func (a *applier) warn(row int, c domain.Channel) {
 	for _, w := range domain.CheckBandPlan(c) {
-		a.sum.Warnings = append(a.sum.Warnings, RowError{Row: row, Err: fmt.Errorf("%s: %s", c.Name, w)})
+		a.sum.Warnings = append(a.sum.Warnings, RowError{Row: row, Err: domain.Invalidf("%s: %s", c.Name, w)})
 	}
 }
