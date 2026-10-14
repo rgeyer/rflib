@@ -125,10 +125,9 @@ func newSearchAddCommand() *cobra.Command {
 
 func newSearchListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list", Short: "List saved searches and how many channels each matches", Args: cobra.NoArgs}
-	formatFlag(cmd)
+	searchListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		format, err := getFormat(cmd)
-		if err != nil {
+		if err := searchListing.check(cmd); err != nil {
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
@@ -136,31 +135,27 @@ func newSearchListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if format == "json" {
-				type row struct {
-					ID      string `json:"id"`
-					Name    string `json:"name"`
-					Query   string `json:"query"`
-					Matches int    `json:"matches"`
-					Error   string `json:"error,omitempty"`
-					Notes   string `json:"notes"`
-				}
-				rows := make([]row, len(xs))
-				for i, x := range xs {
-					rows[i] = row{ID: x.ID, Name: x.Name, Query: x.Query, Matches: x.Matches, Notes: x.Notes}
-					if x.Err != nil {
-						rows[i].Error = x.Err.Error()
-					}
-				}
-				return writeJSON(cmd.OutOrStdout(), rows)
-			}
-			for _, x := range xs {
-				fmt.Fprintf(cmd.OutOrStdout(), "@%s\t%s\t%s\n", x.Name, matchesText(x), x.Query)
-			}
-			return nil
+			return searchListing.write(cmd, xs)
 		})
 	}
 	return cmd
+}
+
+var searchListing = listing[app.SearchSummary]{
+	fields: []field[app.SearchSummary]{
+		{name: "name", text: func(x app.SearchSummary) string { return "@" + x.Name }, json: func(x app.SearchSummary) any { return x.Name }},
+		{name: "matches", text: matchesText, json: func(x app.SearchSummary) any { return x.Matches }},
+		{name: "query", text: func(x app.SearchSummary) string { return x.Query }},
+		{name: "error", text: func(x app.SearchSummary) string {
+			if x.Err == nil {
+				return ""
+			}
+			return x.Err.Error()
+		}},
+		{name: "notes", text: func(x app.SearchSummary) string { return x.Notes }},
+		{name: "id", id: true, text: func(x app.SearchSummary) string { return x.ID }},
+	},
+	defaults: []string{"name", "matches", "query"},
 }
 
 func matchesText(x app.SearchSummary) string {

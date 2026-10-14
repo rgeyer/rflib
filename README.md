@@ -81,14 +81,43 @@ Tone syntax is normalized and exporter-neutral:
 - **DCS normal:** `dcs:023`
 - **DCS inverted:** `dcs:023:inverted`
 
-Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--group`, or `--tags` clears that field, and boolean flags can be turned off explicitly (`--skip=false`).
+Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--group`, or `--tags` clears that field, and boolean flags can be turned off explicitly (`--skip=false`). `--tags +x,-y` adds `x` and removes `y`, leaving other tags alone; `--tags x,y` replaces them.
 
 ```sh
 ./rflib channel update --id <channel-id> --power low
 ./rflib channel delete --id <channel-id> --yes
 ```
 
-`list` and `show` commands accept `--format json` for scripting.
+### Changing many channels at once
+
+`channel update`, `channel delete`, `radio channels remove`, and `radio channels set` take `--query` (`-q`) as well as `--id`. With both, a channel must match both. `--dry-run` lists the channels that would change, without changing them.
+
+```sh
+./rflib channel update -q band:noaa --tags +weather --skip
+./rflib channel update -q 'service:none freq:150..174' --service public_safety --dry-run
+./rflib channel delete -q tag:old --yes
+./rflib radio channels set HT -q band:gmrs --power low
+./rflib radio channels remove HT -q service:cb --yes    # or --all
+```
+
+- **Safe fields only:** updating many channels changes only `--tags`, `--skip`, `--power`, `--service`, and `--rx-only`. Frequencies, tones, mode, and names change one channel at a time, by `--id`. Likewise, `radio channels set` sets `--name` and `--section-start` one channel at a time.
+- **Confirmation:** deleting channels always needs `--yes`, and so does removing channels from a radio by query or `--all`.
+- **One transaction:** a bulk update or delete applies to every channel or to none.
+
+### Output and pipes
+
+List commands print a table. On a terminal it has aligned columns, a header, and IDs shortened to 8 characters. Piped, it prints plain tab-separated rows with no header and full IDs, so scripts get a stable format.
+
+- **`--fields`** picks and orders the columns, such as `--fields name,rx,tone`. Each command's `--help` lists its fields. They are named like query fields, so a value can be copied into a search.
+- **`--format tsv|csv|json`** chooses another format, and `--no-header` drops the header row. With `--format json` and no `--fields`, channel and group lists write each full record, as `show --format json` does; other lists write every field.
+- **IDs:** any unique prefix of an ID, 4 characters or more, works wherever an ID does.
+- **`--id -`** reads IDs from stdin, one per line, taking the first column. A list pipes straight into another command:
+
+  ```sh
+  ./rflib channel list band:2m is:repeater | ./rflib radio channels add HT --id -
+  ```
+
+- **stdout is data only.** Status messages ("Added 7 channels to HT"), warnings, and errors go to stderr. Commands that create something print its ID on stdout.
 
 `--short-names` gives a channel your own abbreviations for radios with narrow displays, such as `--short-names "SB Sheriff Disp,SBSO Disp"`. See [Names on radio displays](#names-on-radio-displays).
 
@@ -216,7 +245,7 @@ A radio is one of your own radios: a model, the channels programmed into it in y
 
 ```sh
 ./rflib radio channels move Truck --id <id> --before <other-id>   # or --after, --to N, --top, --bottom
-./rflib radio channels remove Truck --id <id>
+./rflib radio channels remove Truck --id <id>    # or -q QUERY --yes, or --all --yes
 ```
 
 Memory numbers follow the list from the model's first memory. To lay a radio out in banks, start a section at a chosen memory number; the channels after it continue from there:
@@ -229,7 +258,7 @@ A section start can't go backwards, and the list must fit the model's memories. 
 
 ### Per-radio settings
 
-`radio channels set` overrides a channel on one radio only. An empty value removes the override, so the channel's own setting applies again.
+`radio channels set` overrides a channel on one radio only. An empty value removes the override, so the channel's own setting applies again. `--power` and `--scan` can be set on many channels at once with `-q` (see [Changing many channels at once](#changing-many-channels-at-once)).
 
 | Flag | Overrides |
 |---|---|
@@ -238,7 +267,7 @@ A section start can't go backwards, and the list must fit the model's memories. 
 | `--scan yes\|no\|default` | Whether this radio scans the channel. The channel's `--skip` is the default. |
 | `--section-start N` | Starts a section at memory N |
 
-`radio channels list Truck` shows every memory as it will be programmed: number, name on the radio and how it was fitted, power level, scan, and frequency. `§` marks a section start, and `*` marks a radio override. Warnings, such as a power cap or a frequency outside the radio's bands, go to stderr, and `radio export` repeats them.
+`radio channels list Truck` shows every memory as it will be programmed: number, name on the radio and how it was fitted, power level, scan, frequency, duplex and offset, tone, and the library channel's name when the radio's differs. `§` marks a section start, and `*` marks a radio override. Tones read as repeater lists write them: `T131.8` sends a tone, `TSQL 131.8` also squelches on it, and `T131.8 R88.5` uses different ones; DCS codes read `D023N` or `D023I`. Warnings, such as a power cap or a frequency outside the radio's bands, go to stderr, and `radio export` repeats them.
 
 Each radio has its own `--dedupe` (`none`, `index`, or `freq`) for duplicate names; see [Names on radio displays](#names-on-radio-displays).
 

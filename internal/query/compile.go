@@ -213,7 +213,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		if !slices.Contains([]string{"+", "-", "split", "simplex", "off"}, want) {
 			return nil, fmt.Errorf("use +, -, split, simplex, or off")
 		}
-		return func(ch domain.Channel) bool { return duplex(ch) == want }, nil
+		return func(ch domain.Channel) bool { return domain.Duplex(ch) == want }, nil
 	case "tone", "txtone", "rxtone":
 		return toneMatcher(t.Field, v)
 	case "mode":
@@ -391,22 +391,6 @@ func freqMatcher(field string, ok func(int64) bool) Matcher {
 		}
 		return ok(ch.ReceiveHz) || tx
 	}
-}
-
-// duplex classifies a channel's stored frequencies the way CHIRP does,
-// whether or not it is receive-only (see is:rxonly).
-func duplex(ch domain.Channel) string {
-	switch tx := ch.TransmitHz; {
-	case tx == nil:
-		return "off"
-	case *tx == ch.ReceiveHz:
-		return "simplex"
-	case max(*tx-ch.ReceiveHz, ch.ReceiveHz-*tx) >= domain.SplitThresholdHz:
-		return "split"
-	case *tx > ch.ReceiveHz:
-		return "+"
-	}
-	return "-"
 }
 
 // IsValues and HasValues are the words is: and has: take.

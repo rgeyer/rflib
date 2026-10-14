@@ -97,18 +97,24 @@ func checkFormat(format string) error {
 	return nil
 }
 
-func writeGroupList(out io.Writer, groups []domain.Group, format string) error {
-	if format == "json" {
-		items := make([]groupOut, len(groups))
-		for i, g := range groups {
+var groupListing = listing[domain.Group]{
+	fields: []field[domain.Group]{
+		{name: "id", id: true, text: func(g domain.Group) string { return g.ID }},
+		{name: "name", text: func(g domain.Group) string { return g.Name }},
+		{name: "coordinates", text: formatCoordinates},
+		{name: "radius_km", text: func(g domain.Group) string { return strings.TrimSuffix(optionalKM(g.RadiusKM), " km") }, json: func(g domain.Group) any { return g.RadiusKM }},
+		{name: "power", text: func(g domain.Group) string { return string(g.Power) }},
+		{name: "description", text: func(g domain.Group) string { return g.Description }},
+		{name: "notes", text: func(g domain.Group) string { return g.Notes }},
+	},
+	defaults: []string{"id", "name", "coordinates", "radius_km", "power"},
+	full: func(gs []domain.Group) any {
+		items := make([]groupOut, len(gs))
+		for i, g := range gs {
 			items[i] = newGroupOut(g)
 		}
-		return writeJSON(out, items)
-	}
-	for _, g := range groups {
-		fmt.Fprintf(out, "%s\t%s\t%s\n", g.ID, g.Name, formatCoordinates(g))
-	}
-	return nil
+		return items
+	},
 }
 
 func writeGroup(out io.Writer, g domain.Group, format string) error {
@@ -116,20 +122,6 @@ func writeGroup(out io.Writer, g domain.Group, format string) error {
 		return writeJSON(out, newGroupOut(g))
 	}
 	fmt.Fprintf(out, "%s\nname: %s\ncoordinates: %s\nradius: %s\npower: %s\ndescription: %s\nnotes: %s\n", g.ID, g.Name, formatCoordinates(g), optionalKM(g.RadiusKM), powerName(g.Power), g.Description, g.Notes)
-	return nil
-}
-
-func writeChannelList(out io.Writer, channels []domain.Channel, format string) error {
-	if format == "json" {
-		items := make([]channelOut, len(channels))
-		for i, c := range channels {
-			items[i] = newChannelOut(c)
-		}
-		return writeJSON(out, items)
-	}
-	for _, c := range channels {
-		fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", c.ID, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), groupName(c))
-	}
 	return nil
 }
 

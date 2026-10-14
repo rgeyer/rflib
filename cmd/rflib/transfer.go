@@ -327,7 +327,7 @@ func applyImport(cmd *cobra.Command, a *app.Service, batch importer.Batch, opts 
 	for _, w := range sum.Warnings {
 		fmt.Fprintln(cmd.ErrOrStderr(), "warning", w)
 	}
-	printSummary(cmd.OutOrStdout(), sum, invalid, opts.DryRun)
+	printSummary(cmd.ErrOrStderr(), sum, invalid, opts.DryRun)
 	return nil
 }
 

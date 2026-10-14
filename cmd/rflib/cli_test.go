@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,9 +24,24 @@ func newCLI(t *testing.T) *cli {
 
 // exec runs rflib with --db prepended and returns stdout, stderr, and error.
 func (c *cli) exec(args ...string) (string, string, error) {
+	return c.execIn("", args...)
+}
+
+// execIn is exec with stdin.
+func (c *cli) execIn(stdin string, args ...string) (string, string, error) {
 	var out, errOut bytes.Buffer
-	err := run(append([]string{"--db", c.db}, args...), &out, &errOut)
+	err := run(append([]string{"--db", c.db}, args...), strings.NewReader(stdin), &out, &errOut)
 	return out.String(), errOut.String(), err
+}
+
+// status runs rflib and returns its stderr, where status messages go.
+func (c *cli) status(args ...string) string {
+	c.t.Helper()
+	_, errOut, err := c.exec(args...)
+	if err != nil {
+		c.t.Fatalf("rflib %s: %v", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(errOut)
 }
 
 func (c *cli) ok(args ...string) string {
@@ -175,7 +191,7 @@ func TestErrors(t *testing.T) {
 
 func TestMissingLibraryIsNotCreated(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent.db")
-	err := run([]string{"--db", path, "group", "list"}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := run([]string{"--db", path, "group", "list"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "run rflib init") {
 		t.Fatalf("err = %v", err)
 	}
@@ -187,7 +203,7 @@ func TestMissingLibraryIsNotCreated(t *testing.T) {
 func TestDBPathFromEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("RFLIB_DB", filepath.Join(dir, "env.db"))
-	if err := run([]string{"init"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := run([]string{"init"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "env.db")); err != nil {
@@ -196,7 +212,7 @@ func TestDBPathFromEnvironment(t *testing.T) {
 
 	t.Setenv("RFLIB_DB", "")
 	t.Setenv("XDG_DATA_HOME", dir)
-	if err := run([]string{"init"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := run([]string{"init"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "rflib", "library.db")); err != nil {
@@ -225,7 +241,7 @@ func TestImportCSV(t *testing.T) {
 		t.Fatalf("aborted import wrote channels: %q", out)
 	}
 
-	out := c.ok("import", "csv", file, "--skip-invalid", "--dry-run")
+	out := c.status("import", "csv", file, "--skip-invalid", "--dry-run")
 	if !strings.Contains(out, "Dry run") || !strings.Contains(out, "created 1") || !strings.Contains(out, "New groups: Metro") {
 		t.Fatalf("dry run output = %q", out)
 	}
@@ -233,7 +249,7 @@ func TestImportCSV(t *testing.T) {
 		t.Fatalf("dry run created groups: %q", got)
 	}
 
-	out = c.ok("import", "csv", file, "--skip-invalid", "--tags", "imported")
+	out = c.status("import", "csv", file, "--skip-invalid", "--tags", "imported")
 	if !strings.Contains(out, "created 1, updated 0, skipped 0 duplicates, skipped 1 invalid") {
 		t.Fatalf("import output = %q", out)
 	}
@@ -261,7 +277,7 @@ func TestExportJSONFiltersGroups(t *testing.T) {
 	}
 
 	restored := newCLI(t)
-	out := restored.ok("import", "json", writeFile(t, all))
+	out := restored.status("import", "json", writeFile(t, all))
 	if !strings.Contains(out, "created 1") {
 		t.Fatalf("restore output = %q", out)
 	}
@@ -315,10 +331,10 @@ func TestImportCHIRP(t *testing.T) {
 	c := newCLI(t)
 	file := writeFile(t, "Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment,URCALL,RPT1CALL,RPT2CALL,DVCODE\r\n"+
 		"1,Metro,146.940000,-,0.600000,TSQL,100.0,100.0,023,NN,023,Tone->Tone,FM,5.00,,50W,,,,,\r\n")
-	if out := c.ok("import", "chirp", file, "--tags", "chirp"); !strings.Contains(out, "created 1") {
+	if out := c.status("import", "chirp", file, "--tags", "chirp"); !strings.Contains(out, "created 1") {
 		t.Fatalf("import output = %q", out)
 	}
-	if out := c.ok("import", "chirp", file); !strings.Contains(out, "skipped 1 duplicate") {
+	if out := c.status("import", "chirp", file); !strings.Contains(out, "skipped 1 duplicate") {
 		t.Fatalf("re-import output = %q", out)
 	}
 	id := strings.Fields(c.ok("channel", "list", "--tag", "chirp"))[0]
@@ -330,14 +346,14 @@ func TestImportCHIRP(t *testing.T) {
 
 func TestSeedInstallIsIdempotent(t *testing.T) {
 	c := newCLI(t)
-	if out := c.ok("seed", "list"); !strings.Contains(out, "us-gmrs\t30 channels") {
+	if out := c.ok("seed", "list"); !strings.Contains(out, "us-gmrs\t30\t") {
 		t.Fatalf("seed list = %q", out)
 	}
-	out := c.ok("seed", "install", "us-gmrs", "us-noaa")
+	out := c.status("seed", "install", "us-gmrs", "us-noaa")
 	if !strings.Contains(out, "us-gmrs: created 30") || !strings.Contains(out, "us-noaa: created 7") {
 		t.Fatalf("first install = %q", out)
 	}
-	out = c.ok("seed", "install", "us-gmrs", "us-noaa")
+	out = c.status("seed", "install", "us-gmrs", "us-noaa")
 	if !strings.Contains(out, "us-gmrs: created 0, updated 0, skipped 30 duplicates") || !strings.Contains(out, "us-noaa: created 0") {
 		t.Fatalf("second install = %q", out)
 	}
@@ -389,7 +405,7 @@ func TestImportWithService(t *testing.T) {
 func TestProfileCommands(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	c := newCLI(t)
-	if out := c.ok("profile", "list"); !strings.Contains(out, "yaesu-ftm150\t") || !strings.Contains(out, "(built-in)") {
+	if out := c.ok("profile", "list"); !strings.Contains(out, "yaesu-ftm150\t") || !strings.Contains(out, "\tbuilt-in") {
 		t.Fatalf("profile list = %q", out)
 	}
 	if out := c.ok("profile", "show", "yaesu-ftm6000"); !strings.Contains(out, "max_name_length: 6") {
@@ -415,7 +431,7 @@ func TestProfileCommands(t *testing.T) {
 	}
 
 	other := newCLI(t)
-	if got := other.ok("import", "profile", "yaesu-ftm6000", writeFile(t, out)); !strings.Contains(got, "created 1") {
+	if got := other.status("import", "profile", "yaesu-ftm6000", writeFile(t, out)); !strings.Contains(got, "created 1") {
 		t.Fatalf("import = %q", got)
 	}
 	if got := other.ok("channel", "list"); !strings.Contains(got, "MtrRpt\t146.940000") {
@@ -486,11 +502,11 @@ func TestRadioWorkflow(t *testing.T) {
 	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g", "--default-power", "high")
 	c.ok("radio", "sources", "add", "HT", "service:noaa")
 
-	if out := c.ok("radio", "channels", "add", "HT", "--tag", "repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
+	if out := c.status("radio", "channels", "add", "HT", "--tag", "repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
 		t.Fatalf("add by filter = %q", out)
 	}
 	c.ok("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]+","+ids["GMRS 8"])
-	if out := c.ok("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]); out != "Added 0 channels to HT" {
+	if out := c.status("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]); out != "Added 0 channels to HT" {
 		t.Fatalf("re-adding = %q", out)
 	}
 
@@ -509,9 +525,9 @@ func TestRadioWorkflow(t *testing.T) {
 		t.Fatalf("listing:\n%s", out)
 	}
 	for _, want := range []string{
-		"0\tGMRS 1\tfits\tHigh\tscan\t462.562500\tGMRS 1\t",  // capped at 5 W: High (4 W) is fine
-		"1\tGMRS15R\tshortened\tHigh\tscan\t462.550000",      // 7 characters
-		"§20\tKIDS*\tfits\tLow\tskip*\t467.562500\tGMRS 8\t", // 0.5 W cap: lowest level, warned
+		"0\tGMRS 1\tfits\tHigh\tscan\t462.562500\tsimplex\t\t\t\t" + ids["GMRS 1"],  // capped at 5 W: High (4 W) is fine
+		"1\tGMRS15R\tshortened\tHigh\tscan\t462.550000\t+\t5.000000\t\tGMRS 15R\t", // 7 characters
+		"§20\tKIDS*\tfits\tLow\tskip*\t467.562500\tsimplex\t\t\tGMRS 8\t",          // 0.5 W cap: lowest level, warned
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("listing missing %q:\n%s", want, out)
@@ -524,10 +540,10 @@ func TestRadioWorkflow(t *testing.T) {
 	if got := c.ok("radio", "sync", "HT", "--dry-run"); strings.Count(got, "would add") != 7 {
 		t.Fatalf("sync dry run = %q", got)
 	}
-	if got := c.ok("radio", "sync", "HT"); !strings.HasSuffix(got, "Added 7 channels to HT") {
+	if got := c.status("radio", "sync", "HT"); !strings.HasSuffix(got, "Added 7 channels to HT") {
 		t.Fatalf("sync = %q", got)
 	}
-	if got := c.ok("radio", "sync", "HT"); got != "Added 0 channels to HT" {
+	if got := c.status("radio", "sync", "HT"); got != "Added 0 channels to HT" {
 		t.Fatalf("second sync = %q", got)
 	}
 
@@ -540,7 +556,7 @@ func TestRadioWorkflow(t *testing.T) {
 			t.Errorf("CHIRP export missing %q:\n%s", want, csv)
 		}
 	}
-	if !strings.Contains(c.ok("radio", "list"), "HT\tradioddity-uv5g\t17 channels") {
+	if !strings.Contains(c.ok("radio", "list"), "HT\tradioddity-uv5g\t17\thigh") {
 		t.Errorf("radio list = %q", c.ok("radio", "list"))
 	}
 
@@ -564,7 +580,7 @@ func TestRadioMoveBeforeAfter(t *testing.T) {
 	c.ok("radio", "channels", "add", "Truck", "--id", strings.Join(ids, ","))
 	order := func() string {
 		var names []string
-		for _, l := range strings.Split(c.ok("radio", "channels", "list", "Truck", "--format", "json"), "\"channel_name\": \"")[1:] {
+		for _, l := range strings.Split(c.ok("radio", "channels", "list", "Truck", "--format", "json"), "\"channel\": \"")[1:] {
 			names = append(names, l[:1])
 		}
 		return strings.Join(names, "")
@@ -660,7 +676,7 @@ func TestRadioSources(t *testing.T) {
 	c.fails("unknown sort", "radio", "sources", "add", "HT", "tag:x", "--sort", "size")
 	// Make GMRS first: it claims its channels first and goes at the top.
 	c.ok("radio", "sources", "move", "HT", "2", "--to", "1")
-	if got := c.ok("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (band:gmrs -is:repeater): added 22") || !strings.HasSuffix(got, "Added 29 channels to HT") {
+	if got := c.status("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (band:gmrs -is:repeater): added 22") || !strings.HasSuffix(got, "Added 29 channels to HT") {
 		t.Fatalf("sync = %q", got)
 	}
 	// A hand-added channel goes at the end and stays there.
@@ -673,9 +689,9 @@ func TestRadioSources(t *testing.T) {
 	type row struct {
 		Memory       int    `json:"memory"`
 		SectionStart bool   `json:"section_start"`
-		ChannelID    string `json:"channel_id"`
-		ChannelName  string `json:"channel_name"`
-		ReceiveMHz   string `json:"receive_mhz"`
+		ChannelID    string `json:"id"`
+		ChannelName  string `json:"channel"`
+		ReceiveMHz   string `json:"rx"`
 	}
 	var rows []row
 	if err := json.Unmarshal([]byte(c.ok("radio", "channels", "list", "HT", "--format", "json")), &rows); err != nil {
@@ -697,8 +713,8 @@ func TestRadioSources(t *testing.T) {
 		t.Errorf("hand-added = %+v", rows[30])
 	}
 
-	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t-\tsort freq\t23 channels\tband:gmrs -is:repeater") ||
-		!strings.Contains(out, "2\t§100\tsort freq\t7 channels\tband:noaa") {
+	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t\tfreq\tno\t23\tband:gmrs -is:repeater") ||
+		!strings.Contains(out, "2\t100\tfreq\tno\t7\tband:noaa") {
 		t.Errorf("sources list = %q", out)
 	}
 	if out := c.ok("radio", "show", "HT"); !strings.Contains(out, "sources:\n1\t") {
@@ -707,13 +723,13 @@ func TestRadioSources(t *testing.T) {
 	// Re-sorting by name puts numbers in order; the NOAA section and the
 	// hand-added channel stay where they are.
 	c.ok("radio", "sources", "set", "HT", "1", "--sort", "name", "--keep-sorted")
-	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t-\tsort name, kept sorted\t23 channels") {
+	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t\tname\tyes\t23\t") {
 		t.Errorf("sources list = %q", out)
 	}
 	if got := c.ok("radio", "sync", "HT", "--dry-run"); !strings.Contains(got, "would re-sort\tsource 1\t") || strings.Contains(got, "source 2\t") {
 		t.Errorf("dry run = %q", got)
 	}
-	if got := c.ok("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (band:gmrs -is:repeater): re-sorted") || !strings.HasSuffix(got, "program the radio again") {
+	if got := c.status("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (band:gmrs -is:repeater): re-sorted") || !strings.HasSuffix(got, "program the radio again") {
 		t.Errorf("sync = %q", got)
 	}
 	rows = nil
@@ -724,7 +740,7 @@ func TestRadioSources(t *testing.T) {
 		rows[22].ChannelName != "GMRS 22" || rows[23].Memory != 100 || rows[30].ChannelID != hand {
 		t.Errorf("after re-sort: %+v", rows)
 	}
-	if got := c.ok("radio", "sync", "HT"); got != "Added 0 channels to HT" {
+	if got := c.status("radio", "sync", "HT"); got != "Added 0 channels to HT" {
 		t.Errorf("sorted source re-sorted again: %q", got)
 	}
 	c.ok("radio", "sources", "set", "HT", "1", "--keep-sorted=false")
@@ -740,11 +756,11 @@ func TestRadioSources(t *testing.T) {
 		t.Error("section start not cleared")
 	}
 	c.fails("has sources 1-2", "radio", "sources", "remove", "HT", "3")
-	if out := c.ok("radio", "sources", "remove", "HT", "2", "--with-channels"); out != "Removed source 2 from HT and 7 channels" {
+	if out := c.status("radio", "sources", "remove", "HT", "2", "--with-channels"); out != "Removed source 2 from HT and 7 channels" {
 		t.Errorf("remove = %q", out)
 	}
 	c.ok("radio", "sources", "remove", "HT", "1")
-	if out := c.ok("radio", "list"); !strings.Contains(out, "24 channels") {
+	if out := c.ok("radio", "list"); !strings.Contains(out, "HT\tbaofeng-uv5rm\t24") {
 		t.Errorf("channels kept after removing a source: %q", out)
 	}
 }
@@ -765,8 +781,8 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out = strings.TrimSpace(out); out != "Added 7 channels to HT; skipped 40 outside its bands" {
-		t.Errorf("add = %q", out)
+	if out != "" || !strings.HasSuffix(strings.TrimSpace(stderr), "Added 7 channels to HT; skipped 40 outside its bands") {
+		t.Errorf("add = %q, %q", out, stderr)
 	}
 	if !strings.Contains(stderr, `skipped "CB 19" (27.185000 MHz): HT can't receive it`) {
 		t.Errorf("stderr = %q", stderr)
@@ -774,10 +790,10 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	cb19 := strings.Split(c.ok("channel", "list", "name:\"CB 19\""), "\t")[0]
 	// CB is AM, which the UV-5G doesn't have: --any-band alone isn't enough.
 	out, stderr, err = c.exec("radio", "channels", "add", "HT", "--id", cb19, "--any-band")
-	if err != nil || strings.TrimSpace(out) != "Added 0 channels to HT; skipped 1 in modes it doesn't have" || !strings.Contains(stderr, "HT doesn't have AM") {
+	if err != nil || out != "" || !strings.HasSuffix(strings.TrimSpace(stderr), "Added 0 channels to HT; skipped 1 in modes it doesn't have") || !strings.Contains(stderr, "HT doesn't have AM") {
 		t.Errorf("--any-band = %q, %q, %v", out, stderr, err)
 	}
-	if out := c.ok("radio", "channels", "add", "HT", "--id", cb19, "--any-band", "--any-mode"); out != "Added 1 channels to HT" {
+	if out := c.status("radio", "channels", "add", "HT", "--id", cb19, "--any-band", "--any-mode"); out != "Added 1 channels to HT" {
 		t.Errorf("--any-mode = %q", out)
 	}
 	// It's on the radio but left out of the export.
@@ -797,14 +813,14 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	if out := c.ok("radio", "sync", "Base", "--dry-run"); strings.Count(out, "would skip") != 40 || strings.Count(out, "would add") != 7 {
 		t.Errorf("dry run = %q", out)
 	}
-	if out := c.ok("radio", "sync", "Base"); !strings.Contains(out, "added 7; skipped 40 outside its bands") {
+	if out := c.status("radio", "sync", "Base"); !strings.Contains(out, "added 7; skipped 40 outside its bands") {
 		t.Errorf("sync = %q", out)
 	}
 }
 
 func TestLibraries(t *testing.T) {
 	c := newCLI(t)
-	if out := c.ok("library", "list"); !strings.HasPrefix(out, "*default\t0 channels\t0 radios\t") {
+	if out := c.ok("library", "list"); !strings.HasPrefix(out, "*\tdefault\t0\t0") {
 		t.Fatalf("library list = %q", out)
 	}
 	c.ok("library", "add", "club", "--description", "Club radios")
@@ -834,7 +850,7 @@ func TestLibraries(t *testing.T) {
 	if out := c.ok("channel", "list"); !strings.Contains(out, "Club Net") {
 		t.Errorf("RFLIB_LIBRARY ignored: %q", out)
 	}
-	if out := c.ok("library", "list"); !strings.Contains(out, "*club\t1 channels\t1 radios\t") {
+	if out := c.ok("library", "list"); !strings.Contains(out, "*\tclub\t1\t1\t") {
 		t.Errorf("library list marks the wrong one: %q", out)
 	}
 	t.Setenv("RFLIB_LIBRARY", "")
@@ -843,7 +859,7 @@ func TestLibraries(t *testing.T) {
 	// new IDs, and groups are matched by name.
 	backup := filepath.Join(t.TempDir(), "backup.json")
 	c.ok("export", "json", "--output", backup)
-	if out := c.ok("--library", "club", "import", "json", backup); !strings.Contains(out, "created 7") {
+	if out := c.status("--library", "club", "import", "json", backup); !strings.Contains(out, "created 7") {
 		t.Fatalf("import into club = %q", out)
 	}
 	defaultIDs := c.ok("channel", "list", "band:noaa")
@@ -860,5 +876,112 @@ func TestLibraries(t *testing.T) {
 	}
 	if out := c.ok("channel", "list", "band:noaa"); len(strings.Split(out, "\n")) != 7 {
 		t.Errorf("deleting club touched default: %q", out)
+	}
+}
+
+func TestTablesAndFields(t *testing.T) {
+	c := newCLI(t)
+	c.ok("seed", "install", "us-gmrs")
+	id := c.ok("channel", "add", "--name", "A very long repeater name", "--rx", "146.94", "--tx", "146.34", "--tx-tone", "ctcss:100", "--tags", "ham")
+
+	// Piped text: no header, full IDs, the default columns.
+	if got := c.ok("channel", "list", "tag:ham"); got != id+"\tA very long repeater name\t146.940000\t-\t0.600000\tT100.0\tFM\t\tham" {
+		t.Errorf("piped = %q", got)
+	}
+	// A terminal gets aligned columns, a header, and short IDs.
+	isTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { isTerminal = func(io.Writer) bool { return false } })
+	table := strings.Split(c.ok("channel", "list", "name:15", "--fields", "id,name,duplex,offset"), "\n")
+	if len(table) != 3 || !strings.HasPrefix(table[0], "ID        NAME      DUPLEX") || len(strings.Fields(table[1])[0]) != 8 ||
+		strings.Index(table[1], "simplex") != strings.Index(table[0], "DUPLEX") {
+		t.Errorf("terminal table:\n%s", strings.Join(table, "\n"))
+	}
+	isTerminal = func(io.Writer) bool { return false }
+
+	if got := c.ok("channel", "list", "tag:ham", "--fields", "name,tone,tags", "--format", "csv"); got != "name,tone,tags\nA very long repeater name,T100.0,ham" {
+		t.Errorf("csv = %q", got)
+	}
+	if got := c.ok("channel", "list", "tag:ham", "--fields", "name,rx", "--format", "tsv", "--no-header"); got != "A very long repeater name\t146.940000" {
+		t.Errorf("tsv = %q", got)
+	}
+	if got := c.ok("channel", "list", "tag:ham", "--fields", "name,skip,tags", "--format", "json"); !strings.Contains(got, `"name": "A very long repeater name",`) || !strings.Contains(got, `"skip": false`) || !strings.Contains(got, `"tags": [`) {
+		t.Errorf("json fields = %s", got)
+	}
+	c.fails(`unknown field "frequency"`, "channel", "list", "--fields", "name,frequency")
+	c.fails(`unknown format "xml"`, "channel", "list", "--format", "xml")
+
+	// IDs can be shortened to a unique prefix.
+	if got := c.channel(id[:8]); got.Name != "A very long repeater name" {
+		t.Errorf("show by prefix = %+v", got)
+	}
+	c.fails("not found", "channel", "show", "--id", id[:3])
+}
+
+func TestPipedIDsAndBulkChanges(t *testing.T) {
+	c := newCLI(t)
+	c.ok("seed", "install", "us-gmrs", "us-noaa")
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+
+	// A list pipes straight into --id -, header or not, and --id narrows a
+	// query.
+	noaa, _, _ := c.exec("channel", "list", "band:noaa", "--format", "tsv")
+	out, stderr, err := c.execIn(noaa, "radio", "channels", "add", "HT", "--id", "-")
+	if err != nil || out != "" || strings.TrimSpace(stderr) != "Added 7 channels to HT" {
+		t.Fatalf("piped add = %q, %q, %v", out, stderr, err)
+	}
+	gmrs, _, _ := c.exec("channel", "list", "band:gmrs")
+	if _, stderr, _ := c.execIn(gmrs, "radio", "channels", "add", "HT", "--id", "-", "-q", "name:15"); strings.TrimSpace(stderr) != "Added 2 channels to HT" {
+		t.Errorf("--id - with -q = %q", stderr)
+	}
+	if _, _, err := c.execIn("", "radio", "channels", "add", "HT", "--id", "-"); err == nil || !strings.Contains(err.Error(), "no IDs on stdin") {
+		t.Errorf("empty stdin: %v", err)
+	}
+
+	// Bulk updates change only the safe fields.
+	c.fails("--rx can't change many channels at once", "channel", "update", "-q", "band:noaa", "--rx", "162.4")
+	c.fails("mixes +/- edits", "channel", "update", "-q", "band:noaa", "--tags", "+wx,local")
+	if got := c.ok("channel", "update", "-q", "band:noaa", "--tags", "+wx", "--dry-run", "--fields", "name,tags"); !strings.Contains(got, "NOAA WX1\tweather,wx\n") {
+		t.Errorf("dry run = %q", got)
+	}
+	if c.ok("channel", "list", "tag:wx") != "" {
+		t.Error("dry run changed channels")
+	}
+	if got := c.status("channel", "update", "-q", "band:noaa", "--tags", "+wx,+weather", "--skip"); got != "Updated 7 channels" {
+		t.Errorf("bulk update = %q", got)
+	}
+	if got := c.ok("channel", "list", "tag:wx tag:weather skip:yes", "--fields", "name"); strings.Count(got, "\n") != 6 {
+		t.Errorf("after bulk update: %q", got)
+	}
+	c.ok("channel", "update", "-q", "name:WX1", "--tags", "-weather")
+	if got := c.ok("channel", "list", "name:WX1", "--fields", "tags"); got != "wx" {
+		t.Errorf("tag removal = %q", got)
+	}
+
+	// Radio overrides in bulk; names are one at a time.
+	c.fails("one channel at a time", "radio", "channels", "set", "HT", "-q", "band:noaa", "--name", "X")
+	if got := c.status("radio", "channels", "set", "HT", "-q", "band:noaa", "--power", "low", "--scan", "no"); got != "Set overrides on 7 channels" {
+		t.Errorf("bulk set = %q", got)
+	}
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "name,power,scan"); !strings.Contains(got, "WX1\tLow*\tskip*") {
+		t.Errorf("overrides = %q", got)
+	}
+
+	// Removing by query needs --yes; a dry run shows what would come off.
+	c.fails("requires --yes", "radio", "channels", "remove", "HT", "-q", "name:15")
+	if got := c.ok("radio", "channels", "remove", "HT", "-q", "name:15", "--dry-run", "--fields", "name"); got != "GMRS 15\nGMRS 15R" {
+		t.Errorf("remove dry run = %q", got)
+	}
+	if got := c.status("radio", "channels", "remove", "HT", "-q", "name:15", "--yes"); got != "Removed 2 channels from HT" {
+		t.Errorf("remove = %q", got)
+	}
+	c.fails("--all can't be combined", "radio", "channels", "remove", "HT", "--all", "-q", "x", "--yes")
+
+	// Deleting by query takes the channels off radios too.
+	c.fails("deletion requires --yes", "channel", "delete", "-q", "band:noaa")
+	if got := c.status("channel", "delete", "-q", "band:noaa", "--yes"); got != "Deleted 7 channels" {
+		t.Errorf("delete = %q", got)
+	}
+	if got := c.ok("radio", "list", "--fields", "channels"); got != "0" {
+		t.Errorf("radio channels after delete = %q", got)
 	}
 }

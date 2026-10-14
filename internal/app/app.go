@@ -82,11 +82,21 @@ func (s *Service) UpdateChannel(ctx context.Context, c domain.Channel) (domain.C
 	return c, domain.CheckBandPlan(c), nil
 }
 
-func (s *Service) GetChannel(ctx context.Context, id string) (domain.Channel, error) {
+// GetChannel looks a channel up by ID or unique ID prefix (see ChannelID).
+func (s *Service) GetChannel(ctx context.Context, ref string) (domain.Channel, error) {
+	id, err := s.ChannelID(ctx, ref)
+	if err != nil {
+		return domain.Channel{}, err
+	}
 	return s.lib.GetChannel(ctx, id)
 }
 
-func (s *Service) DeleteChannel(ctx context.Context, id string) error {
+// DeleteChannel deletes a channel by ID or unique ID prefix.
+func (s *Service) DeleteChannel(ctx context.Context, ref string) error {
+	id, err := s.ChannelID(ctx, ref)
+	if err != nil {
+		return err
+	}
 	return s.lib.DeleteChannel(ctx, id)
 }
 

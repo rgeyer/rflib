@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/ryan/rflib/internal/app"
@@ -131,10 +132,9 @@ func newGroupAddCommand() *cobra.Command {
 
 func newGroupListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list", Short: "List groups", Args: cobra.NoArgs}
-	formatFlag(cmd)
+	groupListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		format, err := getFormat(cmd)
-		if err != nil {
+		if err := groupListing.check(cmd); err != nil {
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
@@ -142,7 +142,7 @@ func newGroupListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeGroupList(cmd.OutOrStdout(), gs, format)
+			return groupListing.write(cmd, gs)
 		})
 	}
 	return cmd
@@ -224,7 +224,7 @@ func channelFields(cmd *cobra.Command) {
 	cmd.Flags().String("bandwidth", "", "Bandwidth label")
 	cmd.Flags().Bool("skip", false, "Skip when scanning")
 	cmd.Flags().String("notes", "", "Notes")
-	cmd.Flags().String("tags", "", "Comma-separated tags (empty clears on update)")
+	cmd.Flags().String("tags", "", "Comma-separated tags; on update, +x,-y adds x and removes y (empty clears on update)")
 	cmd.Flags().String("short-names", "", "Comma-separated abbreviations of the name for narrow radio displays, such as \"Metro Rpt,MtRpt\" (empty clears on update)")
 }
 
@@ -297,7 +297,11 @@ func applyChannelFlags(cmd *cobra.Command, a *app.Service, c *domain.Channel, al
 		c.RXOnly, _ = cmd.Flags().GetBool("rx-only")
 	}
 	if set("tags") {
-		c.Tags = splitTags(getString(cmd, "tags"))
+		e, err := parseTagEdit(getString(cmd, "tags"))
+		if err != nil {
+			return err
+		}
+		c.Tags = e.Apply(c.Tags)
 	}
 	if set("short-names") {
 		c.ShortNames = splitTags(getString(cmd, "short-names"))
@@ -339,12 +343,11 @@ func newChannelAddCommand() *cobra.Command {
 
 func newChannelListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list [QUERY...]", Short: "List or search channels",
-		Long: "List channels, or the channels matching a query given as arguments or --query.\n\n" + queryHelp}
+		Long: "List channels, or the channels matching a query given as arguments or --query.\n\n" + queryHelp + "\n\n" + tableHelp}
 	filterFields(cmd)
-	formatFlag(cmd)
+	channelListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		format, err := getFormat(cmd)
-		if err != nil {
+		if err := channelListing.check(cmd); err != nil {
 			return err
 		}
 		n, err := channelQuery(cmd, args)
@@ -356,7 +359,7 @@ func newChannelListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeChannelList(cmd.OutOrStdout(), cs, format)
+			return channelListing.write(cmd, cs)
 		})
 	}
 	return cmd
@@ -364,15 +367,19 @@ func newChannelListCommand() *cobra.Command {
 
 func newChannelShowCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "show", Short: "Show a channel", Args: cobra.NoArgs}
-	idFlag(cmd, "Channel ID (required)")
+	idFlag(cmd, "Channel ID, a unique prefix of one, or - to read it from stdin (required)")
 	formatFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		format, err := getFormat(cmd)
 		if err != nil {
 			return err
 		}
+		id, err := getID(cmd)
+		if err != nil {
+			return err
+		}
 		return withApp(cmd, func(a *app.Service) error {
-			c, err := a.GetChannel(ctx(cmd), getString(cmd, "id"))
+			c, err := a.GetChannel(ctx(cmd), id)
 			if err != nil {
 				return err
 			}
@@ -382,38 +389,192 @@ func newChannelShowCommand() *cobra.Command {
 	return cmd
 }
 
+// bulkFields are the channel flags that can change many channels at once.
+var bulkFields = []string{"tags", "skip", "power", "service", "rx-only"}
+
 func newChannelUpdateCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "update", Short: "Update a channel; only supplied flags change", Args: cobra.NoArgs}
-	idFlag(cmd, "Channel ID (required)")
+	cmd := &cobra.Command{Use: "update", Short: "Update channels; only supplied flags change", Args: cobra.NoArgs,
+		Long: `Update channels; only supplied flags change, and an empty value clears a
+field. Choose channels with --id, --query, or both (a channel must match
+both).
+
+One channel can change anything. Many at once (--query, or several IDs) can
+change only --tags, --skip, --power, --service, and --rx-only: frequencies,
+tones, mode, and names are changed one channel at a time. --tags +x,-y adds
+x and removes y, leaving other tags alone; --tags x,y replaces them.
+
+` + stdinIDHelp}
+	idsFlag(cmd, "Channel IDs")
+	cmd.Flags().StringP("query", "q", "", "Update the channels matching this query (see rflib help search)")
+	cmd.Flags().Bool("dry-run", false, "List the channels that would change, without changing them")
 	channelFields(cmd)
+	channelListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		sel, err := selection(cmd)
+		if err != nil {
+			return err
+		}
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if !sel.Bulk() {
+			return withApp(cmd, func(a *app.Service) error {
+				c, err := a.GetChannel(ctx(cmd), sel.IDs[0])
+				if err != nil {
+					return err
+				}
+				if err := applyChannelFlags(cmd, a, &c, false); err != nil {
+					return err
+				}
+				if dryRun {
+					return channelListing.write(cmd, []domain.Channel{c})
+				}
+				c, warnings, err := a.UpdateChannel(ctx(cmd), c)
+				if err == nil {
+					warnBandPlan(cmd, c, warnings)
+				}
+				return err
+			})
+		}
+		edit, err := channelEdit(cmd)
+		if err != nil {
+			return err
+		}
 		return withApp(cmd, func(a *app.Service) error {
-			c, err := a.GetChannel(ctx(cmd), getString(cmd, "id"))
+			if dryRun {
+				cs, err := a.Select(ctx(cmd), sel)
+				if err != nil {
+					return err
+				}
+				for i := range cs {
+					edit.Apply(&cs[i])
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "Would update %d channels\n", len(cs))
+				return channelListing.write(cmd, cs)
+			}
+			cs, warnings, err := a.UpdateChannels(ctx(cmd), sel, edit)
 			if err != nil {
 				return err
 			}
-			if err := applyChannelFlags(cmd, a, &c, false); err != nil {
-				return err
+			for _, w := range warnings {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning:", w)
 			}
-			c, warnings, err := a.UpdateChannel(ctx(cmd), c)
-			if err == nil {
-				warnBandPlan(cmd, c, warnings)
-			}
-			return err
+			fmt.Fprintf(cmd.ErrOrStderr(), "Updated %d channels\n", len(cs))
+			return nil
 		})
 	}
 	return cmd
 }
 
+// channelEdit reads a bulk update's flags, refusing any outside bulkFields.
+func channelEdit(cmd *cobra.Command) (app.ChannelEdit, error) {
+	var e app.ChannelEdit
+	var refused []string
+	channelFieldNames := []string{"name", "group", "rx", "tx", "mode", "service", "rx-only", "rx-tone", "tx-tone", "tone-squelch", "power", "bandwidth", "skip", "notes", "tags", "short-names"}
+	for _, name := range channelFieldNames {
+		if cmd.Flags().Changed(name) && !slices.Contains(bulkFields, name) {
+			refused = append(refused, "--"+name)
+		}
+	}
+	if len(refused) > 0 {
+		return e, fmt.Errorf("%s can't change many channels at once; update them one at a time with --id, or use --tags, --skip, --power, --service, or --rx-only", strings.Join(refused, ", "))
+	}
+	if cmd.Flags().Changed("tags") {
+		t, err := parseTagEdit(getString(cmd, "tags"))
+		if err != nil {
+			return e, err
+		}
+		e.Tags = &t
+	}
+	if cmd.Flags().Changed("skip") {
+		v, _ := cmd.Flags().GetBool("skip")
+		e.Skip = &v
+	}
+	if cmd.Flags().Changed("power") {
+		p, err := domain.ParsePowerIntent(getString(cmd, "power"))
+		if err != nil {
+			return e, err
+		}
+		e.Power = &p
+	}
+	if cmd.Flags().Changed("service") {
+		svc, err := domain.ParseService(getString(cmd, "service"))
+		if err != nil {
+			return e, err
+		}
+		e.Service = &svc
+	}
+	if cmd.Flags().Changed("rx-only") {
+		v, _ := cmd.Flags().GetBool("rx-only")
+		e.RXOnly = &v
+	}
+	if e == (app.ChannelEdit{}) {
+		return e, fmt.Errorf("nothing to change; give --tags, --skip, --power, --service, or --rx-only")
+	}
+	return e, nil
+}
+
+// parseTagEdit reads --tags: "+x,-y" adds and removes tags; anything else
+// replaces them, and an empty value clears them.
+func parseTagEdit(v string) (app.TagEdit, error) {
+	items := splitTags(v)
+	var e app.TagEdit
+	edits := 0
+	for _, t := range items {
+		t = strings.TrimSpace(t)
+		switch {
+		case strings.HasPrefix(t, "+"):
+			e.Add = append(e.Add, t[1:])
+			edits++
+		case strings.HasPrefix(t, "-"):
+			e.Remove = append(e.Remove, t[1:])
+			edits++
+		}
+	}
+	switch {
+	case edits == 0:
+		e.Set = append([]string{}, items...)
+	case edits < len(items):
+		return e, fmt.Errorf("--tags %q mixes +/- edits with plain tags; use +tag and -tag for every tag, or none", v)
+	}
+	return e, nil
+}
+
 func newChannelDeleteCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "delete", Short: "Delete a channel", Args: cobra.NoArgs}
-	idFlag(cmd, "Channel ID (required)")
+	cmd := &cobra.Command{Use: "delete", Short: "Delete channels, taking them off every radio", Args: cobra.NoArgs,
+		Long: `Delete channels by --id, --query, or both (a channel must match both). They
+come off every radio too. Needs --yes; --dry-run lists what would go.
+
+` + stdinIDHelp}
+	idsFlag(cmd, "Channel IDs")
+	cmd.Flags().StringP("query", "q", "", "Delete the channels matching this query (see rflib help search)")
+	cmd.Flags().Bool("dry-run", false, "List the channels that would be deleted")
 	cmd.Flags().Bool("yes", false, "Confirm deletion")
+	channelListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		if err := requireYes(cmd, "channel"); err != nil {
+		sel, err := selection(cmd)
+		if err != nil {
 			return err
 		}
-		return withApp(cmd, func(a *app.Service) error { return a.DeleteChannel(ctx(cmd), getString(cmd, "id")) })
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if !dryRun {
+			if err := requireYes(cmd, "channel"); err != nil {
+				return err
+			}
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			if dryRun {
+				cs, err := a.Select(ctx(cmd), sel)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "Would delete %d channels\n", len(cs))
+				return channelListing.write(cmd, cs)
+			}
+			cs, err := a.DeleteChannels(ctx(cmd), sel)
+			if err == nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Deleted %d channels\n", len(cs))
+			}
+			return err
+		})
 	}
 	return cmd
 }
