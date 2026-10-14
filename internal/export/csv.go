@@ -34,7 +34,7 @@ func (GenericCSV) Export(w io.Writer, channels []domain.Channel) error {
 		if c.TransmitHz != nil {
 			tx = domain.FormatFrequencyMHz(*c.TransmitHz)
 		}
-		if err := csvw.Write([]string{c.ID, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), tx, c.Mode, domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), strconv.FormatBool(c.ToneSquelch), string(c.Power), c.Bandwidth, strconv.FormatBool(c.Skip), strings.Join(c.Tags, ";"), c.Notes, string(c.Service), strconv.FormatBool(c.RXOnly), strings.Join(c.ShortNames, ";"), lat, lon, radius}); err != nil {
+		if err := csvw.Write([]string{c.ID, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), tx, c.Mode, domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), strconv.FormatBool(c.ToneSquelch), string(c.Power), c.Bandwidth, strconv.FormatBool(c.Skip), strings.Join(c.AllTags(), ";"), c.AllNotes(), string(c.Service), strconv.FormatBool(c.RXOnly), strings.Join(c.ShortNames, ";"), lat, lon, radius}); err != nil {
 			return fmt.Errorf("write CSV row: %w", err)
 		}
 	}

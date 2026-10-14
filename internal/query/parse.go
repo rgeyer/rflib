@@ -229,6 +229,53 @@ func wordNode(t token) (Node, error) {
 
 // Refs returns the saved searches a query uses directly, in order, without
 // repeats.
+// Scopes are the values of in:, which chooses the channels a query
+// searches: the library's own (mine, the default) or the whole shared list.
+var Scopes = []string{"mine", "shared"}
+
+// SplitScope takes in: terms off the top level of n and returns the scope
+// they choose (empty when there are none) and the rest of the query. An in:
+// anywhere else is left for Compile to reject.
+func SplitScope(n Node) (string, Node, error) {
+	scope := ""
+	take := func(t Term) (bool, error) {
+		if t.Field != "in" {
+			return false, nil
+		}
+		v := strings.ToLower(strings.TrimSpace(t.Value))
+		if !slices.Contains(Scopes, v) {
+			return false, &Error{Pos: t.Pos, Msg: fmt.Sprintf("in:%s: use in:mine or in:shared", t.Value)}
+		}
+		if scope != "" && scope != v {
+			return false, &Error{Pos: t.Pos, Msg: "a query can search only one of in:mine and in:shared"}
+		}
+		scope = v
+		return true, nil
+	}
+	switch x := n.(type) {
+	case Term:
+		if ok, err := take(x); ok || err != nil {
+			return scope, nil, err
+		}
+	case And:
+		var rest []Node
+		for _, c := range x.Nodes {
+			if t, isTerm := c.(Term); isTerm {
+				ok, err := take(t)
+				if err != nil {
+					return "", nil, err
+				}
+				if ok {
+					continue
+				}
+			}
+			rest = append(rest, c)
+		}
+		return scope, Join(rest...), nil
+	}
+	return scope, n, nil
+}
+
 // MapTerms returns n with every Term replaced by fn's result.
 func MapTerms(n Node, fn func(Term) Term) Node {
 	each := func(ns []Node) []Node {

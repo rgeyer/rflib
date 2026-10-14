@@ -16,6 +16,9 @@ import (
 
 // CreateRadio adds a radio of a known model.
 func (s *Service) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error) {
+	if err := s.writable(); err != nil {
+		return r, err
+	}
 	if _, err := model.Find(r.Model); err != nil {
 		return r, err
 	}
@@ -137,6 +140,11 @@ func (r *AddResult) fit(m model.Model, cs []domain.Channel, anyBand, anyMode boo
 // skipped unless req.AnyBand, and channels in modes it lacks unless
 // req.AnyMode.
 func (s *Service) AddChannels(ctx context.Context, radio string, req AddRequest) (domain.Radio, AddResult, error) {
+	if req.Query != nil {
+		if err := localQuery(req.Query); err != nil {
+			return domain.Radio{}, AddResult{}, err
+		}
+	}
 	r, m, err := s.RadioModel(ctx, radio)
 	if err != nil {
 		return r, AddResult{}, err
@@ -491,7 +499,14 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 		return res, err
 	}
 	for _, src := range sources {
-		cs, err := s.Find(ctx, src.Query)
+		n, err := query.Parse(src.Query)
+		if err == nil {
+			err = localQuery(n)
+		}
+		if err != nil {
+			return res, fmt.Errorf("source %d: %w", src.Position+1, err)
+		}
+		cs, err := s.FindChannels(ctx, n)
 		if err != nil {
 			return res, fmt.Errorf("source %d: %w", src.Position+1, err)
 		}

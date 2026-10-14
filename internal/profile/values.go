@@ -124,11 +124,11 @@ func (r row) raw(p Profile, col Column) (string, error) {
 	case "skip":
 		return strconv.FormatBool(c.Skip), nil
 	case "notes":
-		return strings.Join(strings.Fields(c.Notes), " "), nil
+		return strings.Join(strings.Fields(c.AllNotes()), " "), nil
 	case "service":
 		return string(c.Service), nil
 	case "tags":
-		return strings.Join(c.Tags, ";"), nil
+		return strings.Join(c.AllTags(), ";"), nil
 	case "step_khz":
 		for _, s := range col.StepsKHz {
 			if milliHz, _ := parseKHz(s); c.ReceiveHz*1000%milliHz == 0 {

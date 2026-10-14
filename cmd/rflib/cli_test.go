@@ -249,7 +249,7 @@ func TestExportJSONRestoresExactly(t *testing.T) {
 	c.ok("channel", "add", "--name", "Other", "--rx", "146.550")
 
 	all := c.ok("export", "json")
-	if !strings.Contains(all, `"version": 2`) || !strings.Contains(all, `"radius_km": 30`) || strings.Contains(all, "groups") {
+	if !strings.Contains(all, `"version": 3`) || !strings.Contains(all, `"radius_km": 30`) || strings.Contains(all, "groups") {
 		t.Fatalf("backup = %s", all)
 	}
 	if filtered := c.ok("export", "json", "--tag", "ham"); strings.Contains(filtered, "Other") {
@@ -330,11 +330,11 @@ func TestSeedInstallIsIdempotent(t *testing.T) {
 		t.Fatalf("seed list = %q", out)
 	}
 	out := c.status("seed", "install", "us-gmrs", "us-noaa")
-	if !strings.Contains(out, "us-gmrs: created 30") || !strings.Contains(out, "us-noaa: created 7") {
+	if !strings.Contains(out, "us-gmrs: linked 30, converted 0") || !strings.Contains(out, "us-noaa: linked 7") {
 		t.Fatalf("first install = %q", out)
 	}
 	out = c.status("seed", "install", "us-gmrs", "us-noaa")
-	if !strings.Contains(out, "us-gmrs: created 0, updated 0, skipped 30 duplicates") || !strings.Contains(out, "us-noaa: created 0") {
+	if !strings.Contains(out, "us-gmrs: linked 0, converted 0 of your channels, 30 already linked") || !strings.Contains(out, "us-noaa: linked 0") {
 		t.Fatalf("second install = %q", out)
 	}
 	if out := c.ok("channel", "list", "--service", "noaa"); strings.Count(out, "\n")+1 != 7 {
@@ -482,7 +482,7 @@ func TestRadioWorkflow(t *testing.T) {
 	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g", "--default-power", "high")
 	c.ok("radio", "sources", "add", "HT", "service:noaa")
 
-	if out := c.status("radio", "channels", "add", "HT", "--tag", "repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
+	if out := c.status("radio", "channels", "add", "HT", "-q", "is:repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
 		t.Fatalf("add by filter = %q", out)
 	}
 	c.ok("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]+","+ids["GMRS 8"])
@@ -919,7 +919,7 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 	// Bulk updates change only the safe fields.
 	c.fails("--rx can't change many channels at once", "channel", "update", "-q", "band:noaa", "--rx", "162.4")
 	c.fails("mixes +/- edits", "channel", "update", "-q", "band:noaa", "--tags", "+wx,local")
-	if got := c.ok("channel", "update", "-q", "band:noaa", "--tags", "+wx", "--dry-run", "--fields", "name,tags"); !strings.Contains(got, "NOAA WX1\tweather,wx\n") {
+	if got := c.ok("channel", "update", "-q", "band:noaa", "--tags", "+wx", "--dry-run", "--fields", "name,tags"); !strings.Contains(got, "NOAA WX1\twx\n") {
 		t.Errorf("dry run = %q", got)
 	}
 	if c.ok("channel", "list", "tag:wx") != "" {
@@ -962,5 +962,109 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 	}
 	if got := c.ok("radio", "list", "--fields", "channels"); got != "0" {
 		t.Errorf("radio channels after delete = %q", got)
+	}
+}
+
+func TestSharedChannels(t *testing.T) {
+	c := newCLI(t)
+	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 11 {
+		t.Errorf("tag list = %q", got)
+	}
+	// A private copy of GMRS 20 from before, named differently.
+	mine := c.ok("channel", "add", "--name", "Family 20", "--rx", "462.675", "--tx", "462.675", "--service", "gmrs", "--tags", "family")
+	if got := c.status("seed", "install", "us-gmrs", "us-noaa"); !strings.Contains(got, "us-gmrs: linked 29, converted 1 of your channels") {
+		t.Fatalf("install = %q", got)
+	}
+	ch := c.channel(mine[:8])
+	if ch.Link == nil || ch.Name != "GMRS 20" || strings.Join(ch.ShortNames, ",") != "Family 20" || strings.Join(ch.Tags, ",") != "family" {
+		t.Fatalf("converted channel = %+v", ch)
+	}
+	sharedID := ch.Link.SharedID
+
+	// The shared list is searchable and read-only.
+	if got := c.ok("channel", "list", "in:shared", "band:noaa", "--fields", "name"); strings.Count(got, "\n") != 6 {
+		t.Errorf("in:shared = %q", got)
+	}
+	if got := c.channel(sharedID); got.Name != "GMRS 20" || got.Link != nil || got.Revision != 1 {
+		t.Errorf("show a shared channel = %+v", got)
+	}
+	c.fails("changes only through rflib shared", "--library", "shared", "channel", "add", "--name", "x", "--rx", "146.52")
+	c.fails("can't be deleted", "library", "delete", "shared", "--yes")
+	c.fails("its rx can't change here", "channel", "update", "--id", mine, "--rx", "462.7")
+	c.ok("channel", "update", "--id", mine, "--power", "low", "--notes", "kids use this")
+
+	// The maintainer takes it off the air; the link follows and shows up in
+	// changes with the radio it's on.
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "channels", "add", "HT", "--id", mine)
+	c.fails(`"reason" not set`, "shared", "status", "--id", sharedID, "--set", "off-air")
+	c.ok("shared", "status", "--id", sharedID[:8], "--set", "off-air", "--note", "antenna work", "--back", "2026-12-01", "--reason", "owner says")
+	if got := c.ok("shared", "changes", "--fields", "name,status,changes,reasons,radios"); got != "GMRS 20\toff-air\tstatus: active → off-air; status note: (none) → antenna work; back on: (none) → 2026-12-01\towner says\tHT" {
+		t.Errorf("changes = %q", got)
+	}
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "name,scan"); got != "GMRS 20\tskip" {
+		t.Errorf("off-air on the radio = %q", got)
+	}
+	if got := c.ok("channel", "list", "status:off-air", "--fields", "name,status,linked"); got != "GMRS 20\toff-air\tyes" {
+		t.Errorf("status: = %q", got)
+	}
+	c.status("shared", "ack", "--all")
+	if got := c.ok("shared", "changes"); got != "" {
+		t.Errorf("changes after ack = %q", got)
+	}
+
+	// Retired and replaced: relink moves the link, and history shows why.
+	next := strings.TrimSpace(c.ok("channel", "list", "in:shared", "freq:462.7", "duplex:simplex", "--fields", "id"))
+	c.ok("shared", "status", "--id", sharedID, "--set", "retired", "--replaced-by", next, "--reason", "moved up a channel")
+	if got := c.ok("shared", "changes", "--fields", "replacement"); !strings.HasPrefix(got, "GMRS 21 (") {
+		t.Errorf("replacement = %q", got)
+	}
+	if got := c.status("shared", "relink", "--all"); got != "Relinked 1 channels to their replacements" {
+		t.Errorf("relink = %q", got)
+	}
+	if ch := c.channel(mine); ch.Name != "GMRS 21" || ch.Power != "low" || ch.Notes != "kids use this" {
+		t.Errorf("relinked channel = %+v", ch)
+	}
+	if got := c.ok("shared", "history", "--id", sharedID, "--fields", "revision,reason"); got != "1\tbuilt-in list us-gmrs\n2\towner says\n3\tmoved up a channel" {
+		t.Errorf("history = %q", got)
+	}
+
+	// A backup keeps links; restored where the shared channel is missing,
+	// a link becomes a private copy.
+	backup := c.ok("export", "json")
+	other := newCLI(t)
+	out, stderr, err := other.execIn(backup, "import", "json")
+	if err != nil || !strings.Contains(stderr, "its shared channel isn't in this database's shared list, so it's a private copy") {
+		t.Fatalf("restore elsewhere: %v\n%s%s", err, out, stderr)
+	}
+	if ch := other.channel(mine); ch.Link != nil || ch.CopiedFrom != next || !strings.Contains(ch.Notes, "kids use this") {
+		t.Errorf("restored copy = %+v", ch)
+	}
+	again := newCLI(t)
+	again.ok("seed", "install", "us-gmrs")
+	again.ok("channel", "delete", "-q", "freq:462.7 duplex:simplex", "--yes")
+	if _, stderr, err := again.execIn(backup, "import", "json", "--on-duplicate", "skip"); err != nil {
+		t.Fatalf("restore with the shared list: %v %s", err, stderr)
+	}
+	if ch := again.channel(mine); ch.Link == nil || ch.Link.SharedID != next {
+		t.Errorf("restored link = %+v", ch)
+	}
+
+	// A copy can be edited.
+	if got := c.status("channel", "copy", "--id", mine); got != "Copied 1 links to private channels" {
+		t.Errorf("copy = %q", got)
+	}
+	c.ok("channel", "update", "--id", mine, "--rx", "462.7125")
+
+	// The maintainer adds a channel from a file; tags must be shared ones.
+	file := writeFile(t, "name,receive_mhz,transmit_mhz,tags\nMarian,147.300,147.900,linked;mine\n")
+	if got := c.status("shared", "import", "csv", file, "--reason", "club list"); !strings.Contains(got, "Left off tags that aren't shared tags: mine") || !strings.Contains(got, "created 1") {
+		t.Errorf("shared import = %q", got)
+	}
+	if got := c.ok("channel", "list", "in:shared", "name:Marian", "--fields", "name,tags"); got != "Marian\tlinked" {
+		t.Errorf("imported shared channel = %q", got)
+	}
+	if got := c.ok("channel", "link", "-q", "name:Marian"); len(got) != 36 {
+		t.Errorf("link printed %q", got)
 	}
 }

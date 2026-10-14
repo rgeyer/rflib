@@ -12,7 +12,7 @@ import (
 // version on any incompatible change to Document.
 const (
 	DocumentFormat  = "rflib"
-	DocumentVersion = 2
+	DocumentVersion = 3
 )
 
 // Document is the full-fidelity JSON backup: every stored field, including IDs
@@ -62,8 +62,27 @@ type ChannelRecord struct {
 	Latitude     *float64  `json:"latitude,omitempty"`
 	Longitude    *float64  `json:"longitude,omitempty"`
 	RadiusKM     *float64  `json:"radius_km,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	// Status and the fields after it are a shared channel's (version 3).
+	Status     string `json:"status,omitempty"`
+	StatusNote string `json:"status_note,omitempty"`
+	BackOn     string `json:"back_on,omitempty"`
+	ReplacedBy string `json:"replaced_by,omitempty"`
+	CopiedFrom string `json:"copied_from,omitempty"`
+	// Link makes the record a link (version 3). Its other fields show the
+	// shared channel as it was, so a restore without it can make a copy;
+	// Tags and Notes are the user's own.
+	Link      *LinkRecord `json:"link,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+// LinkRecord is a link's tie to its shared channel, with the shared tags
+// and notes.
+type LinkRecord struct {
+	SharedID     string   `json:"shared_id"`
+	SeenRevision int      `json:"seen_revision"`
+	Tags         []string `json:"tags,omitempty"`
+	Notes        string   `json:"notes,omitempty"`
 }
 
 // WriteJSON writes channels as an indented Document.
@@ -78,13 +97,23 @@ func WriteJSON(w io.Writer, channels []domain.Channel) error {
 		if l := c.Location; l != nil {
 			lat, lon, radius = &l.Latitude, &l.Longitude, l.RadiusKM
 		}
-		doc.Channels = append(doc.Channels, ChannelRecord{
-			Latitude: lat, Longitude: lon, RadiusKM: radius,
+		rec := ChannelRecord{
+			Latitude: lat, Longitude: lon, RadiusKM: radius, StatusNote: c.StatusNote, ReplacedBy: c.ReplacedBy, CopiedFrom: c.CopiedFrom,
 			ID: c.ID, Name: c.Name, ReceiveHz: c.ReceiveHz, TransmitHz: c.TransmitHz, Mode: c.Mode, Service: string(c.Service), RXOnly: c.RXOnly,
 			ReceiveTone: domain.FormatTone(c.ReceiveTone), TransmitTone: domain.FormatTone(c.TransmitTone),
 			ToneSquelch: c.ToneSquelch, Power: string(c.Power), Bandwidth: c.Bandwidth, Skip: c.Skip, Tags: tags, ShortNames: c.ShortNames, Notes: c.Notes,
 			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
-		})
+		}
+		if s := c.Status.OrActive(); s != domain.StatusActive {
+			rec.Status = string(s)
+		}
+		if c.BackOn != nil {
+			rec.BackOn = c.BackOn.Format(time.DateOnly)
+		}
+		if l := c.Link; l != nil {
+			rec.Link = &LinkRecord{SharedID: l.SharedID, SeenRevision: l.SeenRevision, Tags: l.Tags, Notes: l.Notes}
+		}
+		doc.Channels = append(doc.Channels, rec)
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

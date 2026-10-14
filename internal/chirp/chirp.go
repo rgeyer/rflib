@@ -76,7 +76,7 @@ func FromChannel(c domain.Channel, location, maxNameLen int) (Memory, error) {
 		Location: location, Name: truncate(c.Name, maxNameLen), FrequencyHz: c.ReceiveHz,
 		RToneMilliHz: defaultCTCSS, CToneMilliHz: defaultCTCSS, DTCS: defaultDCS, RxDTCS: defaultDCS,
 		DTCSPolarity: defaultPolarity, CrossMode: defaultCrossMode, Mode: c.Mode, TStep: defaultTStep,
-		Power: chirpPower(c.ProgrammedPower), Comment: strings.Join(strings.Fields(c.Notes), " "),
+		Power: chirpPower(c.ProgrammedPower), Comment: strings.Join(strings.Fields(c.AllNotes()), " "),
 	}
 	if !slices.Contains(Modes, c.Mode) {
 		return m, fmt.Errorf("mode %s is not supported by CHIRP export", c.Mode)

@@ -25,6 +25,22 @@ var (
 	ErrConflict = errors.New("already exists")
 )
 
+type changeKey struct{}
+
+type change struct{ reason, author string }
+
+// WithChange attaches why a change is made, and by whom, to ctx; stores
+// record it in shared channels' revisions.
+func WithChange(ctx context.Context, reason, author string) context.Context {
+	return context.WithValue(ctx, changeKey{}, change{reason, author})
+}
+
+// ChangeOf returns what WithChange attached to ctx.
+func ChangeOf(ctx context.Context) (reason, author string) {
+	c, _ := ctx.Value(changeKey{}).(change)
+	return c.reason, c.author
+}
+
 // Store is a database of libraries.
 type Store interface {
 	// Migrate creates or upgrades the schema.
@@ -59,12 +75,20 @@ type Library interface {
 	// then a new one is assigned.
 	CreateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error)
 	GetChannel(ctx context.Context, id string) (domain.Channel, error)
-	// ListChannels returns every channel in
-	// domain.CompareChannels order.
+	// ListChannels returns every channel in domain.CompareChannels order.
+	// Links come with their shared channel's fields filled in (see
+	// domain.Linked).
 	ListChannels(ctx context.Context) ([]domain.Channel, error)
+	// UpdateChannel saves a channel. A link saves only what's its own;
+	// setting Link turns a channel into a link, and clearing it turns a
+	// link into a private channel with the fields given.
 	UpdateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error)
-	// DeleteChannel deletes a channel and takes it off every radio.
+	// DeleteChannel deletes a channel and takes it off every radio. A
+	// shared channel that is linked can't be deleted (ErrConflict).
 	DeleteChannel(ctx context.Context, id string) error
+	// ChannelRevisions returns a shared channel's revisions, oldest
+	// first; for a link, its shared channel's. Private channels have none.
+	ChannelRevisions(ctx context.Context, id string) ([]domain.Revision, error)
 
 	CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error)
 	// GetRadio looks a radio up by ID or name.

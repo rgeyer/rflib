@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +24,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite database path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
 	root.PersistentFlags().String("library", "", "Library to use, by name or ID (default $RFLIB_LIBRARY, then \"default\"; see rflib library)")
-	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newLibraryCommand())
+	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newSharedCommand(), newTagCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newLibraryCommand())
 	return root
 }
 
@@ -69,7 +71,8 @@ func newGroupGoneCommand() *cobra.Command {
 
 func newChannelCommand() *cobra.Command {
 	channel := &cobra.Command{Use: "channel", Short: "Manage analog radio channels"}
-	channel.AddCommand(newChannelAddCommand(), newChannelListCommand(), newChannelShowCommand(), newChannelUpdateCommand(), newChannelDeleteCommand())
+	channel.AddCommand(newChannelAddCommand(), newChannelListCommand(), newChannelShowCommand(), newChannelUpdateCommand(), newChannelDeleteCommand(),
+		newChannelLinkCommand(), newChannelCopyCommand())
 	return channel
 }
 
@@ -260,13 +263,21 @@ func newChannelShowCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return withApp(cmd, func(a *app.Service) error {
+		show := func(a *app.Service) error {
 			c, err := a.GetChannel(ctx(cmd), id)
 			if err != nil {
 				return err
 			}
 			return writeChannel(cmd.OutOrStdout(), c, format)
-		})
+		}
+		err = withApp(cmd, show)
+		// A shared channel's ID, as channel list in:shared prints it.
+		if errors.Is(err, store.ErrNotFound) {
+			if shErr := withShared(cmd, show); shErr == nil {
+				return nil
+			}
+		}
+		return err
 	}
 	return cmd
 }

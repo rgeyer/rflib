@@ -67,6 +67,19 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, er
 		if e.Skip != nil {
 			c.Skip = *e.Skip
 		}
+		switch c.Status.OrActive() {
+		case domain.StatusOffAir:
+			// Kept, so it needs no reprogramming when it's back, but not
+			// scanned while it's silent.
+			c.Skip = true
+			back := ""
+			if c.BackOn != nil {
+				back = ", expected back " + c.BackOn.Format("2006-01-02")
+			}
+			warn("off the air%s%s; programmed but skipped in scans", noteSuffix(c.StatusNote), back)
+		case domain.StatusRetired:
+			warn("retired%s; see rflib shared changes", noteSuffix(c.StatusNote))
+		}
 		if e.Name != "" {
 			c.Name, c.ShortNames = e.Name, nil
 		}
@@ -98,6 +111,13 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, er
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%d memories are named %q; set the radio's dedupe to index or freq, or give them names", len(g), results[g[0]].Name))
 	}
 	return p, nil
+}
+
+func noteSuffix(note string) string {
+	if note == "" {
+		return ""
+	}
+	return " (" + note + ")"
 }
 
 func orNone(d string) string {
