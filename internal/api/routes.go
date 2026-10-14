@@ -124,6 +124,7 @@ func (s *server) listLibraries(w http.ResponseWriter, r *http.Request) error {
 type libraryInput struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
+	Default     *bool   `json:"default"`
 }
 
 func (s *server) createLibrary(w http.ResponseWriter, r *http.Request) error {
@@ -137,6 +138,9 @@ func (s *server) createLibrary(w http.ResponseWriter, r *http.Request) error {
 	}
 	if in.Description != nil {
 		lib.Description = *in.Description
+	}
+	if in.Default != nil {
+		lib.Default = *in.Default
 	}
 	lib, err := s.st.CreateLibrary(ctx(r), lib)
 	if err != nil {
@@ -165,6 +169,9 @@ func (s *server) updateLibrary(w http.ResponseWriter, r *http.Request, a *app.Se
 	}
 	if in.Description != nil {
 		lib.Description = *in.Description
+	}
+	if in.Default != nil {
+		lib.Default = *in.Default
 	}
 	lib, err := s.st.UpdateLibrary(ctx(r), lib)
 	if err != nil {

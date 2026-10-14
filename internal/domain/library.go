@@ -13,13 +13,17 @@ type Library struct {
 	Description string
 	// Shared marks the one library of channels shared with everyone (see
 	// SharedLibrary). Other libraries link to its channels.
-	Shared    bool
+	Shared bool
+	// Default marks the library used when none is chosen. There is always
+	// exactly one, and it is never the shared library.
+	Default   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
-// DefaultLibrary is the library every database starts with, and the one
-// used when none is chosen.
+// DefaultLibrary is the name of the library every database starts with,
+// which is also the default library (see Library.Default) until the user
+// renames it or chooses another.
 const DefaultLibrary = "default"
 
 // SharedLibrary is the name of the library of shared channels.

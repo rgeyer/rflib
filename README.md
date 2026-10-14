@@ -25,11 +25,13 @@ Back up the database by copying it while the CLI is not running.
 
 One database can hold several **libraries**, each a separate collection of channels, radios, and saved searches. Names only have to be unique within a library, so two libraries can each have a radio called "HT".
 
-Every command works on one library: `--library NAME`, else `$RFLIB_LIBRARY`, else `default`. Every database starts with a library called `default`, and upgrading an existing database moves everything already in it there. Every database also has a library called `shared`, which holds channels shared with everyone; see [Shared channels](#shared-channels).
+Every command works on one library: `--library NAME`, else `$RFLIB_LIBRARY`, else the **default library**. Every database starts with a default library called `default`, and upgrading an existing database moves everything already in it there. You can rename it, or make another library the default; the default library can't be deleted. Every database also has a library called `shared`, which holds channels shared with everyone; see [Shared channels](#shared-channels).
 
 ```sh
 ./rflib library add club --description "Club radios"
 ./rflib library list                      # * marks the library in use
+./rflib library update default --name home   # rename the default library
+./rflib library update club --default        # or make another the default
 ./rflib --library club seed install us-gmrs
 RFLIB_LIBRARY=club ./rflib radio list
 ./rflib library update club --name "Club Radios"
@@ -547,6 +549,8 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 - **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves; its sources; sync with a preview; and the programming file to download.
 - **Import:** a file, its options, a dry-run preview, then the import.
 - **Built-in lists** and **shared changes**, as `rflib seed install` and `rflib shared changes` do.
+
+The switch at the top moves between **My library** (the default library) and the **Shared list**. Once you have more than one library of your own, it becomes a list of their names.
 
 When the server needs a token (`$RFLIB_API_TOKEN`), the page asks for it once and keeps it in the browser.
 

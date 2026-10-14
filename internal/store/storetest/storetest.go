@@ -21,6 +21,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		fn   func(*testing.T, store.Store)
 	}{
 		{"DefaultLibrary", testDefaultLibrary},
+		{"DefaultMark", testDefaultMark},
 		{"LibraryCRUD", testLibraryCRUD},
 		{"ChannelRoundTrip", testChannelRoundTrip},
 		{"NotFound", testNotFound},
@@ -86,6 +87,53 @@ func testDefaultLibrary(t *testing.T, s store.Store) {
 	}
 	if _, err := s.CreateLibrary(ctx(), domain.Library{Name: "another", Shared: true}); !errors.Is(err, store.ErrConflict) {
 		t.Errorf("second shared library: %v", err)
+	}
+}
+
+// testDefaultMark covers the default library: found by "", kept through a
+// rename, moved by setting Default on another, and never deleted, cleared,
+// or given to the shared library.
+func testDefaultMark(t *testing.T, s store.Store) {
+	def, err := s.GetLibrary(ctx(), "")
+	if err != nil || !def.Default || def.Name != domain.DefaultLibrary {
+		t.Fatalf("default library = %+v, %v", def, err)
+	}
+	def.Name = "Mine"
+	if _, err := s.UpdateLibrary(ctx(), def); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetLibrary(ctx(), ""); err != nil || got.ID != def.ID || got.Name != "Mine" {
+		t.Errorf("default after rename = %+v, %v", got, err)
+	}
+	if err := s.DeleteLibrary(ctx(), def.ID); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("delete default library: %v", err)
+	}
+	cleared := def
+	cleared.Default = false
+	if _, err := s.UpdateLibrary(ctx(), cleared); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("clear default: %v", err)
+	}
+	shared, _ := s.GetLibrary(ctx(), domain.SharedLibrary)
+	shared.Default = true
+	if _, err := s.UpdateLibrary(ctx(), shared); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("shared library as default: %v", err)
+	}
+	club, err := s.CreateLibrary(ctx(), domain.Library{Name: "Club"})
+	if err != nil || club.Default {
+		t.Fatalf("new library = %+v, %v", club, err)
+	}
+	club.Default = true
+	if _, err := s.UpdateLibrary(ctx(), club); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetLibrary(ctx(), ""); got.ID != club.ID {
+		t.Errorf("default after moving = %q, want %q", got.Name, club.Name)
+	}
+	if got, _ := s.GetLibrary(ctx(), def.ID); got.Default {
+		t.Error("old default library is still marked")
+	}
+	if err := s.DeleteLibrary(ctx(), def.ID); err != nil {
+		t.Errorf("delete former default: %v", err)
 	}
 }
 

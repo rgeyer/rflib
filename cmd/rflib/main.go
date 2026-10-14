@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/ryan/rflib/internal/app"
-	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/ryan/rflib/internal/store/sqlite"
 	"github.com/spf13/cobra"
@@ -76,7 +75,7 @@ func withDB(cmd *cobra.Command, fn func(store.Store) error) error {
 }
 
 // libraryName resolves the library: --library, then $RFLIB_LIBRARY, then
-// the default library.
+// "" for the default library.
 func libraryName(cmd *cobra.Command) string {
 	if v, _ := cmd.Flags().GetString("library"); v != "" {
 		return v
@@ -84,7 +83,7 @@ func libraryName(cmd *cobra.Command) string {
 	if v := os.Getenv("RFLIB_LIBRARY"); v != "" {
 		return v
 	}
-	return domain.DefaultLibrary
+	return ""
 }
 
 // withApp opens the database and the chosen library's services.

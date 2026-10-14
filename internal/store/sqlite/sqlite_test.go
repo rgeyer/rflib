@@ -187,6 +187,10 @@ INSERT INTO searches (id, name, query, created_at, updated_at) VALUES ('q1', 'wx
 	if err := d.db.QueryRowContext(ctx, `SELECT count(*) FROM channel_tags`).Scan(&orphans); err != nil || orphans != 0 {
 		t.Errorf("orphaned tags: %d, %v", orphans, err)
 	}
+	// The default library can't be deleted, so another takes the mark.
+	if _, err := d.CreateLibrary(ctx, domain.Library{Name: "other", Default: true}); err != nil {
+		t.Fatal(err)
+	}
 	if err := d.DeleteLibrary(ctx, lib.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -195,6 +199,28 @@ INSERT INTO searches (id, name, query, created_at, updated_at) VALUES ('q1', 'wx
 		if err := d.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&n); err != nil || n != 0 {
 			t.Errorf("%s after deleting the library: %d, %v", table, n, err)
 		}
+	}
+}
+
+// A v10 database's default library is marked: the one named "default",
+// else the oldest private library, else a new one.
+func TestMigrateV11DefaultMark(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct{ name, seed, want string }{
+		{"named default", `INSERT INTO libraries (id, name, created_at, updated_at) VALUES ('old', 'aaa', '2020-01-01T00:00:00Z', '');`, "default"},
+		{"renamed", `UPDATE libraries SET name = 'home' WHERE name = 'default'; INSERT INTO libraries (id, name, created_at, updated_at) VALUES ('new', 'aaa', '2099-01-01T00:00:00Z', '');`, "home"},
+		{"deleted", `DELETE FROM libraries WHERE name = 'default';`, "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := openAt(t, 10, tc.seed)
+			if err := d.Migrate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			lib, err := d.GetLibrary(ctx, "")
+			if err != nil || lib.Name != tc.want || lib.Shared {
+				t.Errorf("default library = %+v, %v; want %q", lib, err, tc.want)
+			}
+		})
 	}
 }
 

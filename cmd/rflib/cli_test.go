@@ -800,7 +800,7 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 
 func TestLibraries(t *testing.T) {
 	c := newCLI(t)
-	if out := c.ok("library", "list"); !strings.HasPrefix(out, "*\tdefault\t0\t0") {
+	if out := c.ok("library", "list"); !strings.HasPrefix(out, "*\tdefault\tdefault\t0\t0") {
 		t.Fatalf("library list = %q", out)
 	}
 	c.ok("library", "add", "club", "--description", "Club radios")
@@ -829,7 +829,7 @@ func TestLibraries(t *testing.T) {
 	if out := c.ok("channel", "list"); !strings.Contains(out, "Club Net") {
 		t.Errorf("RFLIB_LIBRARY ignored: %q", out)
 	}
-	if out := c.ok("library", "list"); !strings.Contains(out, "*\tclub\t1\t1\t") {
+	if out := c.ok("library", "list"); !strings.Contains(out, "*\tclub\t\t1\t1\t") {
 		t.Errorf("library list marks the wrong one: %q", out)
 	}
 	t.Setenv("RFLIB_LIBRARY", "")
@@ -846,6 +846,21 @@ func TestLibraries(t *testing.T) {
 	if len(strings.Split(clubIDs, "\n")) != 7 || strings.Split(clubIDs, "\t")[0] == strings.Split(defaultIDs, "\t")[0] {
 		t.Errorf("copies share IDs:\n%s\n%s", defaultIDs, clubIDs)
 	}
+
+	// The default library can be renamed, and another made the default;
+	// the default can't be deleted or unmarked.
+	c.ok("library", "update", "default", "--name", "Mine")
+	if out := c.ok("channel", "list", "band:noaa"); len(strings.Split(out, "\n")) != 7 {
+		t.Errorf("renamed default library = %q", out)
+	}
+	c.fails("can't be deleted", "library", "delete", "Mine", "--yes")
+	c.fails("always a default library", "library", "update", "Mine", "--default=false")
+	c.fails("can't be the default", "library", "update", "shared", "--default")
+	c.ok("library", "update", "club", "--default")
+	if out := c.ok("channel", "list"); !strings.Contains(out, "Club Net") {
+		t.Errorf("club isn't the default: %q", out)
+	}
+	c.ok("library", "update", "Mine", "--default")
 
 	c.ok("library", "update", "club", "--name", "Club Radios")
 	c.fails("requires --yes", "library", "delete", "Club Radios")

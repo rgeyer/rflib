@@ -34,6 +34,9 @@ func New(lib store.Library) *Service { return &Service{lib: lib} }
 // Open resolves a library by ID or name and returns its Service.
 func Open(ctx context.Context, s store.Store, library string) (*Service, error) {
 	lib, err := s.GetLibrary(ctx, library)
+	if errors.Is(err, store.ErrNotFound) && library == "" {
+		return nil, fmt.Errorf("there is no default library; see rflib library list: %w", err)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("no library named %q; see rflib library list: %w", library, err)
 	}
