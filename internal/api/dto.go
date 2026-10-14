@@ -294,12 +294,13 @@ type Library struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Shared      bool      `json:"shared"`
+	Default     bool      `json:"default"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func newLibrary(l domain.Library) Library {
-	return Library{l.ID, l.Name, l.Description, l.Shared, l.CreatedAt, l.UpdatedAt}
+	return Library{l.ID, l.Name, l.Description, l.Shared, l.Default, l.CreatedAt, l.UpdatedAt}
 }
 
 type Radio struct {

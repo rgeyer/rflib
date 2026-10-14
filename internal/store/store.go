@@ -51,11 +51,17 @@ type Store interface {
 	Close() error
 
 	CreateLibrary(ctx context.Context, lib domain.Library) (domain.Library, error)
-	// GetLibrary looks a library up by ID or name.
+	// GetLibrary looks a library up by ID or name; "" is the default
+	// library.
 	GetLibrary(ctx context.Context, idOrName string) (domain.Library, error)
 	ListLibraries(ctx context.Context) ([]domain.Library, error)
+	// UpdateLibrary saves a library's name and description. Setting
+	// Default makes it the default library in place of the old one;
+	// clearing it on the default library is refused, since there is always
+	// one default.
 	UpdateLibrary(ctx context.Context, lib domain.Library) (domain.Library, error)
-	// DeleteLibrary deletes a library and everything in it.
+	// DeleteLibrary deletes a library and everything in it. The default
+	// library can't be deleted.
 	DeleteLibrary(ctx context.Context, id string) error
 
 	// Library returns the library with the given ID. It doesn't check

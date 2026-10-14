@@ -189,6 +189,14 @@ ALTER TABLE channels ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN copied_from TEXT NOT NULL DEFAULT '';
 CREATE INDEX idx_channels_link ON channels(link_id);
 CREATE TABLE channel_revisions (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, revision INTEGER NOT NULL, changed_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', record TEXT NOT NULL, PRIMARY KEY(channel_id, revision));`},
+	// The default library is marked rather than found by name, so it can be
+	// renamed: the one named "default", else the oldest private library,
+	// else a new "default" if there is no private library left.
+	{version: 11, sql: `
+ALTER TABLE libraries ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0;
+INSERT INTO libraries (id, name, description, kind, created_at, updated_at) SELECT ` + newIDSQL + `, 'default', '', '', strftime('%Y-%m-%dT%H:%M:%fZ'), strftime('%Y-%m-%dT%H:%M:%fZ') WHERE NOT EXISTS (SELECT 1 FROM libraries WHERE kind = '');
+UPDATE libraries SET is_default = 1 WHERE id = coalesce((SELECT id FROM libraries WHERE name = 'default' AND kind = ''), (SELECT id FROM libraries WHERE kind = '' ORDER BY created_at, name LIMIT 1));
+CREATE UNIQUE INDEX idx_libraries_default ON libraries(is_default) WHERE is_default = 1;`},
 }
 
 // ungroup finishes migration 9 once new_channels holds the channels: it
@@ -422,7 +430,7 @@ func parseTime(s string) time.Time {
 
 // --- libraries ---
 
-const libraryColumns = `id,name,description,kind,created_at,updated_at`
+const libraryColumns = `id,name,description,kind,is_default,created_at,updated_at`
 
 // sharedKind is the kind of the shared library.
 const sharedKind = "shared"
@@ -437,16 +445,28 @@ func (d *DB) CreateLibrary(ctx context.Context, lib domain.Library) (domain.Libr
 	if err := assignIdentity(&lib.ID, &lib.CreatedAt, &lib.UpdatedAt); err != nil {
 		return lib, err
 	}
-	_, err := d.db.ExecContext(ctx, `INSERT INTO libraries (`+libraryColumns+`) VALUES (?,?,?,'',?,?)`,
-		lib.ID, lib.Name, lib.Description, timestamp(lib.CreatedAt), timestamp(lib.UpdatedAt))
+	err := d.inTx(ctx, func(tx *sql.Tx) error {
+		if lib.Default {
+			if _, err := tx.ExecContext(ctx, `UPDATE libraries SET is_default=0 WHERE is_default=1`); err != nil {
+				return err
+			}
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO libraries (`+libraryColumns+`) VALUES (?,?,?,'',?,?,?)`,
+			lib.ID, lib.Name, lib.Description, lib.Default, timestamp(lib.CreatedAt), timestamp(lib.UpdatedAt))
+		return conflict(err, "a library named %q", lib.Name)
+	})
 	if err != nil {
-		return lib, conflict(fmt.Errorf("create library: %w", err), "a library named %q", lib.Name)
+		return lib, fmt.Errorf("create library: %w", err)
 	}
 	return lib, nil
 }
 
 func (d *DB) GetLibrary(ctx context.Context, idOrName string) (domain.Library, error) {
-	lib, err := scanLibrary(d.db.QueryRowContext(ctx, `SELECT `+libraryColumns+` FROM libraries WHERE id=? OR name=?`, idOrName, idOrName))
+	q, args := `SELECT `+libraryColumns+` FROM libraries WHERE id=? OR name=?`, []any{idOrName, idOrName}
+	if idOrName == "" {
+		q, args, idOrName = `SELECT `+libraryColumns+` FROM libraries WHERE is_default=1`, nil, "default"
+	}
+	lib, err := scanLibrary(d.db.QueryRowContext(ctx, q, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return lib, fmt.Errorf("library %q: %w", idOrName, store.ErrNotFound)
 	}
@@ -475,18 +495,41 @@ func (d *DB) UpdateLibrary(ctx context.Context, lib domain.Library) (domain.Libr
 		return lib, err
 	}
 	lib.UpdatedAt = time.Now().UTC()
-	res, err := d.db.ExecContext(ctx, `UPDATE libraries SET name=?,description=?,updated_at=? WHERE id=?`,
-		lib.Name, lib.Description, timestamp(lib.UpdatedAt), lib.ID)
+	err := d.inTx(ctx, func(tx *sql.Tx) error {
+		var kind string
+		var wasDefault bool
+		err := tx.QueryRowContext(ctx, `SELECT kind, is_default FROM libraries WHERE id=?`, lib.ID).Scan(&kind, &wasDefault)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("library %q: %w", lib.ID, store.ErrNotFound)
+		}
+		if err != nil {
+			return err
+		}
+		switch {
+		case lib.Default && kind == sharedKind:
+			return domain.Invalidf("the shared library can't be the default library")
+		case !lib.Default && wasDefault:
+			return domain.Invalidf("there is always a default library; make another library the default instead")
+		case lib.Default && !wasDefault:
+			if _, err := tx.ExecContext(ctx, `UPDATE libraries SET is_default=0 WHERE is_default=1`); err != nil {
+				return err
+			}
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE libraries SET name=?,description=?,is_default=?,updated_at=? WHERE id=?`,
+			lib.Name, lib.Description, lib.Default, timestamp(lib.UpdatedAt), lib.ID)
+		return conflict(err, "a library named %q", lib.Name)
+	})
 	if err != nil {
-		return lib, conflict(fmt.Errorf("update library: %w", err), "a library named %q", lib.Name)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return lib, fmt.Errorf("library %q: %w", lib.ID, store.ErrNotFound)
+		return lib, fmt.Errorf("update library: %w", err)
 	}
 	return lib, nil
 }
 
 func (d *DB) DeleteLibrary(ctx context.Context, id string) error {
+	var isDefault bool
+	if err := d.db.QueryRowContext(ctx, `SELECT is_default FROM libraries WHERE id=?`, id).Scan(&isDefault); err == nil && isDefault {
+		return fmt.Errorf("the default library can't be deleted; make another library the default first: %w", store.ErrConflict)
+	}
 	res, err := d.db.ExecContext(ctx, `DELETE FROM libraries WHERE id=?`, id)
 	if err != nil {
 		return fmt.Errorf("delete library: %w", err)
@@ -502,7 +545,7 @@ type scanner interface{ Scan(...any) error }
 func scanLibrary(r scanner) (domain.Library, error) {
 	var lib domain.Library
 	var created, updated, kind string
-	if err := r.Scan(&lib.ID, &lib.Name, &lib.Description, &kind, &created, &updated); err != nil {
+	if err := r.Scan(&lib.ID, &lib.Name, &lib.Description, &kind, &lib.Default, &created, &updated); err != nil {
 		return lib, err
 	}
 	lib.Shared = kind == sharedKind

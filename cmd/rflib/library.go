@@ -15,8 +15,10 @@ func newLibraryCommand() *cobra.Command {
 		Long: `A library is a separate collection of channels, radios, and saved
 searches; names only have to be unique within one. One library, "shared",
 holds channels shared with everyone (see rflib shared). Every command works
-on one library: --library NAME, else $RFLIB_LIBRARY, else "default", which
-every database starts with.
+on one library: --library NAME, else $RFLIB_LIBRARY, else the default
+library. Every database starts with one named "default"; it can be renamed,
+and another library can be made the default with
+rflib library update NAME --default.
 
 To copy channels between libraries, export from one and import into the
 other:
@@ -65,7 +67,7 @@ func newLibraryListCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				rows[i] = libraryRow{lib, len(cs), len(rs), lib.Name == current || lib.ID == current}
+				rows[i] = libraryRow{lib, len(cs), len(rs), lib.Name == current || lib.ID == current || current == "" && lib.Default}
 			}
 			return libraryListing.write(cmd, rows)
 		})
@@ -85,16 +87,18 @@ var libraryListing = listing[libraryRow]{
 		{name: "name", text: func(r libraryRow) string { return r.Name }},
 		{name: "channels", text: func(r libraryRow) string { return strconv.Itoa(r.channels) }, json: func(r libraryRow) any { return r.channels }},
 		{name: "radios", text: func(r libraryRow) string { return strconv.Itoa(r.radios) }, json: func(r libraryRow) any { return r.radios }},
+		{name: "default", text: func(r libraryRow) string { return mark(r.Default, "default") }, json: func(r libraryRow) any { return r.Default }},
 		{name: "description", text: func(r libraryRow) string { return r.Description }},
 		{name: "id", id: true, text: func(r libraryRow) string { return r.ID }},
 	},
-	defaults: []string{"in_use", "name", "channels", "radios", "description"},
+	defaults: []string{"in_use", "name", "default", "channels", "radios", "description"},
 }
 
 func newLibraryUpdateCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "update LIBRARY", Short: "Rename or describe a library; only supplied flags change", Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{Use: "update LIBRARY", Short: "Rename, describe, or make a library the default; only supplied flags change", Args: cobra.ExactArgs(1)}
 	cmd.Flags().String("name", "", "New name")
 	cmd.Flags().String("description", "", "Description")
+	cmd.Flags().Bool("default", false, "Make this the default library, used when --library isn't given")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return withDB(cmd, func(d store.Store) error {
 			lib, err := d.GetLibrary(ctx(cmd), args[0])
@@ -109,6 +113,9 @@ func newLibraryUpdateCommand() *cobra.Command {
 			}
 			if cmd.Flags().Changed("description") {
 				lib.Description = getString(cmd, "description")
+			}
+			if cmd.Flags().Changed("default") {
+				lib.Default, _ = cmd.Flags().GetBool("default")
 			}
 			_, err = d.UpdateLibrary(ctx(cmd), lib)
 			return err

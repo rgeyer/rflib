@@ -14,13 +14,14 @@ import (
 
 	"github.com/ryan/rflib/internal/api"
 	"github.com/ryan/rflib/internal/store"
+	"github.com/ryan/rflib/web"
 	"github.com/spf13/cobra"
 )
 
 func newServeCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "serve", Short: "Serve the JSON HTTP API", Args: cobra.NoArgs,
-		Long: `Serve the JSON HTTP API on --addr, under /api/v1. GET /api/v1/openapi.yaml
-describes it.
+	cmd := &cobra.Command{Use: "serve", Short: "Serve the web interface and the JSON HTTP API", Args: cobra.NoArgs,
+		Long: `Serve the web interface on --addr, and the JSON HTTP API under /api/v1.
+GET /api/v1/openapi.yaml describes the API.
 
 Requests need "Authorization: Bearer TOKEN" when $RFLIB_API_TOKEN is set.
 Serving on anything but this machine (a loopback address) requires it, since
@@ -34,7 +35,10 @@ anyone who can reach the port could otherwise change the library.`}
 		}
 		return withDB(cmd, func(d store.Store) error {
 			logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
-			srv := &http.Server{Addr: addr, Handler: api.New(d, api.Options{Token: token, Logger: logger}), ReadHeaderTimeout: 10 * time.Second}
+			mux := http.NewServeMux()
+			mux.Handle(api.Prefix+"/", api.New(d, api.Options{Token: token, Logger: logger}))
+			mux.Handle("/", web.Handler())
+			srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 			ln, err := net.Listen("tcp", addr)
 			if err != nil {
 				return err
@@ -47,7 +51,10 @@ anyone who can reach the port could otherwise change the library.`}
 				defer cancel()
 				_ = srv.Shutdown(shutdown)
 			}()
-			fmt.Fprintf(cmd.ErrOrStderr(), "Serving the API on http://%s%s\n", ln.Addr(), api.Prefix)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Serving rflib on http://%s/ (the API is under %s)\n", ln.Addr(), api.Prefix)
+			if !web.Built() {
+				fmt.Fprintln(cmd.ErrOrStderr(), "This build has no web interface; run make web, then build rflib again.")
+			}
 			if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 				return err
 			}

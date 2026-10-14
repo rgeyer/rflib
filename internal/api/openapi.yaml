@@ -88,7 +88,7 @@ paths:
               schema: {$ref: "#/components/schemas/Library"}
         default: {$ref: "#/components/responses/Error"}
     patch:
-      summary: Rename or describe a library
+      summary: Rename, describe, or make a library the default
       requestBody:
         required: true
         content:
@@ -102,7 +102,7 @@ paths:
               schema: {$ref: "#/components/schemas/Library"}
         default: {$ref: "#/components/responses/Error"}
     delete:
-      summary: Delete a library and everything in it (not the shared library)
+      summary: Delete a library and everything in it (not the shared or default library)
       responses:
         "204": {description: Deleted}
         default: {$ref: "#/components/responses/Error"}
@@ -595,6 +595,8 @@ paths:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
     get:
       summary: Each memory as it will be programmed
+      parameters:
+        - {name: q, in: query, description: "A query on the memories' channels; memory numbers and warnings stay the whole radio's", schema: {type: string}}
       responses:
         "200": {$ref: "#/components/responses/Memories"}
         default: {$ref: "#/components/responses/Error"}
@@ -950,12 +952,13 @@ components:
 
     Library:
       type: object
-      required: [id, name, description, shared, created_at, updated_at]
+      required: [id, name, description, shared, default, created_at, updated_at]
       properties:
         id: {type: string}
         name: {type: string}
         description: {type: string}
         shared: {type: boolean, description: The one library of shared channels}
+        default: {type: boolean, description: "The library used when none is chosen; exactly one, never the shared library"}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     LibraryInput:
@@ -964,6 +967,7 @@ components:
       properties:
         name: {type: string}
         description: {type: string}
+        default: {type: boolean, description: "true makes this the default library in place of the old one; false is refused on the default library"}
 
     Location:
       type: object

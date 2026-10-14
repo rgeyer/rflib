@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -124,6 +125,7 @@ func (s *server) listLibraries(w http.ResponseWriter, r *http.Request) error {
 type libraryInput struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
+	Default     *bool   `json:"default"`
 }
 
 func (s *server) createLibrary(w http.ResponseWriter, r *http.Request) error {
@@ -137,6 +139,9 @@ func (s *server) createLibrary(w http.ResponseWriter, r *http.Request) error {
 	}
 	if in.Description != nil {
 		lib.Description = *in.Description
+	}
+	if in.Default != nil {
+		lib.Default = *in.Default
 	}
 	lib, err := s.st.CreateLibrary(ctx(r), lib)
 	if err != nil {
@@ -165,6 +170,9 @@ func (s *server) updateLibrary(w http.ResponseWriter, r *http.Request, a *app.Se
 	}
 	if in.Description != nil {
 		lib.Description = *in.Description
+	}
+	if in.Default != nil {
+		lib.Default = *in.Default
 	}
 	lib, err := s.st.UpdateLibrary(ctx(r), lib)
 	if err != nil {
@@ -953,7 +961,21 @@ func (s *server) memories(w http.ResponseWriter, r *http.Request, a *app.Service
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"memories": newMemories(p, es), "warnings": nonNil(p.Warnings)})
+	ms := newMemories(p, es)
+	// A search only filters the rows: memory numbers and warnings are the
+	// whole radio's.
+	if q := r.URL.Query().Get("q"); strings.TrimSpace(q) != "" {
+		cs, err := a.Find(ctx(r), q)
+		if err != nil {
+			return err
+		}
+		match := make(map[string]bool, len(cs))
+		for _, c := range cs {
+			match[c.ID] = true
+		}
+		ms = slices.DeleteFunc(ms, func(m Memory) bool { return !match[m.Channel.ID] })
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"memories": ms, "warnings": nonNil(p.Warnings)})
 	return nil
 }
 
