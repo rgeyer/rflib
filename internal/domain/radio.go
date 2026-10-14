@@ -41,6 +41,9 @@ type RadioSource struct {
 	// SectionStart, when set, starts the source's first channel at that
 	// memory number.
 	SectionStart *int
+	// KeepSorted re-sorts the source's channels on every sync, as
+	// `radio sync --resort` does.
+	KeepSorted bool
 }
 
 // SortOrders are the orders channels can be added in.
@@ -151,12 +154,13 @@ func ValidateRadio(r Radio) error {
 	return nil
 }
 
-// SortChannels orders channels by name (the order they're listed in, so it
-// leaves them be), freq (receive frequency), or group (by group name,
-// ungrouped last). The sort is stable.
+// SortChannels orders channels by name (see CompareChannels), freq
+// (receive frequency), or group (by group name, ungrouped last). The sort
+// is stable.
 func SortChannels(cs []Channel, by string) error {
 	switch by {
 	case "name":
+		slices.SortStableFunc(cs, CompareChannels)
 	case "freq":
 		slices.SortStableFunc(cs, func(a, b Channel) int { return cmp.Compare(a.ReceiveHz, b.ReceiveHz) })
 	case "group":
@@ -171,4 +175,43 @@ func SortChannels(cs []Channel, by string) error {
 		return fmt.Errorf("unknown sort %q; use name, freq, or group", by)
 	}
 	return nil
+}
+
+// CompareChannels orders channels by name (see CompareNames), then by
+// receive frequency.
+func CompareChannels(a, b Channel) int {
+	return cmp.Or(CompareNames(a.Name, b.Name), cmp.Compare(a.ReceiveHz, b.ReceiveHz))
+}
+
+// CompareNames orders names with their runs of digits compared as numbers,
+// so "GMRS 2" comes before "GMRS 10" and "GMRS 15" before "GMRS 15R". The
+// rest compares byte by byte. Of numbers equal in value, the one with fewer
+// leading zeros comes first.
+func CompareNames(a, b string) int {
+	zeros := 0 // the first difference in leading zeros, for a tie
+	for a != "" && b != "" {
+		da, db := digitPrefix(a), digitPrefix(b)
+		if da == 0 || db == 0 {
+			if c := cmp.Compare(a[0], b[0]); c != 0 {
+				return c
+			}
+			a, b = a[1:], b[1:]
+			continue
+		}
+		na, nb := strings.TrimLeft(a[:da], "0"), strings.TrimLeft(b[:db], "0")
+		if c := cmp.Or(cmp.Compare(len(na), len(nb)), cmp.Compare(na, nb)); c != 0 {
+			return c
+		}
+		zeros = cmp.Or(zeros, cmp.Compare(da, db))
+		a, b = a[da:], b[db:]
+	}
+	return cmp.Or(cmp.Compare(len(a), len(b)), zeros)
+}
+
+func digitPrefix(s string) int {
+	n := 0
+	for n < len(s) && s[n] >= '0' && s[n] <= '9' {
+		n++
+	}
+	return n
 }

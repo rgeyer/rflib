@@ -68,7 +68,8 @@ type Library interface {
 	// then a new one is assigned.
 	CreateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error)
 	GetChannel(ctx context.Context, id string) (domain.Channel, error)
-	// ListChannels returns every channel, with its group, in name order.
+	// ListChannels returns every channel, with its group, in
+	// domain.CompareChannels order.
 	ListChannels(ctx context.Context) ([]domain.Channel, error)
 	UpdateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error)
 	// DeleteChannel deletes a channel and takes it off every radio.
@@ -99,8 +100,13 @@ type Library interface {
 	// and returns how many were removed.
 	RemoveRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error)
 	// MoveRadioChannel moves a channel to index to (from 0) in the radio's
-	// list; an index past the end moves it last.
+	// list; an index past the end moves it last. The channel no longer
+	// belongs to the source that added it, as if added by hand.
 	MoveRadioChannel(ctx context.Context, radioID, channelID string, to int) error
+	// ReorderRadioChannels puts a radio's channels in the order given,
+	// which must list each of them once. Section starts stay at their
+	// places in the list; overrides and sources go with their channels.
+	ReorderRadioChannels(ctx context.Context, radioID string, channelIDs []string) error
 	// SetRadioEntry stores a radio's overrides for one of its channels: the
 	// entry's SectionStart, Name, Power, and Skip.
 	SetRadioEntry(ctx context.Context, radioID string, e domain.RadioEntry) error
@@ -114,7 +120,8 @@ type Library interface {
 	AllRadioSources(ctx context.Context) ([]domain.RadioSource, error)
 	// AddRadioSource appends a source to its radio's sources.
 	AddRadioSource(ctx context.Context, src domain.RadioSource) (domain.RadioSource, error)
-	// UpdateRadioSource changes a source's query, sort, and section start.
+	// UpdateRadioSource changes a source's query, sort, section start, and
+	// KeepSorted.
 	// A changed section start moves to the source's first channel now; a
 	// removed one is taken off it, if it is still the source's.
 	UpdateRadioSource(ctx context.Context, src domain.RadioSource) error

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -290,6 +291,8 @@ func (l *library) listChannels(ctx context.Context, and string, args ...any) ([]
 		}
 		out = append(out, c)
 	}
+	// SQL's order breaks ties stably; numbers in names need Go's.
+	slices.SortStableFunc(out, domain.CompareChannels)
 	return out, rows.Err()
 }
 

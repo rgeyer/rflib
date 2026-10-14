@@ -103,8 +103,9 @@ func orNone(d string) string {
 }
 
 // choosePower maps an intent to one of the model's levels and holds it to
-// the channel's service cap. Without an intent the format's default
-// applies, except under a cap, where the highest legal level is chosen.
+// the channel's service cap. Without an intent the highest legal level is
+// chosen under a cap, and high otherwise: a radio with per-memory levels
+// needs one on every memory.
 func choosePower(m model.Model, c domain.Channel, intent domain.PowerIntent, warn func(string, ...any)) *domain.PowerLevel {
 	capWatts, capped := domain.ServiceCapWatts(c)
 	if len(m.Power) == 0 {
@@ -129,7 +130,7 @@ func choosePower(m model.Model, c domain.Channel, intent domain.PowerIntent, war
 		}
 	}
 	if !ok {
-		return nil
+		level, _ = m.Level(domain.PowerHigh)
 	}
 	return &domain.PowerLevel{Label: level.Label, Watts: level.Watts}
 }

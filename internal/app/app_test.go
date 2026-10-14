@@ -139,7 +139,7 @@ func TestSyncPlacesAndClaims(t *testing.T) {
 	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "radioddity-uv5g"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Sync(ctx, "HT", false, false); err == nil || !strings.Contains(err.Error(), "no sources") {
+	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err == nil || !strings.Contains(err.Error(), "no sources") {
 		t.Fatalf("sync without sources: %v", err)
 	}
 	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "band:noaa OR service:amateur", Sort: "freq"}); err != nil {
@@ -151,7 +151,7 @@ func TestSyncPlacesAndClaims(t *testing.T) {
 	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "service:noaa OR service:cb"}); err != nil {
 		t.Fatal(err)
 	}
-	dry, err := s.Sync(ctx, "HT", true, false)
+	dry, err := s.Sync(ctx, "HT", SyncOptions{DryRun: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,15 +163,74 @@ func TestSyncPlacesAndClaims(t *testing.T) {
 	if _, es, _ := s.RadioEntries(ctx, "HT"); len(es) != 0 {
 		t.Fatal("dry run changed the radio")
 	}
-	res, err := s.Sync(ctx, "HT", false, false)
+	res, err := s.Sync(ctx, "HT", SyncOptions{})
 	if err != nil || res.Added() != 3 || res.PlanErr != nil {
 		t.Fatalf("sync = %+v, %v", res, err)
 	}
-	if again, _ := s.Sync(ctx, "HT", false, false); again.Added() != 0 {
+	if again, _ := s.Sync(ctx, "HT", SyncOptions{}); again.Added() != 0 {
 		t.Errorf("second sync added %d", again.Added())
 	}
 	if err := s.MoveChannel(ctx, "HT", "missing", Move{Top: true}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("move missing: %v", err)
+	}
+}
+
+func TestSyncResorts(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	for _, n := range []string{"GMRS 15", "GMRS 2", "GMRS 1", "GMRS 10"} {
+		add(t, s, n, 462.55, domain.ServiceGMRS)
+	}
+	mine := add(t, s, "Mine", 146.52, domain.ServiceAmateur)
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	twenty := 20
+	_, src, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "service:gmrs", Sort: "name", SectionStart: &twenty})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Put the source's channels out of order, as an older sort left them,
+	// with a hand-added channel among them.
+	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	_, es, _ := s.RadioEntries(ctx, "HT")
+	order := []string{es[3].Channel.ID, es[2].Channel.ID, es[1].Channel.ID, es[0].Channel.ID}
+	if err := s.lib.ReorderRadioChannels(ctx, src.RadioID, order); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{mine.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.lib.ReorderRadioChannels(ctx, src.RadioID, []string{order[0], order[1], mine.ID, order[2], order[3]}); err != nil {
+		t.Fatal(err)
+	}
+	listed := func() string {
+		_, es, _ := s.RadioEntries(ctx, "HT")
+		var out []string
+		for _, e := range es {
+			out = append(out, e.Channel.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	before := listed()
+	if dry, err := s.Sync(ctx, "HT", SyncOptions{DryRun: true, Resort: true}); err != nil || dry.Resorted() != 4 || listed() != before {
+		t.Fatalf("dry run: %d moved, %v; list %s", dry.Resorted(), err, listed())
+	}
+	if plain, _ := s.Sync(ctx, "HT", SyncOptions{}); plain.Resorted() != 0 {
+		t.Errorf("a plain sync re-sorted %d", plain.Resorted())
+	}
+	res, err := s.Sync(ctx, "HT", SyncOptions{Resort: true})
+	if err != nil || res.Resorted() != 4 || res.PlanErr != nil {
+		t.Fatalf("resort: %+v, %v", res, err)
+	}
+	if got := listed(); got != "GMRS 1,GMRS 2,Mine,GMRS 10,GMRS 15" {
+		t.Errorf("after resort: %s", got)
+	}
+	_, es, _ = s.RadioEntries(ctx, "HT")
+	if es[0].SectionStart == nil || *es[0].SectionStart != 20 {
+		t.Errorf("section start left the first slot: %+v", es[0])
 	}
 }
 

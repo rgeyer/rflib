@@ -445,15 +445,24 @@ func newRadioSyncCommand() *cobra.Command {
 		Long: `Add channels matching each of the radio's sources that aren't on it yet.
 Each source's new channels go after the last channel it added, in the
 source's sort order; an earlier source claims a channel first. Channels
-outside the radio's bands are skipped unless --any-band. Nothing is removed
-or reordered.`}
-	cmd.Flags().Bool("dry-run", false, "List what would be added without changing the radio")
+outside the radio's bands are skipped unless --any-band. Nothing is removed.
+
+Channels already on the radio stay where they are, except in sources set to
+--keep-sorted, or in every source with --resort. Re-sorting puts a source's
+channels in its sort order within the places they hold in the list, so
+memory numbers change and the radio needs programming again. Channels added
+or moved by hand keep their places, and section starts stay put.`}
+	cmd.Flags().Bool("dry-run", false, "List what would change without changing the radio")
+	cmd.Flags().Bool("resort", false, "Also re-sort every source's channels already on the radio")
 	anyBandFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		anyBand, _ := cmd.Flags().GetBool("any-band")
+		var opts app.SyncOptions
+		opts.DryRun, _ = cmd.Flags().GetBool("dry-run")
+		opts.AnyBand, _ = cmd.Flags().GetBool("any-band")
+		opts.Resort, _ = cmd.Flags().GetBool("resort")
+		dryRun := opts.DryRun
 		return withApp(cmd, func(a *app.Service) error {
-			res, err := a.Sync(ctx(cmd), args[0], dryRun, anyBand)
+			res, err := a.Sync(ctx(cmd), args[0], opts)
 			if err != nil {
 				return err
 			}
@@ -467,16 +476,25 @@ or reordered.`}
 					for _, c := range ss.Skipped {
 						fmt.Fprintf(out, "would skip\tsource %d\t%s\t%s\toutside the radio's bands\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
 					}
+					if ss.Resorted > 0 {
+						fmt.Fprintf(out, "would re-sort\tsource %d\t%d channels\n", n, ss.Resorted)
+					}
 					continue
 				}
 				if len(ss.Add) > 0 || len(ss.Skipped) > 0 {
 					fmt.Fprintf(out, "%s: added %d%s\n", app.SourceLabel(ss.Source), ss.Added, skippedNote(len(ss.Skipped)))
+				}
+				if ss.Resorted > 0 {
+					fmt.Fprintf(out, "%s: re-sorted %d\n", app.SourceLabel(ss.Source), ss.Resorted)
 				}
 			}
 			if dryRun {
 				return nil
 			}
 			fmt.Fprintf(out, "Added %d channels to %s\n", res.Added(), res.Radio.Name)
+			if n := res.Resorted(); n > 0 {
+				fmt.Fprintf(out, "Re-sorted %d channels; program the radio again\n", n)
+			}
 			if res.PlanErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s no longer exports: %v\n", res.Radio.Name, res.PlanErr)
 			}
@@ -511,8 +529,16 @@ func writeSources(w io.Writer, sources []domain.RadioSource, es []domain.RadioEn
 		if src.SectionStart != nil {
 			section = fmt.Sprintf("§%d", *src.SectionStart)
 		}
-		fmt.Fprintf(w, "%d\t%s\tsort %s\t%d channels\t%s\n", src.Position+1, orDefault(section, "-"), src.Sort, count[src.ID], src.Query)
+		sort := src.Sort
+		if src.KeepSorted {
+			sort += ", kept sorted"
+		}
+		fmt.Fprintf(w, "%d\t%s\tsort %s\t%d channels\t%s\n", src.Position+1, orDefault(section, "-"), sort, count[src.ID], src.Query)
 	}
+}
+
+func keepSortedFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("keep-sorted", false, "Re-sort the source's channels on every radio sync (--keep-sorted=false stops)")
 }
 
 // sourceNumber parses a source number argument.
@@ -554,12 +580,14 @@ func newRadioSourcesAddCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "add RADIO QUERY...", Short: "Add a source to the end of a radio's sources", Args: cobra.MinimumNArgs(2)}
 	cmd.Flags().String("sort", "name", "Order its channels are added in: name, freq, or group")
 	cmd.Flags().String("section-start", "", "Start the source's channels at this memory number")
+	keepSortedFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		section, err := parseSectionStart(getString(cmd, "section-start"))
 		if err != nil {
 			return err
 		}
-		src := domain.RadioSource{Query: strings.Join(args[1:], " "), Sort: getString(cmd, "sort"), SectionStart: section}
+		keep, _ := cmd.Flags().GetBool("keep-sorted")
+		src := domain.RadioSource{Query: strings.Join(args[1:], " "), Sort: getString(cmd, "sort"), SectionStart: section, KeepSorted: keep}
 		return withApp(cmd, func(a *app.Service) error {
 			r, src, err := a.AddSource(ctx(cmd), args[0], src)
 			if err == nil {
@@ -579,6 +607,7 @@ first channel now.`}
 	cmd.Flags().String("query", "", "New query")
 	cmd.Flags().String("sort", "", "Order its channels are added in: name, freq, or group")
 	cmd.Flags().String("section-start", "", "Start the source's channels at this memory number (empty ends it)")
+	keepSortedFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		n, err := sourceNumber(args[1])
 		if err != nil {
@@ -599,6 +628,9 @@ first channel now.`}
 				if src.SectionStart, err = parseSectionStart(getString(cmd, "section-start")); err != nil {
 					return err
 				}
+			}
+			if cmd.Flags().Changed("keep-sorted") {
+				src.KeepSorted, _ = cmd.Flags().GetBool("keep-sorted")
 			}
 			return a.UpdateSource(ctx(cmd), src)
 		})
