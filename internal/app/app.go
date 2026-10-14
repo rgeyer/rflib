@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/importer"
@@ -42,20 +43,30 @@ func Open(ctx context.Context, s store.Store, library string) (*Service, error) 
 	return &Service{lib: s.Library(lib.ID), info: lib, st: s}, nil
 }
 
-// errSharedReadOnly is the shared library refusing an everyday change.
-var errSharedReadOnly = errors.New("the shared library changes only through rflib shared commands")
+// ErrReadOnly is the shared library refusing an everyday change (HTTP
+// 403): it changes only through the shared operations.
+var ErrReadOnly = errors.New("the shared library changes only through rflib shared commands")
 
 // writable refuses changes to the shared library outside the shared
 // operations.
 func (s *Service) writable() error {
 	if s.info.Shared {
-		return errSharedReadOnly
+		return ErrReadOnly
 	}
 	return nil
 }
 
 // LibraryID is the ID of the Service's library.
 func (s *Service) LibraryID() string { return s.lib.ID() }
+
+// Library is the Service's library record (empty from New).
+func (s *Service) Library() domain.Library { return s.info }
+
+// ChangedSince returns the library's channels changed after since, and a
+// cursor for next time; see store.Library.ChangedSince.
+func (s *Service) ChangedSince(ctx context.Context, since time.Time) ([]domain.Channel, time.Time, error) {
+	return s.lib.ChangedSince(ctx, since)
+}
 
 // --- channels ---
 
@@ -159,7 +170,7 @@ func (s *Service) radioOrModel(ctx context.Context, ref string) (model.Model, er
 	if m, err := model.Find(ref); err == nil {
 		return m, nil
 	}
-	return model.Model{}, fmt.Errorf("no radio or radio model named %q", ref)
+	return model.Model{}, domain.Invalidf("no radio or radio model named %q", ref)
 }
 
 // FindChannels returns the channels matching a query, in name order. With
@@ -222,7 +233,7 @@ func (s *Service) Import(ctx context.Context, b importer.Batch, opts importer.Op
 				return importer.Summary{}, err
 			}
 			c.Tags, c.Notes, c.CopiedFrom, c.Link = c.AllTags(), c.AllNotes(), c.Link.SharedID, nil
-			copied = append(copied, importer.RowError{Row: r.Row, Err: fmt.Errorf("%s: its shared channel isn't in this database's shared list, so it's a private copy", c.Name)})
+			copied = append(copied, importer.RowError{Row: r.Row, Err: domain.Invalidf("%s: its shared channel isn't in this database's shared list, so it's a private copy", c.Name)})
 		}
 		c.Status, c.StatusNote, c.BackOn, c.ReplacedBy = domain.StatusActive, "", nil, ""
 	}

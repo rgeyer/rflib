@@ -63,13 +63,13 @@ func isNumeric(source string) bool {
 func unsupported(col Column, v string) error {
 	switch col.Source {
 	case "tone_mode":
-		return fmt.Errorf("%s (tone mode %q) is not supported by this profile", toneModeHelp[v], v)
+		return domain.Invalidf("%s (tone mode %q) is not supported by this profile", toneModeHelp[v], v)
 	case "mode":
-		return fmt.Errorf("mode %s is not supported by this profile", v)
+		return domain.Invalidf("mode %s is not supported by this profile", v)
 	case "duplex":
-		return fmt.Errorf("duplex %q is not supported by this profile", v)
+		return domain.Invalidf("duplex %q is not supported by this profile", v)
 	}
-	return fmt.Errorf("column %s has no mapping for %q", col.Name, v)
+	return domain.Invalidf("column %s has no mapping for %q", col.Name, v)
 }
 
 func (x Exporter) record(c domain.Channel, location int) ([]string, error) {
@@ -77,12 +77,12 @@ func (x Exporter) record(c domain.Channel, location int) ([]string, error) {
 	if x.Profile.StandardTonesOnly {
 		for _, t := range []domain.Tone{tx, rx} {
 			if !domain.IsStandardTone(t) {
-				return nil, fmt.Errorf("tone %s is not a standard CTCSS/DCS tone", domain.FormatTone(t))
+				return nil, domain.Invalidf("tone %s is not a standard CTCSS/DCS tone", domain.FormatTone(t))
 			}
 		}
 	}
 	if (tx.Inverted || rx.Inverted) && !x.hasSource("dcs_polarity") {
-		return nil, fmt.Errorf("inverted DCS is not supported by this profile")
+		return nil, domain.Invalidf("inverted DCS is not supported by this profile")
 	}
 	r := row{c: c, location: location, tx: tx, rx: rx}
 	rec := make([]string, len(x.Profile.Columns))
@@ -115,7 +115,7 @@ func (x Exporter) Validate(c domain.Channel) error {
 func (x Exporter) Export(w io.Writer, channels []domain.Channel) error {
 	p := x.Profile
 	if p.Slots > 0 && len(channels) > p.Slots {
-		return fmt.Errorf("profile %s holds %d memories; %d channels selected", p.Name, p.Slots, len(channels))
+		return domain.Invalidf("profile %s holds %d memories; %d channels selected", p.Name, p.Slots, len(channels))
 	}
 	var rows [][]string
 	if p.Header {
@@ -136,7 +136,7 @@ func (x Exporter) Export(w io.Writer, channels []domain.Channel) error {
 	byLoc := make(map[int][]string, len(channels))
 	for i, c := range channels {
 		if p.Slots > 0 && (locs[i] < x.start() || locs[i] >= x.start()+p.Slots) {
-			errs = append(errs, fmt.Errorf("channel %q: memory %d is outside the profile's %d memories", c.Name, locs[i], p.Slots))
+			errs = append(errs, domain.Invalidf("channel %q: memory %d is outside the profile's %d memories", c.Name, locs[i], p.Slots))
 			continue
 		}
 		rec, err := x.record(c, locs[i])

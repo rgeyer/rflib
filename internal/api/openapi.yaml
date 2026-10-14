@@ -1,0 +1,1285 @@
+openapi: 3.0.3
+info:
+  title: rflib API
+  version: "1"
+  description: |
+    rflib's JSON HTTP API: libraries of radio channels, the radios they're
+    programmed into, saved searches, and the shared channel list.
+
+    Frequencies are exact integer Hz. Tones are `none`, `ctcss:100.000`,
+    `dcs:023`, or `dcs:023:inverted`. Queries use rflib's search language
+    (`band:2m is:repeater`, `in:shared`, `status:off-air`; see the README).
+    A library is named by its name or ID; a channel by its ID or a unique
+    prefix of four or more characters.
+
+    Errors are `{"error": {"code", "message"}}`: 400 `invalid` for a request
+    to fix, 401 `unauthorized`, 403 `read_only` for everyday changes to the
+    shared library, 404 `not_found`, 409 `conflict` for a name in use, 413
+    `too_large`, and 500 `internal`.
+servers:
+  - url: /api/v1
+security:
+  - bearer: []
+
+paths:
+  /health:
+    get:
+      summary: Report that the server and its database are ready
+      security: []
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, enum: [ok]}
+        "500": {$ref: "#/components/responses/Error"}
+  /openapi.yaml:
+    get:
+      summary: This document
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI document
+          content:
+            application/yaml:
+              schema: {type: object}
+
+  /libraries:
+    get:
+      summary: List libraries
+      responses:
+        "200":
+          description: Libraries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [libraries]
+                properties:
+                  libraries: {type: array, items: {$ref: "#/components/schemas/Library"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Create a library
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/LibraryInput"}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Library"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    get:
+      summary: Get a library
+      responses:
+        "200":
+          description: The library
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Library"}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      summary: Rename or describe a library
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/LibraryInput"}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Library"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      summary: Delete a library and everything in it (not the shared library)
+      responses:
+        "204": {description: Deleted}
+        default: {$ref: "#/components/responses/Error"}
+
+  /libraries/{lib}/channels:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    get:
+      summary: List or search channels
+      parameters:
+        - {name: q, in: query, description: "A query; in:shared searches the whole shared list", schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 0}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        "200":
+          description: Channels in name order, and how many matched before limit and offset
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channels, total]
+                properties:
+                  channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                  total: {type: integer}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Create a channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ChannelInput"}
+      responses:
+        "201":
+          description: Created, with band-plan warnings
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/channels/{id}:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/id"}]
+    get:
+      summary: Get a channel
+      responses:
+        "200":
+          description: The channel
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Channel"}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      summary: Change a channel's fields
+      description: |
+        Only the fields given change; null clears tx_hz and location. A
+        link can change only its own tags, notes, skip, power, and short
+        names. In the shared library this is a maintainer correction and
+        needs a reason.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: "#/components/schemas/ChannelInput"}
+              properties:
+                reason: {type: string}
+      responses:
+        "200":
+          description: Updated, with band-plan warnings
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelResult"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      summary: Delete a channel, taking it off every radio
+      responses:
+        "204": {description: Deleted}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/channels/{id}/history:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/id"}]
+    get:
+      summary: A shared channel's revisions, or a link's shared channel's
+      responses:
+        "200":
+          description: Revisions, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revisions]
+                properties:
+                  revisions: {type: array, items: {$ref: "#/components/schemas/Revision"}}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/channels/{id}/status:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/id"}]
+    post:
+      summary: Set a shared channel's status (shared library; maintainer)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/StatusInput"}
+      responses:
+        "200":
+          description: The channel
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Channel"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/channels/bulk-update:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    post:
+      summary: Change many channels at once
+      description: Only tags, skip, power, service, rx_only, and location; all or nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [select, edit]
+              properties:
+                select: {$ref: "#/components/schemas/Selection"}
+                edit: {$ref: "#/components/schemas/ChannelEdit"}
+                dry_run: {type: boolean}
+      responses:
+        "200":
+          description: The channels as changed (or as they would be)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelsResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/channels/bulk-delete:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    post:
+      summary: Delete many channels at once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SelectInput"}
+      responses:
+        "200":
+          description: The channels deleted (or that would be)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelsResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/channels/link:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    post:
+      summary: Link shared channels into the library
+      description: The selection refers to the shared list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [select]
+              properties:
+                select: {$ref: "#/components/schemas/Selection"}
+                tags: {type: array, items: {type: string}}
+      responses:
+        "200":
+          description: New links, and shared channels already linked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [linked, already]
+                properties:
+                  linked: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                  already: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/channels/copy:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    post:
+      summary: Make links into private channels that can be edited
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SelectInput"}
+      responses:
+        "200":
+          description: The copies
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelsResult"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /libraries/{lib}/shared/convert:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    post:
+      summary: Turn private channels that match shared ones into links
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                dry_run: {type: boolean}
+      responses:
+        "200":
+          description: What became links (or would)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [conversions]
+                properties:
+                  conversions: {type: array, items: {$ref: "#/components/schemas/Conversion"}}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/shared/changes:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    get:
+      summary: Links whose shared channel changed since acknowledged
+      responses:
+        "200":
+          description: Changes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changes]
+                properties:
+                  changes: {type: array, items: {$ref: "#/components/schemas/Change"}}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/shared/ack:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    post:
+      summary: Mark links' shared changes as seen
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SelectInput"}
+      responses:
+        "200":
+          description: Links acknowledged
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelsResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/shared/relink:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    post:
+      summary: Move links to retired channels over to their replacements
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SelectInput"}
+      responses:
+        "200":
+          description: Links moved
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelsResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/feed:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    get:
+      summary: Channels changed since a cursor (shared channels have revisions)
+      parameters:
+        - {name: since, in: query, description: "A cursor from a previous response; absent for everything", schema: {type: string, format: date-time}}
+      responses:
+        "200":
+          description: Changed channels, and the cursor to ask with next time
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channels, cursor]
+                properties:
+                  channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                  cursor: {type: string, format: date-time}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/seeds/{seed}/install:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/seed"}]
+    post:
+      summary: Put a built-in list in the shared library and link it
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                tags: {type: array, items: {type: string}}
+                dry_run: {type: boolean}
+      responses:
+        "200":
+          description: What the install did (or would)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [linked, converted, already, shared_added, shared_updated]
+                properties:
+                  linked: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                  converted: {type: array, items: {$ref: "#/components/schemas/Conversion"}}
+                  already: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                  shared_added: {type: integer}
+                  shared_updated: {type: integer}
+        default: {$ref: "#/components/responses/Error"}
+
+  /libraries/{lib}/imports/{format}:
+    parameters:
+      - {$ref: "#/components/parameters/lib"}
+      - {name: format, in: path, required: true, schema: {type: string, enum: [csv, json, chirp, profile]}}
+      - {name: profile, in: query, description: "A profile name, for the profile format", schema: {type: string}}
+      - {name: on_duplicate, in: query, schema: {type: string, enum: [skip, update, create]}}
+      - {name: match, in: query, schema: {type: string, enum: [exact, programmed]}}
+      - {name: tags, in: query, description: "Comma-separated tags for every channel", schema: {type: string}}
+      - {name: service, in: query, schema: {type: string}}
+      - {name: rx_only, in: query, schema: {type: boolean}}
+      - {name: dry_run, in: query, schema: {type: boolean}}
+      - {name: skip_invalid, in: query, schema: {type: boolean}}
+      - {name: reason, in: query, description: "Needed for the shared library", schema: {type: string}}
+    post:
+      summary: Import a file, all or nothing
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: {type: string}
+          application/json:
+            schema: {type: object}
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "200":
+          description: What the import did (or would)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/exports/{format}:
+    parameters:
+      - {$ref: "#/components/parameters/lib"}
+      - {name: format, in: path, required: true, schema: {type: string, enum: [csv, json, chirp, profile]}}
+      - {name: q, in: query, schema: {type: string}}
+      - {name: profile, in: query, schema: {type: string}}
+      - {name: sort, in: query, schema: {type: string, enum: [name, freq]}}
+      - {name: start, in: query, schema: {type: integer}}
+      - {name: max_name_len, in: query, schema: {type: integer}}
+      - {name: dedupe, in: query, schema: {type: string, enum: [none, index, freq]}}
+      - {name: skip_invalid, in: query, schema: {type: boolean}}
+    get:
+      summary: Export channels as a file
+      responses:
+        "200":
+          description: The file. X-Rflib-Count, X-Rflib-Skipped, and X-Rflib-Duplicate-Name describe it.
+          headers:
+            X-Rflib-Count: {schema: {type: integer}}
+          content:
+            text/csv:
+              schema: {type: string}
+            application/json:
+              schema: {type: object}
+        default: {$ref: "#/components/responses/Error"}
+
+  /libraries/{lib}/searches:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    get:
+      summary: List saved searches with their match counts
+      responses:
+        "200":
+          description: Searches
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [searches]
+                properties:
+                  searches: {type: array, items: {$ref: "#/components/schemas/Search"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Save a search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SearchInput"}
+      responses:
+        "201":
+          description: Saved
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Search"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/searches/{name}:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/name"}]
+    get:
+      summary: Get a saved search and what uses it
+      responses:
+        "200":
+          description: The search
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Search"}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      summary: Change a saved search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SearchInput"}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Search"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      summary: Delete a saved search nothing uses
+      responses:
+        "204": {description: Deleted}
+        default: {$ref: "#/components/responses/Error"}
+
+  /libraries/{lib}/radios:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    get:
+      summary: List radios
+      responses:
+        "200":
+          description: Radios
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [radios]
+                properties:
+                  radios: {type: array, items: {$ref: "#/components/schemas/Radio"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Add a radio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RadioInput"}
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Radio"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    get:
+      summary: Get a radio
+      responses:
+        "200":
+          description: The radio
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Radio"}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      summary: Change a radio's settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RadioInput"}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Radio"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      summary: Delete a radio; its channels stay
+      responses:
+        "204": {description: Deleted}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/memories:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    get:
+      summary: Each memory as it will be programmed
+      responses:
+        "200": {$ref: "#/components/responses/Memories"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/channels:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Append channels to the radio's list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                ids: {type: array, items: {type: string}}
+                query: {type: string}
+                sort: {type: string, enum: [name, freq]}
+                any_band: {type: boolean}
+                any_mode: {type: boolean}
+      responses:
+        "200":
+          description: What was added and skipped
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AddResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/channels/remove:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Take channels off the radio; they stay in the library
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SelectInput"}
+      responses:
+        "200":
+          description: The channels taken off (or that would be)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelsResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/channels/set:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Set power or scan overrides on many channels on the radio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [select]
+              properties:
+                select: {$ref: "#/components/schemas/Selection"}
+                power: {type: string, nullable: true}
+                scan: {type: boolean, nullable: true}
+      responses:
+        "200":
+          description: The channels changed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelsResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/channels/{id}:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/id"}]
+    patch:
+      summary: Set the radio's overrides for one channel; null removes one
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: {type: string, nullable: true}
+                power: {type: string, nullable: true}
+                scan: {type: boolean, nullable: true}
+                section_start: {type: integer, nullable: true}
+      responses:
+        "200": {$ref: "#/components/responses/Memories"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/channels/{id}/move:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/id"}]
+    post:
+      summary: Move a channel within the radio's list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              description: Exactly one of these
+              properties:
+                before: {type: string}
+                after: {type: string}
+                to: {type: integer, minimum: 1}
+                top: {type: boolean}
+                bottom: {type: boolean}
+      responses:
+        "200": {$ref: "#/components/responses/Memories"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sources:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    get:
+      summary: The radio's sources
+      responses:
+        "200": {$ref: "#/components/responses/Sources"}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Add a source to the end
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SourceInput"}
+      responses:
+        "201": {$ref: "#/components/responses/Sources"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sources/{n}:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/n"}]
+    patch:
+      summary: Change a source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SourceInput"}
+      responses:
+        "200": {$ref: "#/components/responses/Sources"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      summary: Remove a source; its channels stay unless with_channels
+      parameters:
+        - {name: with_channels, in: query, schema: {type: boolean}}
+      responses:
+        "200":
+          description: How many channels came off
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channels_removed]
+                properties:
+                  channels_removed: {type: integer}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sources/{n}/move:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/n"}]
+    post:
+      summary: Move a source; earlier sources claim channels first
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [to]
+              properties:
+                to: {type: integer, minimum: 1}
+      responses:
+        "200": {$ref: "#/components/responses/Sources"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sync:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Add new channels matching the radio's sources
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                dry_run: {type: boolean}
+                resort: {type: boolean}
+                any_band: {type: boolean}
+                any_mode: {type: boolean}
+      responses:
+        "200":
+          description: What the sync did (or would)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SyncResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/export:
+    parameters:
+      - {$ref: "#/components/parameters/lib"}
+      - {$ref: "#/components/parameters/radio"}
+      - {name: skip_invalid, in: query, schema: {type: boolean}}
+    get:
+      summary: The radio's programming file
+      responses:
+        "200":
+          description: A CSV for CHIRP or the radio's programming software. X-Rflib-Warning headers carry the plan's warnings.
+          headers:
+            X-Rflib-Count: {schema: {type: integer}}
+          content:
+            text/csv:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+
+  /models:
+    get:
+      summary: Radio models
+      responses:
+        "200":
+          description: Models
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models: {type: array, items: {$ref: "#/components/schemas/Model"}}
+        default: {$ref: "#/components/responses/Error"}
+  /models/{name}:
+    parameters: [{$ref: "#/components/parameters/name"}]
+    get:
+      summary: A radio model
+      responses:
+        "200":
+          description: The model
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Model"}
+        default: {$ref: "#/components/responses/Error"}
+  /profiles:
+    get:
+      summary: Export profiles
+      responses:
+        "200":
+          description: Profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles]
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, description, built_in]
+                      properties:
+                        name: {type: string}
+                        description: {type: string}
+                        built_in: {type: boolean}
+        default: {$ref: "#/components/responses/Error"}
+  /seeds:
+    get:
+      summary: Built-in channel lists
+      responses:
+        "200":
+          description: Lists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [seeds]
+                properties:
+                  seeds: {type: array, items: {$ref: "#/components/schemas/Seed"}}
+        default: {$ref: "#/components/responses/Error"}
+  /seeds/{seed}:
+    parameters: [{$ref: "#/components/parameters/seed"}]
+    get:
+      summary: A built-in list and its channels
+      responses:
+        "200":
+          description: The list
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Seed"}
+        default: {$ref: "#/components/responses/Error"}
+  /tags:
+    get:
+      summary: The shared tags and what they mean
+      responses:
+        "200":
+          description: Tags
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tags]
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, meaning]
+                      properties:
+                        name: {type: string}
+                        meaning: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Required when the server has a token ($RFLIB_API_TOKEN).
+
+  parameters:
+    lib: {name: lib, in: path, required: true, description: "A library's name or ID", schema: {type: string}}
+    id: {name: id, in: path, required: true, description: "A channel's ID or unique prefix", schema: {type: string}}
+    radio: {name: radio, in: path, required: true, description: "A radio's name or ID", schema: {type: string}}
+    name: {name: name, in: path, required: true, schema: {type: string}}
+    seed: {name: seed, in: path, required: true, description: "A built-in list, such as us-gmrs", schema: {type: string}}
+    n: {name: n, in: path, required: true, description: "A source's number, from 1", schema: {type: integer, minimum: 1}}
+
+  responses:
+    Error:
+      description: An error
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Memories:
+      description: Each memory as it will be programmed, and the plan's warnings
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [memories, warnings]
+            properties:
+              memories: {type: array, items: {$ref: "#/components/schemas/Memory"}}
+              warnings: {type: array, items: {type: string}}
+    Sources:
+      description: The radio's sources
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [sources]
+            properties:
+              sources: {type: array, items: {$ref: "#/components/schemas/Source"}}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [invalid, unauthorized, read_only, not_found, conflict, too_large, internal]}
+            message: {type: string}
+
+    Library:
+      type: object
+      required: [id, name, description, shared, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        shared: {type: boolean, description: The one library of shared channels}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    LibraryInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string}
+        description: {type: string}
+
+    Location:
+      type: object
+      required: [latitude, longitude, radius_km]
+      properties:
+        latitude: {type: number, minimum: -90, maximum: 90}
+        longitude: {type: number, minimum: -180, maximum: 180}
+        radius_km: {type: number, nullable: true}
+    Link:
+      type: object
+      description: A link's tie to its shared channel, whose tags and notes these are
+      required: [shared_id, tags, notes, seen_revision, changed]
+      properties:
+        shared_id: {type: string}
+        tags: {type: array, items: {type: string}}
+        notes: {type: string}
+        seen_revision: {type: integer}
+        changed: {type: boolean, description: The shared channel changed since acknowledged}
+    Channel:
+      type: object
+      required: [id, name, rx_hz, tx_hz, mode, service, rx_only, rx_tone, tx_tone, tone_squelch, power, bandwidth, skip, tags, short_names, notes,
+        location, status, status_note, back_on, replaced_by, revision, copied_from, link, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        rx_hz: {type: integer, format: int64}
+        tx_hz: {type: integer, format: int64, nullable: true, description: Null for receive-only records}
+        mode: {type: string, enum: [FM, NFM, AM, USB, LSB]}
+        service: {type: string, description: Empty when unspecified}
+        rx_only: {type: boolean}
+        rx_tone: {type: string}
+        tx_tone: {type: string}
+        tone_squelch: {type: boolean}
+        power: {type: string, enum: ["", low, medium, high, max]}
+        bandwidth: {type: string}
+        skip: {type: boolean}
+        tags: {type: array, items: {type: string}, description: "The user's own; a link's shared tags are in link.tags"}
+        short_names: {type: array, items: {type: string}}
+        notes: {type: string, description: "The user's own; a link's shared notes are in link.notes"}
+        location: {allOf: [{$ref: "#/components/schemas/Location"}], nullable: true}
+        status: {type: string, enum: [active, off-air, retired]}
+        status_note: {type: string}
+        back_on: {type: string, format: date, nullable: true}
+        replaced_by: {type: string, nullable: true}
+        revision: {type: integer, description: A shared channel's revision; zero for private channels}
+        copied_from: {type: string, nullable: true}
+        link: {allOf: [{$ref: "#/components/schemas/Link"}], nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ChannelInput:
+      type: object
+      description: Fields to set; on create, name and rx_hz are required.
+      properties:
+        name: {type: string}
+        rx_hz: {type: integer, format: int64}
+        tx_hz: {type: integer, format: int64, nullable: true}
+        mode: {type: string}
+        service: {type: string}
+        rx_only: {type: boolean}
+        rx_tone: {type: string}
+        tx_tone: {type: string}
+        tone_squelch: {type: boolean}
+        power: {type: string}
+        bandwidth: {type: string}
+        skip: {type: boolean}
+        tags: {type: array, items: {type: string}}
+        short_names: {type: array, items: {type: string}}
+        notes: {type: string}
+        location:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [latitude, longitude]
+          properties:
+            latitude: {type: number}
+            longitude: {type: number}
+            radius_km: {type: number, nullable: true}
+    ChannelResult:
+      type: object
+      required: [channel, warnings]
+      properties:
+        channel: {$ref: "#/components/schemas/Channel"}
+        warnings: {type: array, items: {type: string}, description: Band-plan warnings; the channel was saved}
+    ChannelsResult:
+      type: object
+      required: [channels, warnings]
+      properties:
+        channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+        warnings: {type: array, items: {type: string}}
+    Selection:
+      type: object
+      additionalProperties: false
+      description: Channels by ID (or unique prefix), by query, or all; with ids and a query, a channel must match both.
+      properties:
+        ids: {type: array, items: {type: string}}
+        query: {type: string}
+        all: {type: boolean}
+    SelectInput:
+      type: object
+      additionalProperties: false
+      required: [select]
+      properties:
+        select: {$ref: "#/components/schemas/Selection"}
+        dry_run: {type: boolean}
+    ChannelEdit:
+      type: object
+      additionalProperties: false
+      properties:
+        tags:
+          type: object
+          additionalProperties: false
+          description: set replaces the tags; otherwise add and remove change them
+          properties:
+            set: {type: array, items: {type: string}}
+            add: {type: array, items: {type: string}}
+            remove: {type: array, items: {type: string}}
+        skip: {type: boolean}
+        power: {type: string}
+        service: {type: string}
+        rx_only: {type: boolean}
+        location:
+          type: object
+          nullable: true
+          properties:
+            latitude: {type: number}
+            longitude: {type: number}
+            radius_km: {type: number, nullable: true}
+    StatusInput:
+      type: object
+      additionalProperties: false
+      required: [status, reason]
+      properties:
+        status: {type: string, enum: [active, off-air, retired]}
+        note: {type: string}
+        back_on: {type: string, format: date, nullable: true, description: For off-air}
+        replaced_by: {type: string, description: For retired; a shared channel ID}
+        reason: {type: string}
+    Revision:
+      type: object
+      required: [revision, at, reason, author, changes, channel]
+      properties:
+        revision: {type: integer}
+        at: {type: string, format: date-time}
+        reason: {type: string}
+        author: {type: string}
+        changes: {type: array, items: {type: string}, description: How it differs from the revision before}
+        channel: {$ref: "#/components/schemas/Channel"}
+    Change:
+      type: object
+      required: [channel, changes, reasons, radios, replacement]
+      properties:
+        channel: {$ref: "#/components/schemas/Channel"}
+        changes: {type: array, items: {type: string}}
+        reasons: {type: array, items: {type: string}}
+        radios: {type: array, items: {type: string}, description: "Radios it's on, which need programming again"}
+        replacement: {allOf: [{$ref: "#/components/schemas/Channel"}], nullable: true}
+    Conversion:
+      type: object
+      required: [channel, shared, link]
+      properties:
+        channel: {$ref: "#/components/schemas/Channel"}
+        shared: {$ref: "#/components/schemas/Channel"}
+        link: {$ref: "#/components/schemas/Channel"}
+    ImportResult:
+      type: object
+      required: [created, updated, skipped, invalid, warnings, dropped_tags, dry_run]
+      properties:
+        created: {type: integer}
+        updated: {type: integer}
+        skipped: {type: integer, description: Duplicates}
+        invalid: {type: array, items: {$ref: "#/components/schemas/RowError"}}
+        warnings: {type: array, items: {$ref: "#/components/schemas/RowError"}}
+        dropped_tags: {type: array, items: {type: string}, description: Tags left off shared channels}
+        dry_run: {type: boolean}
+    RowError:
+      type: object
+      required: [row, message]
+      properties:
+        row: {type: integer}
+        message: {type: string}
+
+    Search:
+      type: object
+      required: [id, name, query, notes, matches, error]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        query: {type: string}
+        notes: {type: string}
+        matches: {type: integer, nullable: true, description: Null when the search no longer works}
+        error: {type: string, nullable: true}
+        used_by: {type: array, items: {type: string}}
+    SearchInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string}
+        query: {type: string}
+        notes: {type: string}
+
+    Radio:
+      type: object
+      required: [id, name, model, default_power, dedupe, notes, channels, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        model: {type: string}
+        default_power: {type: string}
+        dedupe: {type: string, enum: [none, index, freq]}
+        notes: {type: string}
+        channels: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    RadioInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string}
+        model: {type: string}
+        default_power: {type: string}
+        dedupe: {type: string}
+        notes: {type: string}
+    Memory:
+      type: object
+      required: [memory, section_start, name, fit, deduped, power, scan, exported, overrides, channel]
+      properties:
+        memory: {type: integer}
+        section_start: {type: boolean}
+        name: {type: string, description: The name on the radio}
+        fit: {type: string, enum: [fits, variant, shortened, cut]}
+        deduped: {type: boolean}
+        power: {type: string, nullable: true, description: The radio's level label}
+        scan: {type: boolean}
+        exported: {type: boolean, description: False for a mode the radio lacks}
+        overrides:
+          type: object
+          required: [name, power, scan]
+          properties:
+            name: {type: boolean}
+            power: {type: boolean}
+            scan: {type: boolean}
+        channel: {$ref: "#/components/schemas/Channel"}
+    AddResult:
+      type: object
+      required: [added, channels, skipped, wrong_mode]
+      properties:
+        added: {type: integer, description: Channels new to the radio}
+        channels: {type: array, items: {$ref: "#/components/schemas/Channel"}, description: "Channels that fit, including any already on it"}
+        skipped: {type: array, items: {$ref: "#/components/schemas/Channel"}, description: Outside the radio's bands}
+        wrong_mode: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+    Source:
+      type: object
+      required: [number, id, query, sort, section_start, keep_sorted, channels]
+      properties:
+        number: {type: integer}
+        id: {type: string}
+        query: {type: string}
+        sort: {type: string, enum: [name, freq]}
+        section_start: {type: integer, nullable: true}
+        keep_sorted: {type: boolean}
+        channels: {type: integer}
+    SourceInput:
+      type: object
+      additionalProperties: false
+      properties:
+        query: {type: string}
+        sort: {type: string}
+        section_start: {type: integer, nullable: true}
+        keep_sorted: {type: boolean}
+    SyncResult:
+      type: object
+      required: [sources, added, resorted, dry_run, plan_error]
+      properties:
+        sources:
+          type: array
+          items:
+            allOf:
+              - {$ref: "#/components/schemas/AddResult"}
+              - type: object
+                required: [source, resorted]
+                properties:
+                  source: {$ref: "#/components/schemas/Source"}
+                  resorted: {type: integer}
+        added: {type: integer}
+        resorted: {type: integer}
+        dry_run: {type: boolean}
+        plan_error: {type: string, nullable: true, description: Set when the radio no longer fits its memories}
+
+    Model:
+      type: object
+      required: [name, description, format, chirp_model, memories, name_length, modes, bands_mhz, power, notes, source]
+      properties:
+        name: {type: string}
+        description: {type: string}
+        format: {type: string}
+        chirp_model: {type: string}
+        memories: {type: array, items: {type: integer}, minItems: 2, maxItems: 2}
+        name_length: {type: integer}
+        modes: {type: array, items: {type: string}}
+        bands_mhz: {type: array, items: {type: array, items: {type: number}, minItems: 2, maxItems: 2}}
+        power:
+          type: array
+          items:
+            type: object
+            required: [label, watts, intent]
+            properties:
+              label: {type: string}
+              watts: {type: number, nullable: true}
+              intent: {type: string}
+        notes: {type: string}
+        source: {type: string}
+    Seed:
+      type: object
+      required: [id, description, count]
+      properties:
+        id: {type: string}
+        description: {type: string}
+        count: {type: integer}
+        channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}

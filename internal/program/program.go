@@ -51,7 +51,7 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, er
 		return p, err
 	}
 	if n := len(locs); n > 0 && locs[n-1] > m.Memories.Last {
-		return p, fmt.Errorf("%q would be memory %d, but the %s has memories %d-%d", entries[n-1].Channel.Name, locs[n-1], m.Description, m.Memories.First, m.Memories.Last)
+		return p, domain.Invalidf("%q would be memory %d, but the %s has memories %d-%d", entries[n-1].Channel.Name, locs[n-1], m.Description, m.Memories.First, m.Memories.Last)
 	}
 	dedupe, err := naming.ParseDedupe(orNone(r.Dedupe))
 	if err != nil {

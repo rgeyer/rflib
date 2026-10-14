@@ -43,7 +43,7 @@ func readCSV(r io.Reader, required []string, fn func(row int, get func(string) s
 	}
 	for _, name := range required {
 		if _, ok := col[name]; !ok {
-			return fmt.Errorf("CSV header is missing the %q column", name)
+			return domain.Invalidf("CSV header is missing the %q column", name)
 		}
 	}
 	for {

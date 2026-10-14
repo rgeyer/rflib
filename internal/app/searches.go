@@ -97,7 +97,7 @@ func (s *Service) unused(ctx context.Context, name string) error {
 		return err
 	}
 	if len(users) > 0 {
-		return fmt.Errorf("@%s is used by %s; change those first", name, strings.Join(users, ", "))
+		return domain.Invalidf("@%s is used by %s; change those first", name, strings.Join(users, ", "))
 	}
 	return nil
 }

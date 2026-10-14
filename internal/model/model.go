@@ -250,7 +250,7 @@ func Find(name string) (Model, error) {
 		}
 		names[i] = m.Name
 	}
-	return Model{}, fmt.Errorf("unknown radio model %q; available: %s", name, strings.Join(names, ", "))
+	return Model{}, domain.Invalidf("unknown radio model %q; available: %s", name, strings.Join(names, ", "))
 }
 
 // YAML returns a built-in model's source, for `model show`.

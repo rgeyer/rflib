@@ -79,7 +79,7 @@ func FromChannel(c domain.Channel, location, maxNameLen int) (Memory, error) {
 		Power: chirpPower(c.ProgrammedPower), Comment: strings.Join(strings.Fields(c.AllNotes()), " "),
 	}
 	if !slices.Contains(Modes, c.Mode) {
-		return m, fmt.Errorf("mode %s is not supported by CHIRP export", c.Mode)
+		return m, domain.Invalidf("mode %s is not supported by CHIRP export", c.Mode)
 	}
 	if c.Skip {
 		m.Skip = "S"
@@ -93,7 +93,7 @@ func FromChannel(c domain.Channel, location, maxNameLen int) (Memory, error) {
 	txTone, rxTone := domain.ProgrammedTones(c)
 	for _, t := range []domain.Tone{txTone, rxTone} {
 		if !domain.IsStandardTone(t) {
-			return m, fmt.Errorf("tone %s is not a standard CTCSS/DCS tone CHIRP accepts", domain.FormatTone(t))
+			return m, domain.Invalidf("tone %s is not a standard CTCSS/DCS tone CHIRP accepts", domain.FormatTone(t))
 		}
 	}
 	setTones(&m, txTone, rxTone)
@@ -185,7 +185,7 @@ func ToChannel(m Memory) (domain.Channel, error) {
 		c.Name = domain.FormatFrequencyMHz(m.FrequencyHz)
 	}
 	if !slices.Contains(Modes, m.Mode) {
-		return c, fmt.Errorf("mode %q is not supported yet", m.Mode)
+		return c, domain.Invalidf("mode %q is not supported yet", m.Mode)
 	}
 	switch m.Duplex {
 	case "":
@@ -199,12 +199,12 @@ func ToChannel(m Memory) (domain.Channel, error) {
 			tx = m.FrequencyHz - m.OffsetHz
 		}
 		if tx <= 0 {
-			return c, fmt.Errorf("duplex %s with offset %s gives no valid transmit frequency", m.Duplex, domain.FormatFrequencyMHz(m.OffsetHz))
+			return c, domain.Invalidf("duplex %s with offset %s gives no valid transmit frequency", m.Duplex, domain.FormatFrequencyMHz(m.OffsetHz))
 		}
 		c.TransmitHz = &tx
 	case "off":
 	default:
-		return c, fmt.Errorf("unknown duplex %q", m.Duplex)
+		return c, domain.Invalidf("unknown duplex %q", m.Duplex)
 	}
 
 	ctcss := func(milliHz int64) domain.Tone { return domain.Tone{Kind: domain.ToneCTCSS, CTCSSMilliHz: &milliHz} }
@@ -226,7 +226,7 @@ func ToChannel(m Memory) (domain.Channel, error) {
 	case "Cross":
 		parts := strings.Split(m.CrossMode, "->")
 		if len(parts) != 2 {
-			return c, fmt.Errorf("unknown cross mode %q", m.CrossMode)
+			return c, domain.Invalidf("unknown cross mode %q", m.CrossMode)
 		}
 		var err error
 		if tx, err = crossTone(parts[0], ctcss(m.RToneMilliHz), dcs(m.DTCS, pol[0])); err != nil {
@@ -236,7 +236,7 @@ func ToChannel(m Memory) (domain.Channel, error) {
 			return c, err
 		}
 	default:
-		return c, fmt.Errorf("tone mode %q is not supported", m.ToneMode)
+		return c, domain.Invalidf("tone mode %q is not supported", m.ToneMode)
 	}
 	c.TransmitTone, c.ReceiveTone = tx, rx
 	c.ToneSquelch = rx.Kind != domain.ToneNone
@@ -252,7 +252,7 @@ func crossTone(part string, ctcss, dcs domain.Tone) (domain.Tone, error) {
 	case "DTCS":
 		return dcs, nil
 	}
-	return domain.Tone{}, fmt.Errorf("unknown cross mode part %q", part)
+	return domain.Tone{}, domain.Invalidf("unknown cross mode part %q", part)
 }
 
 // ParseRecord reads a memory from a CSV row; get returns a column's trimmed

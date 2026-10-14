@@ -257,7 +257,7 @@ func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv M
 		to = len(es)
 	case mv.To != 0:
 		if mv.To < 1 {
-			return fmt.Errorf("positions count from 1")
+			return domain.Invalidf("positions count from 1")
 		}
 		to = mv.To - 1
 	case mv.Before != "" || mv.After != "":
@@ -272,7 +272,7 @@ func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv M
 			to++
 		}
 	default:
-		return fmt.Errorf("say where to move the channel")
+		return domain.Invalidf("say where to move the channel")
 	}
 	return s.lib.MoveRadioChannel(ctx, r.ID, channelID, to)
 }
@@ -378,7 +378,7 @@ func (s *Service) Source(ctx context.Context, radio string, number int) (domain.
 		return r, domain.RadioSource{}, err
 	}
 	if number < 1 || number > len(sources) {
-		return r, domain.RadioSource{}, fmt.Errorf("%s has sources 1-%d; see rflib radio sources list %s", r.Name, len(sources), r.Name)
+		return r, domain.RadioSource{}, domain.Invalidf("%s has sources 1-%d; see rflib radio sources list %s", r.Name, len(sources), r.Name)
 	}
 	return r, sources[number-1], nil
 }
@@ -417,7 +417,7 @@ func (s *Service) UpdateSource(ctx context.Context, src domain.RadioSource) erro
 // 1).
 func (s *Service) MoveSource(ctx context.Context, radio string, from, to int) error {
 	if to < 1 {
-		return fmt.Errorf("source numbers count from 1")
+		return domain.Invalidf("source numbers count from 1")
 	}
 	_, src, err := s.Source(ctx, radio, from)
 	if err != nil {
@@ -492,7 +492,7 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 		return res, err
 	}
 	if len(sources) == 0 {
-		return res, fmt.Errorf("%s has no sources; add one with: rflib radio sources add %s QUERY", r.Name, r.Name)
+		return res, domain.Invalidf("%s has no sources; add one with: rflib radio sources add %s QUERY", r.Name, r.Name)
 	}
 	claimed, err := s.lib.RadioChannelIDs(ctx, r.ID)
 	if err != nil {

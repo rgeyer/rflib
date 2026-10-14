@@ -24,11 +24,12 @@ package naming
 
 import (
 	_ "embed"
-	"fmt"
 	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/ryan/rflib/internal/domain"
 )
 
 // Method says how a name was produced.
@@ -454,7 +455,7 @@ func ParseCharset(spec string) (*Charset, error) {
 	for i := 0; i < len(rs); i++ {
 		if i+2 < len(rs) && rs[i+1] == '-' {
 			if rs[i] > rs[i+2] {
-				return nil, fmt.Errorf("charset range %c-%c is backwards", rs[i], rs[i+2])
+				return nil, domain.Invalidf("charset range %c-%c is backwards", rs[i], rs[i+2])
 			}
 			c.ranges = append(c.ranges, [2]rune{rs[i], rs[i+2]})
 			i += 2

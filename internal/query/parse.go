@@ -60,6 +60,9 @@ type Error struct {
 	Msg string
 }
 
+// Is makes a query error domain.ErrInvalid: the query is the caller's to fix.
+func (e *Error) Is(target error) bool { return target == domain.ErrInvalid }
+
 func (e *Error) Error() string {
 	if e.Pos > 0 {
 		return fmt.Sprintf("query: %s (at character %d)", e.Msg, e.Pos)

@@ -8,7 +8,6 @@ import (
 
 	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
-	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/importer"
 	"github.com/ryan/rflib/internal/naming"
 	"github.com/ryan/rflib/internal/profile"
@@ -23,29 +22,13 @@ func newExportCommand() *cobra.Command {
 	csv := &cobra.Command{Use: "csv", Short: "Export channels as normalized generic CSV", Args: cobra.NoArgs}
 	csv.Flags().String("output", "-", "Output path, or - for stdout")
 	filterFields(csv)
-	csv.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withApp(cmd, func(a *app.Service) error {
-			cs, err := filteredChannels(cmd, a)
-			if err != nil {
-				return err
-			}
-			return writeOutput(cmd, func(w io.Writer) (int, error) { return len(cs), export.GenericCSV{}.Export(w, cs) })
-		})
-	}
+	csv.RunE = func(cmd *cobra.Command, _ []string) error { return runExport(cmd, app.ExportRequest{Format: "csv"}) }
 
 	js := &cobra.Command{Use: "json", Short: "Export a full-fidelity JSON backup", Args: cobra.NoArgs,
 		Long: "Export a JSON backup of channels, including IDs and timestamps."}
 	js.Flags().String("output", "-", "Output path, or - for stdout")
 	filterFields(js)
-	js.RunE = func(cmd *cobra.Command, _ []string) error {
-		return withApp(cmd, func(a *app.Service) error {
-			cs, err := filteredChannels(cmd, a)
-			if err != nil {
-				return err
-			}
-			return writeOutput(cmd, func(w io.Writer) (int, error) { return len(cs), export.WriteJSON(w, cs) })
-		})
-	}
+	js.RunE = func(cmd *cobra.Command, _ []string) error { return runExport(cmd, app.ExportRequest{Format: "json"}) }
 
 	exp.AddCommand(csv, js, newExportCHIRPCommand(), newExportProfileCommand())
 	return exp
@@ -71,10 +54,7 @@ is on.
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		start, _ := cmd.Flags().GetInt("start")
 		maxLen, _ := cmd.Flags().GetInt("max-name-len")
-		if start < 0 || maxLen < 0 {
-			return fmt.Errorf("--start and --max-name-len must not be negative")
-		}
-		return exportNumbered(cmd, export.CHIRP{Start: start, MaxNameLen: maxLen}, naming.Rules{MaxLen: maxLen})
+		return runExport(cmd, app.ExportRequest{Format: "chirp", Start: &start, MaxNameLen: maxLen})
 	}
 	return cmd
 }
@@ -96,19 +76,12 @@ order. Channels the profile can't represent fail the export unless
 	dedupeFlag(cmd)
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		e, err := profile.Find(args[0])
-		if err != nil {
-			return err
-		}
-		ex := profile.Exporter{Profile: e.Profile}
+		req := app.ExportRequest{Format: "profile", Profile: args[0]}
 		if cmd.Flags().Changed("start") {
 			start, _ := cmd.Flags().GetInt("start")
-			if start < 0 {
-				return fmt.Errorf("--start must not be negative")
-			}
-			ex.Start = &start
+			req.Start = &start
 		}
-		return exportNumbered(cmd, ex, e.Profile.NameRules())
+		return runExport(cmd, req)
 	}
 	return cmd
 }
@@ -121,31 +94,29 @@ func dedupeFlag(cmd *cobra.Command) {
 	cmd.Flags().String("dedupe", "none", "Tell apart duplicate names: none, index (append 1, 2...), or freq (append frequency digits)")
 }
 
-// exportNumbered runs an export that numbers memories: filter, sort,
-// optionally drop invalid channels, fit names, then write.
-func exportNumbered(cmd *cobra.Command, ex interface {
-	export.Exporter
-	export.Validator
-}, rules naming.Rules) error {
-	skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
-	dedupe, err := naming.ParseDedupe(getString(cmd, "dedupe"))
+// runExport fills in the export's query and numbering flags, runs it, and
+// reports what it left out on stderr.
+func runExport(cmd *cobra.Command, req app.ExportRequest) error {
+	n, err := channelQuery(cmd, nil)
 	if err != nil {
 		return err
 	}
+	if filtered(cmd) {
+		req.Query = n
+	}
+	req.Sort, req.Dedupe = getString(cmd, "sort"), getString(cmd, "dedupe")
+	req.SkipInvalid, _ = cmd.Flags().GetBool("skip-invalid")
 	return withApp(cmd, func(a *app.Service) error {
-		cs, err := filteredChannels(cmd, a)
-		if err != nil {
-			return err
-		}
-		if err := domain.SortChannels(cs, getString(cmd, "sort")); err != nil {
-			return err
-		}
-		if skipInvalid {
-			cs = validChannels(cmd.ErrOrStderr(), ex, cs)
-		}
-		cs, results := naming.Apply(cs, rules, dedupe)
-		warnDuplicateNames(cmd, results)
-		return writeOutput(cmd, func(w io.Writer) (int, error) { return len(cs), ex.Export(w, cs) })
+		return writeOutput(cmd, func(w io.Writer) (int, error) {
+			res, err := a.Export(ctx(cmd), w, req)
+			for _, s := range res.Skipped {
+				fmt.Fprintln(cmd.ErrOrStderr(), "skipped", s)
+			}
+			if len(res.Duplicates) > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: duplicate names on the radio: %s; use --dedupe index or freq to tell them apart\n", strings.Join(res.Duplicates, ", "))
+			}
+			return res.Count, err
+		})
 	})
 }
 
@@ -157,20 +128,6 @@ func warnDuplicateNames(cmd *cobra.Command, results []naming.Result) {
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: duplicate names on the radio: %s; use --dedupe index or freq to tell them apart\n", strings.Join(names, ", "))
 	}
-}
-
-// validChannels drops channels the exporter can't represent, warning about
-// each one.
-func validChannels(warn io.Writer, v export.Validator, cs []domain.Channel) []domain.Channel {
-	out := cs[:0]
-	for _, c := range cs {
-		if err := v.Validate(c); err != nil {
-			fmt.Fprintf(warn, "skipped %q (%s MHz): %v\n", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), err)
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
 }
 
 // writeOutput writes to stdout or the --output file. A failed file export is

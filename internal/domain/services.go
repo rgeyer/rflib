@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 )
@@ -35,7 +34,7 @@ func ParseService(v string) (Service, error) {
 	for i, x := range Services {
 		names[i] = string(x)
 	}
-	return "", fmt.Errorf("unknown service %q; use %s, or empty for unspecified", v, strings.Join(names, ", "))
+	return "", Invalidf("unknown service %q; use %s, or empty for unspecified", v, strings.Join(names, ", "))
 }
 
 // DefaultRXOnly reports whether channels in a service are listen-only unless

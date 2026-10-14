@@ -377,7 +377,7 @@ func (l *library) ReorderRadioChannels(ctx context.Context, radioID string, chan
 			return err
 		}
 		if !slices.Equal(slices.Sorted(slices.Values(order)), slices.Sorted(slices.Values(channelIDs))) {
-			return fmt.Errorf("a new order must list the radio's channels exactly once each")
+			return domain.Invalidf("a new order must list the radio's channels exactly once each")
 		}
 		sections := make([]sql.NullInt64, len(order))
 		for i, id := range order {
@@ -402,7 +402,7 @@ func (l *library) SetRadioEntry(ctx context.Context, radioID string, e domain.Ra
 		return err
 	}
 	if e.SectionStart != nil && *e.SectionStart < 0 {
-		return fmt.Errorf("section start must not be negative")
+		return domain.Invalidf("section start must not be negative")
 	}
 	var section, skip any
 	if e.SectionStart != nil {

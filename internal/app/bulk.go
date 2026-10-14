@@ -61,7 +61,7 @@ func (s *Service) ChannelIDs(ctx context.Context, refs []string) ([]string, erro
 		case 1:
 			out = append(out, found[0])
 		default:
-			return nil, fmt.Errorf("channel ID %q is ambiguous: it starts %d channels; give more of it", ref, len(found))
+			return nil, domain.Invalidf("channel ID %q is ambiguous: it starts %d channels; give more of it", ref, len(found))
 		}
 	}
 	return out, nil
@@ -90,7 +90,7 @@ func (s *Service) Select(ctx context.Context, sel Selection) ([]domain.Channel, 
 // nil.
 func (s *Service) selectIn(ctx context.Context, sel Selection, scope map[string]bool) ([]domain.Channel, error) {
 	if sel.empty() {
-		return nil, fmt.Errorf("select channels by ID, by query, or all of them")
+		return nil, domain.Invalidf("select channels by ID, by query, or all of them")
 	}
 	ids, err := s.ChannelIDs(ctx, sel.IDs)
 	if err != nil {

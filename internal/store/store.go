@@ -12,6 +12,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/ryan/rflib/internal/domain"
 )
@@ -89,6 +90,10 @@ type Library interface {
 	// ChannelRevisions returns a shared channel's revisions, oldest
 	// first; for a link, its shared channel's. Private channels have none.
 	ChannelRevisions(ctx context.Context, id string) ([]domain.Revision, error)
+	// ChangedSince returns the library's channels with a revision recorded
+	// after since, and the time of the latest one (since, when there are
+	// none), to ask from next time. Only shared channels have revisions.
+	ChangedSince(ctx context.Context, since time.Time) ([]domain.Channel, time.Time, error)
 
 	CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error)
 	// GetRadio looks a radio up by ID or name.
