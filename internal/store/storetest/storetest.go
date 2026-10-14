@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/store"
@@ -33,6 +34,8 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"DeleteLibraryCascades", testDeleteLibraryCascades},
 		{"SuppliedIDs", testSuppliedIDs},
 		{"TransactionRollsBack", testTransactionRollsBack},
+		{"LinksFollowSharedChannels", testLinksFollowSharedChannels},
+		{"SharedRevisions", testSharedRevisions},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
@@ -74,8 +77,15 @@ func testDefaultLibrary(t *testing.T, s store.Store) {
 	if err != nil {
 		t.Fatalf("a new store has no %q library: %v", domain.DefaultLibrary, err)
 	}
-	if libs, _ := s.ListLibraries(ctx()); len(libs) != 1 || libs[0].ID != lib.ID {
+	shared, err := s.GetLibrary(ctx(), domain.SharedLibrary)
+	if err != nil || !shared.Shared || lib.Shared {
+		t.Fatalf("shared library = %+v, %v", shared, err)
+	}
+	if libs, _ := s.ListLibraries(ctx()); len(libs) != 2 {
 		t.Fatalf("libraries = %+v", libs)
+	}
+	if _, err := s.CreateLibrary(ctx(), domain.Library{Name: "another", Shared: true}); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("second shared library: %v", err)
 	}
 }
 
@@ -597,5 +607,118 @@ func testTransactionRollsBack(t *testing.T, s store.Store) {
 	}
 	if rs, _ := l.ListRadios(ctx()); len(rs) != 0 {
 		t.Errorf("rolled-back radio kept: %+v", rs)
+	}
+}
+
+func sharedLibrary(t *testing.T, s store.Store) store.Library {
+	t.Helper()
+	lib, err := s.GetLibrary(ctx(), domain.SharedLibrary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s.Library(lib.ID)
+}
+
+func testLinksFollowSharedChannels(t *testing.T, s store.Store) {
+	shared, mine := sharedLibrary(t, s), newLibrary(t, s, "Mine")
+	tx := int64(147_900_000)
+	tone, _ := domain.ParseTone("ctcss:131.8")
+	sc, err := shared.CreateChannel(ctx(), domain.Channel{Name: "Marian", ReceiveHz: 147_300_000, TransmitHz: &tx, Mode: "FM", ReceiveTone: none, TransmitTone: tone,
+		Tags: []string{"linked"}, Notes: "Hospital site"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A link's own fields are the user's; the rest comes from the shared
+	// channel, whatever the link row says.
+	link, err := mine.CreateChannel(ctx(), domain.Channel{Name: "ignored", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none,
+		Tags: []string{"mine"}, Notes: "my note", Power: domain.PowerLow, ShortNames: []string{"Mar"}, Link: &domain.Link{SharedID: sc.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := mine.GetChannel(ctx(), link.ID)
+	switch {
+	case err != nil:
+		t.Fatal(err)
+	case got.Name != "Marian" || got.ReceiveHz != 147_300_000 || got.Revision != 1 || got.Link == nil || got.Link.SharedID != sc.ID:
+		t.Fatalf("link = %+v", got)
+	case strings.Join(got.Tags, ",") != "mine" || strings.Join(got.Link.Tags, ",") != "linked" || got.Notes != "my note" || got.Link.Notes != "Hospital site":
+		t.Errorf("own and shared tags or notes mixed: %+v", got)
+	case got.Power != domain.PowerLow || strings.Join(got.ShortNames, ",") != "Mar":
+		t.Errorf("own fields = %+v", got)
+	}
+	// The shared channel changes; the link follows and sees it's newer.
+	sc.Name = "Marian Hospital"
+	if _, err := shared.UpdateChannel(ctx(), sc); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := mine.ListChannels(ctx()); len(all) != 1 || all[0].Name != "Marian Hospital" || !all[0].Changed() {
+		t.Fatalf("after shared change: %+v", all)
+	}
+	got, _ = mine.GetChannel(ctx(), link.ID)
+	got.Link.SeenRevision = got.Revision
+	if saved, err := mine.UpdateChannel(ctx(), got); err != nil || saved.Changed() {
+		t.Fatalf("acknowledge: %+v, %v", saved, err)
+	}
+	// Only shared channels can be linked to, and a linked one can't go.
+	private := channel(t, mine, "Private", 146_520_000)
+	_, err = mine.CreateChannel(ctx(), domain.Channel{Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none, Link: &domain.Link{SharedID: private.ID}})
+	mustNotFound(t, "link to a private channel", err)
+	if err := shared.DeleteChannel(ctx(), sc.ID); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("deleted a linked shared channel: %v", err)
+	}
+	// Clearing the link makes a private channel of what it showed.
+	got, _ = mine.GetChannel(ctx(), link.ID)
+	got.Link, got.CopiedFrom = nil, sc.ID
+	if _, err := mine.UpdateChannel(ctx(), got); err != nil {
+		t.Fatal(err)
+	}
+	sc.Name = "Renamed again"
+	if _, err := shared.UpdateChannel(ctx(), sc); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mine.GetChannel(ctx(), link.ID); got.Link != nil || got.Name != "Marian Hospital" || got.CopiedFrom != sc.ID || got.Revision != 0 {
+		t.Errorf("copy = %+v", got)
+	}
+	if err := shared.DeleteChannel(ctx(), sc.ID); err != nil {
+		t.Errorf("unlinked shared channel: %v", err)
+	}
+}
+
+func testSharedRevisions(t *testing.T, s store.Store) {
+	shared, mine := sharedLibrary(t, s), newLibrary(t, s, "Mine")
+	c, err := shared.CreateChannel(store.WithChange(ctx(), "first listed", "maintainer"), domain.Channel{Name: "Rpt", ReceiveHz: 146_940_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
+	if err != nil || c.Revision != 1 || c.Status != domain.StatusActive {
+		t.Fatalf("create = %+v, %v", c, err)
+	}
+	// Saving without a change to the shared fields makes no revision.
+	if c, err = shared.UpdateChannel(ctx(), c); err != nil || c.Revision != 1 {
+		t.Fatalf("no-op update = %+v, %v", c, err)
+	}
+	back := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	c.Status, c.StatusNote, c.BackOn = domain.StatusOffAir, "antenna work", &back
+	if c, err = shared.UpdateChannel(store.WithChange(ctx(), "reported down", ""), c); err != nil || c.Revision != 2 {
+		t.Fatalf("status change = %+v, %v", c, err)
+	}
+	revs, err := shared.ChannelRevisions(ctx(), c.ID)
+	if err != nil || len(revs) != 2 || revs[0].Reason != "first listed" || revs[0].Author != "maintainer" || revs[1].Reason != "reported down" {
+		t.Fatalf("revisions = %+v, %v", revs, err)
+	}
+	if changes := domain.SharedChanges(revs[0].Channel, revs[1].Channel); strings.Join(changes, "; ") != "status: active → off-air; status note: (none) → antenna work; back on: (none) → 2026-11-01" {
+		t.Errorf("changes = %q", changes)
+	}
+	got, _ := shared.GetChannel(ctx(), c.ID)
+	if got.BackOn == nil || !got.BackOn.Equal(back) {
+		t.Errorf("back on = %v", got.BackOn)
+	}
+	// A link reads its shared channel's history; a private channel has none.
+	link, err := mine.CreateChannel(ctx(), domain.Channel{Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none, Link: &domain.Link{SharedID: c.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revs, _ := mine.ChannelRevisions(ctx(), link.ID); len(revs) != 2 {
+		t.Errorf("link revisions = %+v", revs)
+	}
+	if revs, err := mine.ChannelRevisions(ctx(), channel(t, mine, "Private", 1).ID); err != nil || len(revs) != 0 {
+		t.Errorf("private revisions = %+v, %v", revs, err)
 	}
 }

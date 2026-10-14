@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
@@ -47,6 +48,22 @@ func ParseJSON(r io.Reader) (Batch, error) {
 		if c.Location, err = domain.NewLocation(rec.Latitude, rec.Longitude, rec.RadiusKM); err != nil {
 			b.fail(row, "location: %v", err)
 			continue
+		}
+		if c.Status, err = domain.ParseStatus(rec.Status); err != nil {
+			b.fail(row, "%v", err)
+			continue
+		}
+		c.StatusNote, c.ReplacedBy, c.CopiedFrom = rec.StatusNote, rec.ReplacedBy, rec.CopiedFrom
+		if rec.BackOn != "" {
+			t, err := time.Parse(time.DateOnly, rec.BackOn)
+			if err != nil {
+				b.fail(row, "back_on: %v", err)
+				continue
+			}
+			c.BackOn = &t
+		}
+		if l := rec.Link; l != nil {
+			c.Link = &domain.Link{SharedID: l.SharedID, SeenRevision: l.SeenRevision, Tags: l.Tags, Notes: l.Notes}
 		}
 		if rec.GroupID != nil {
 			g, ok := groups[*rec.GroupID]

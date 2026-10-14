@@ -25,7 +25,7 @@ Back up the database by copying it while the CLI is not running.
 
 One database can hold several **libraries**, each a separate collection of channels, radios, and saved searches. Names only have to be unique within a library, so two libraries can each have a radio called "HT".
 
-Every command works on one library: `--library NAME`, else `$RFLIB_LIBRARY`, else `default`. Every database starts with a library called `default`, and upgrading an existing database moves everything already in it there.
+Every command works on one library: `--library NAME`, else `$RFLIB_LIBRARY`, else `default`. Every database starts with a library called `default`, and upgrading an existing database moves everything already in it there. Every database also has a library called `shared`, which holds channels shared with everyone; see [Shared channels](#shared-channels).
 
 ```sh
 ./rflib library add club --description "Club radios"
@@ -40,6 +40,40 @@ To copy channels from one library to another, export a backup from one and impor
 
 ```sh
 ./rflib export json --library default | ./rflib import json --library club
+```
+
+## Shared channels
+
+The `shared` library holds channels shared with everyone: the built-in lists now, and channels from the hosted service later. Rather than copying them, your library **links** to them. A link shows the shared channel and follows its corrections, such as a repeater's new tone. Your own tags, notes, skip, power, and short names on a link stay yours.
+
+```sh
+./rflib channel list in:shared band:noaa        # search the whole shared list
+./rflib channel link -q 'band:noaa' --tags wx   # link matches into your library
+./rflib shared link --dry-run                   # which of your channels match shared ones
+./rflib shared link                             # ...turn them into links
+./rflib channel copy --id <link-id>             # a private copy you can edit
+```
+
+- **What's yours on a link:** tags, notes, skip, power, and short names. Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which keeps the channel's ID (so radios keep it) and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
+- **Names:** a link shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
+- **Converting:** `shared link` and `seed install` turn a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart.
+- **Shared tags** come from a short list with agreed meanings: `rflib tag list`. Your own tags are free-form, and one with a shared tag's name means the same thing.
+- **The shared library is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`.
+
+### Status and changes
+
+A shared channel is `active`, `off-air` (temporarily, such as for maintenance, with an expected-back date if known), or `retired` (gone for good, possibly replaced by another channel). A small change, such as a new tone, is a correction to the same channel; a repeater that becomes a different system is a new channel, and the old one is retired and points to it.
+
+- **On your radios:** an off-air channel stays programmed, so it needs no reprogramming when it's back, but it isn't scanned. Retired channels warn on export.
+- **`rflib shared changes`** lists your links whose shared channel changed since you last looked: what changed, why, and the radios they're on, which need programming again. `rflib shared ack --all` marks them seen. `rflib shared relink --all` moves links to retired channels over to their replacements.
+- **History:** every change to a shared channel is kept, with when and why: `rflib shared history --id <id>`.
+- **Searching:** `status:off-air` finds channels that are down.
+
+```sh
+./rflib shared status --id <id> --set off-air --note "antenna work" --back 2026-12-01 --reason "owner reported"
+./rflib shared status --id <id> --set retired --replaced-by <new-id> --reason "moved to Diablo Peak"
+./rflib shared update --id <id> --tx-tone ctcss:131.8 --reason "new tone"
+./rflib shared import csv club-repeaters.csv --reason "club list, October"
 ```
 
 ## Channels
@@ -147,6 +181,8 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 | `tunes:` | A radio or model name: channels in its bands and in a mode it has |
 | `created:`, `updated:` | `YYYY-MM-DD`, with comparisons and ranges like `freq:` |
 | `id:` | A channel ID |
+| `status:` | `active`, `off-air`, or `retired` (see [Status and changes](#status-and-changes)) |
+| `in:` | `mine` (the default) or `shared`: search your library or the whole shared list. Only at the top level of a query. |
 
 **Location.** `near:` matches when a channel's location is within the distance plus the channel's own `--radius-km`, so a repeater whose coverage reaches you counts. Channels without a location never match `near:`. To keep them, say so: `near:34.64,-120.46,40 OR -has:location`.
 
@@ -200,7 +236,7 @@ Saving or importing a channel warns, without failing, when it doesn't fit its se
 | `us-noaa` | NOAA Weather Radio WX1-WX7, receive only |
 | `us-ham-calling` | Amateur FM and SSB simplex calling frequencies, 10 m through 70 cm |
 
-Installing a list again skips the channels already added. `install` takes the same `--tags`, `--on-duplicate`, and `--dry-run` flags as `import`.
+Installing a list puts its channels in the shared library and links them into yours (see [Shared channels](#shared-channels)). Channels you already have that match one become links. Installing again changes nothing. `--tags` adds tags of your own to the new links, and `--dry-run` reports what would change. On shared channels the lists carry only shared tags, such as `calling`; the old `gmrs`, `noaa`, and similar tags repeated the service and band.
 
 ## Radios
 
@@ -327,7 +363,7 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 - **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and location. New columns are only ever added at the end; the group columns were removed when groups were.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
 - **`export profile NAME`** writes a radio programming tool's own CSV format, such as Yaesu ADMS. See [Export profiles](#export-profiles) below.
-- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out.
+- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out. Links are kept as links, with the shared channel as it was. The CSV writes a link's shared and own tags and notes together.
 
 ## Import
 
@@ -339,7 +375,7 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 ./rflib export csv --tag ham | ./rflib --db other.db import csv
 ```
 
-`import csv` reads the generic CSV format. Columns are matched by header name, so they can be in any order and extra columns are ignored. Only `name` and `receive_mhz` are required, which makes hand-built spreadsheets easy to load. `import json` restores a backup exactly. `import chirp` reads a file saved with CHIRP's *File > Export*.
+`import csv` reads the generic CSV format. Columns are matched by header name, so they can be in any order and extra columns are ignored. Only `name` and `receive_mhz` are required, which makes hand-built spreadsheets easy to load. `import json` restores a backup exactly. A link stays a link when its shared channel is in this database's shared list; otherwise it becomes a private copy, with a warning. Imported channels are always private and active. `import chirp` reads a file saved with CHIRP's *File > Export*.
 
 - **All or nothing:** any invalid row is reported with its line number and nothing is imported. Use `--skip-invalid` to import the valid rows anyway. A failure partway through also writes nothing.
 - **`--dry-run`** runs the whole import and then discards it, so its summary is exactly what a real import would do.

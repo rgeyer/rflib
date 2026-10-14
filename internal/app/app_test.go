@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/query"
+	"github.com/ryan/rflib/internal/seed"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/ryan/rflib/internal/store/sqlite"
 )
@@ -324,5 +327,155 @@ func TestBulkSelectUpdateDelete(t *testing.T) {
 	}
 	if _, removed, err := s.RemoveChannels(ctx, "HT", Selection{All: true}); err != nil || names(removed) != "Calling" {
 		t.Errorf("remove all = %s, %v", names(removed), err)
+	}
+}
+
+func openShared(t *testing.T, d store.Store) *Service {
+	t.Helper()
+	sh, err := Open(context.Background(), d, domain.SharedLibrary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sh
+}
+
+func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
+	ctx := context.Background()
+	s, d := newService(t)
+	sh := openShared(t, d)
+	gmrs, _ := seed.Get("us-gmrs")
+
+	// A seeded private channel from before becomes a link, keeping its own
+	// name as a short name; the rest are linked new.
+	mine := add(t, s, "GMRS 15 Rpt", 462.55, domain.ServiceGMRS)
+	simplex := mine.ReceiveHz
+	mine.TransmitHz, mine.Tags, mine.Notes = &simplex, []string{"family"}, "our channel"
+	if _, _, err := s.UpdateChannel(ctx, mine); err != nil {
+		t.Fatal(err)
+	}
+	dry, err := s.InstallSeed(ctx, gmrs, nil, true)
+	if err != nil || len(dry.Converted) != 1 || len(dry.Linked) != 29 {
+		t.Fatalf("dry run = %d converted, %d linked, %v", len(dry.Converted), len(dry.Linked), err)
+	}
+	if all, _ := sh.ListChannels(ctx); len(all) != 0 {
+		t.Fatal("dry run filled the shared library")
+	}
+	res, err := s.InstallSeed(ctx, gmrs, []string{"seeded"}, false)
+	if err != nil || res.SharedAdded != 30 || len(res.Converted) != 1 || len(res.Linked) != 29 {
+		t.Fatalf("install = %+v, %v", res, err)
+	}
+	link, _ := s.GetChannel(ctx, mine.ID)
+	if link.Link == nil || link.Name != "GMRS 15" || strings.Join(link.ShortNames, ",") != "GMRS 15 Rpt" || strings.Join(link.Tags, ",") != "family" || link.Notes != "our channel" {
+		t.Fatalf("converted = %+v", link)
+	}
+	if again, _ := s.InstallSeed(ctx, gmrs, nil, false); again.SharedAdded != 0 || again.SharedUpdated != 0 || len(again.Linked) != 0 || len(again.Already) != 30 {
+		t.Errorf("reinstall = %+v", again)
+	}
+	// Seed tags that repeat fields are left off shared channels.
+	if cs, _ := sh.Find(ctx, "tag:gmrs"); len(cs) != 0 {
+		t.Errorf("shared channels kept field tags: %s", names(cs))
+	}
+
+	// The shared library is read-only to everyday changes, and a link's
+	// shared fields belong to it.
+	if _, _, err := sh.CreateChannel(ctx, domain.Channel{Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none}); !errors.Is(err, errSharedReadOnly) {
+		t.Errorf("shared create: %v", err)
+	}
+	edited := link
+	edited.ReceiveHz = 462_575_000
+	if _, _, err := s.UpdateChannel(ctx, edited); err == nil || !strings.Contains(err.Error(), "rx can't change here") {
+		t.Errorf("edit shared field: %v", err)
+	}
+	gmrsSvc := domain.ServiceOther
+	if _, _, err := s.UpdateChannels(ctx, Selection{IDs: []string{link.ID}}, ChannelEdit{Service: &gmrsSvc}); err == nil {
+		t.Error("bulk edit of a shared field")
+	}
+	low := domain.PowerLow
+	if _, _, err := s.UpdateChannels(ctx, Selection{IDs: []string{link.ID}}, ChannelEdit{Power: &low, Tags: &TagEdit{Add: []string{"x"}}}); err != nil {
+		t.Errorf("own fields: %v", err)
+	}
+
+	// in:shared searches the whole list; links come into the library.
+	if cs, err := s.Find(ctx, "in:shared freq:462.5625"); err != nil || names(cs) != "GMRS 1" {
+		t.Errorf("in:shared = %s, %v", names(cs), err)
+	}
+	if _, err := s.Find(ctx, "-in:shared"); err == nil {
+		t.Error("negated in: accepted")
+	}
+
+	// The maintainer takes the repeater off the air: the link follows, and
+	// shows in Changes until acknowledged.
+	back := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := sh.SetStatus(ctx, link.Link.SharedID, StatusChange{Status: domain.StatusOffAir, Note: "antenna work", BackOn: &back}, "reported by owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetStatus(ctx, link.ID, StatusChange{Status: domain.StatusActive}, ""); !errors.Is(err, errNotShared) {
+		t.Errorf("status from a private library: %v", err)
+	}
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{link.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.Changes(ctx)
+	if err != nil || len(changes) != 1 || strings.Join(changes[0].Reasons, ",") != "reported by owner" || strings.Join(changes[0].Radios, ",") != "HT" ||
+		!slices.Contains(changes[0].Changes, "status: active → off-air") {
+		t.Fatalf("changes = %+v, %v", changes, err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{Query: mustParse(t, "in:shared name:x")}); err == nil {
+		t.Error("in:shared added to a radio")
+	}
+	if acked, err := s.Acknowledge(ctx, Selection{All: true}); err != nil || len(acked) != 1 {
+		t.Fatalf("acknowledge = %d, %v", len(acked), err)
+	}
+	if changes, _ := s.Changes(ctx); len(changes) != 0 {
+		t.Errorf("changes after acknowledging = %+v", changes)
+	}
+
+	// Retired with a replacement: relinking moves the link over.
+	other, _ := sh.Find(ctx, `name:"GMRS 16"`)
+	if _, err := sh.SetStatus(ctx, link.Link.SharedID, StatusChange{Status: domain.StatusRetired, ReplacedBy: other[0].ID[:8]}, "moved"); err != nil {
+		t.Fatal(err)
+	}
+	if changes, _ := s.Changes(ctx); len(changes) != 1 || changes[0].Replacement == nil || changes[0].Replacement.Name != "GMRS 16" {
+		t.Fatalf("retired change = %+v", changes)
+	}
+	if moved, err := s.Relink(ctx, Selection{IDs: []string{link.ID}}); err != nil || len(moved) != 1 || moved[0].Name != "GMRS 16" || moved[0].Changed() {
+		t.Fatalf("relink = %+v, %v", moved, err)
+	}
+	if _, revs, err := sh.History(ctx, link.Link.SharedID); err != nil || len(revs) != 3 || revs[2].Reason != "moved" {
+		t.Errorf("history = %+v, %v", revs, err)
+	}
+
+	// A copy stops following the shared channel.
+	copies, err := s.CopyChannels(ctx, Selection{IDs: []string{link.ID}})
+	if err != nil || len(copies) != 1 || copies[0].Link != nil || copies[0].CopiedFrom == "" || !slices.Contains(copies[0].Tags, "family") {
+		t.Fatalf("copy = %+v, %v", copies, err)
+	}
+	copied := copies[0]
+	copied.ReceiveHz = 462_600_000
+	if _, _, err := s.UpdateChannel(ctx, copied); err != nil {
+		t.Errorf("edit a copy: %v", err)
+	}
+}
+
+// FRS and GMRS share frequencies; converting goes by service too.
+func TestConvertMatchesService(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	frs := add(t, s, "FRS 1", 462.5625, domain.ServiceFRS)
+	hz := frs.ReceiveHz
+	frs.TransmitHz = &hz
+	if _, _, err := s.UpdateChannel(ctx, frs); err != nil {
+		t.Fatal(err)
+	}
+	gmrs, _ := seed.Get("us-gmrs")
+	if res, err := s.InstallSeed(ctx, gmrs, nil, false); err != nil || len(res.Converted) != 0 || len(res.Linked) != 30 {
+		t.Fatalf("gmrs = %d converted, %v", len(res.Converted), err)
+	}
+	frsList, _ := seed.Get("us-frs")
+	if res, err := s.InstallSeed(ctx, frsList, nil, false); err != nil || len(res.Converted) != 1 || res.Converted[0].Shared.Name != "FRS 1" {
+		t.Fatalf("frs = %+v, %v", res.Converted, err)
 	}
 }

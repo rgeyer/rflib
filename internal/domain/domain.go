@@ -59,6 +59,24 @@ type Channel struct {
 	ShortNames []string
 	// Location is where the channel is used, if known (see query near:).
 	Location *Location
+	// Status says whether the channel is on the air. Only shared channels
+	// change it; empty means active.
+	Status Status
+	// StatusNote explains the status, such as "down for antenna work".
+	StatusNote string
+	// BackOn is when an off-air channel is expected back, if known.
+	BackOn *time.Time
+	// ReplacedBy is the shared channel a retired one gave way to.
+	ReplacedBy string
+	// Revision counts a shared channel's changes (see Revision); zero for
+	// private channels.
+	Revision int
+	// Link, when set, makes the channel a link to a shared channel: every
+	// field but ID, Tags, Notes, Skip, Power, ShortNames, and the
+	// timestamps comes from the shared channel, and follows its changes.
+	Link *Link
+	// CopiedFrom is the shared channel a private copy was made from.
+	CopiedFrom string
 	// ProgrammedPower is the radio power level chosen for an export. It is
 	// set on export copies by a radio's power resolution and never stored.
 	ProgrammedPower *PowerLevel
@@ -265,6 +283,9 @@ func ValidateChannel(c Channel) error {
 	}
 	if c.ToneSquelch && c.ReceiveTone.Kind == ToneNone {
 		return fmt.Errorf("tone squelch requires a receive tone")
+	}
+	if _, err := ParseStatus(string(c.Status)); err != nil {
+		return err
 	}
 	if c.Location != nil {
 		return ValidateLocation(*c.Location)

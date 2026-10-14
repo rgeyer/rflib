@@ -44,6 +44,9 @@ func (s *Service) GetSearch(ctx context.Context, idOrName string) (domain.SavedS
 // CreateSearch saves a search after checking its query works and doesn't
 // use itself.
 func (s *Service) CreateSearch(ctx context.Context, x domain.SavedSearch) (domain.SavedSearch, error) {
+	if err := s.writable(); err != nil {
+		return x, err
+	}
 	x.Name = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(x.Name), "@"))
 	if err := domain.ValidateSavedSearch(x); err != nil {
 		return x, err

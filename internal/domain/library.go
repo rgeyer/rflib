@@ -12,13 +12,19 @@ type Library struct {
 	ID          string
 	Name        string
 	Description string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// Shared marks the one library of channels shared with everyone (see
+	// SharedLibrary). Other libraries link to its channels.
+	Shared    bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // DefaultLibrary is the library every database starts with, and the one
 // used when none is chosen.
 const DefaultLibrary = "default"
+
+// SharedLibrary is the name of the library of shared channels.
+const SharedLibrary = "shared"
 
 func ValidateLibrary(l Library) error {
 	if strings.TrimSpace(l.Name) == "" {

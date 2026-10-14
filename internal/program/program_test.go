@@ -241,3 +241,23 @@ func TestLeavesOutModesTheRadioLacks(t *testing.T) {
 		t.Error("Write changed the plan")
 	}
 }
+
+// Off-air channels stay programmed but aren't scanned; retired ones warn.
+func TestStatusOnTheRadio(t *testing.T) {
+	down := ch("Marian", 147_300_000, 147_900_000, domain.ServiceAmateur)
+	down.Status, down.StatusNote = domain.StatusOffAir, "antenna work"
+	gone := ch("Old Rpt", 146_940_000, 146_340_000, domain.ServiceAmateur)
+	gone.Status = domain.StatusRetired
+	es := entries(down, gone)
+	scan := false
+	es[0].Skip = &scan // even a radio set to scan it skips it while it's down
+	p, err := Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), es)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warnings := strings.Join(p.Warnings, "\n")
+	if !p.Memories[0].Channel.Skip || p.Memories[1].Channel.Skip || p.Memories[0].LeftOut ||
+		!strings.Contains(warnings, `"Marian": off the air (antenna work); programmed but skipped in scans`) || !strings.Contains(warnings, `"Old Rpt": retired`) {
+		t.Errorf("memories = %+v\n%s", p.Memories, warnings)
+	}
+}

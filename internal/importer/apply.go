@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/store"
@@ -144,16 +142,11 @@ func (a *applier) addChannel(c domain.Channel) {
 // names across sites with different tones) are kept apart. MatchProgrammed
 // leaves out the name.
 func duplicateKey(c domain.Channel, m MatchRule) string {
-	tx := "rx-only"
-	if c.TransmitHz != nil {
-		tx = strconv.FormatInt(*c.TransmitHz, 10)
-	}
 	name := c.Name
 	if m == MatchProgrammed {
 		name = ""
 	}
-	return strings.Join([]string{name, strconv.FormatInt(c.ReceiveHz, 10), tx,
-		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), strconv.FormatBool(c.ToneSquelch)}, "\x00")
+	return name + "\x00" + domain.ProgrammedKey(c)
 }
 
 func (a *applier) channel(r Record) error {

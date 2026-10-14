@@ -48,30 +48,34 @@ func newSeedCommand() *cobra.Command {
 		return seedChannelListing.write(cmd, cs)
 	}
 
-	install := &cobra.Command{Use: "install LIST...", Short: "Add built-in lists to the library", Args: cobra.MinimumNArgs(1),
-		Long: "Add built-in lists to the library. Installing a list again skips the\nchannels it already added, so re-running is safe."}
-	importFlags(install)
+	install := &cobra.Command{Use: "install LIST...", Short: "Link built-in lists into the library", Args: cobra.MinimumNArgs(1),
+		Long: `Put built-in lists in the shared library and link their channels into this
+library. Channels you already have that match one on the air (the same
+frequencies, tones, and tone squelch) become links, keeping your tags, notes,
+and, as a short name, a name of your own. Installing again changes nothing.`}
+	install.Flags().String("tags", "", "Comma-separated tags of your own for the new links")
+	install.Flags().Bool("dry-run", false, "Report what would change without changing anything")
 	install.RunE = func(cmd *cobra.Command, args []string) error {
-		opts, err := importOptions(cmd)
-		if err != nil {
-			return err
-		}
 		lists := make([]seed.List, len(args))
 		for i, id := range args {
+			var err error
 			if lists[i], err = seed.Get(id); err != nil {
 				return err
 			}
 		}
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		return withApp(cmd, func(a *app.Service) error {
 			for _, l := range lists {
-				b, err := l.Batch()
+				res, err := a.InstallSeed(ctx(cmd), l, splitTags(getString(cmd, "tags")), dryRun)
 				if err != nil {
-					return err
+					return fmt.Errorf("%s: %w", l.ID, err)
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "%s: ", l.ID)
-				if err := applyImport(cmd, a, b, opts, 0); err != nil {
-					return err
+				prefix := ""
+				if dryRun {
+					prefix = "would have "
 				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %slinked %d, converted %d of your channels, %d already linked\n",
+					l.ID, prefix, len(res.Linked), len(res.Converted), len(res.Already))
 			}
 			return nil
 		})

@@ -32,6 +32,23 @@ type channelOut struct {
 	Latitude    *float64  `json:"latitude,omitempty"`
 	Longitude   *float64  `json:"longitude,omitempty"`
 	RadiusKM    *float64  `json:"radius_km,omitempty"`
+	Status      string    `json:"status"`
+	StatusNote  string    `json:"status_note,omitempty"`
+	BackOn      string    `json:"back_on,omitempty"`
+	ReplacedBy  string    `json:"replaced_by,omitempty"`
+	Revision    int       `json:"revision,omitempty"`
+	CopiedFrom  string    `json:"copied_from,omitempty"`
+	Link        *linkOut  `json:"link,omitempty"`
+}
+
+// linkOut is a link's shared channel: its ID, its tags and notes, and
+// whether it changed since the user last acknowledged it.
+type linkOut struct {
+	SharedID     string   `json:"shared_id"`
+	Tags         []string `json:"tags"`
+	Notes        string   `json:"notes"`
+	SeenRevision int      `json:"seen_revision"`
+	Changed      bool     `json:"changed"`
 }
 
 func newChannelOut(c domain.Channel) channelOut {
@@ -67,6 +84,13 @@ func newChannelOut(c domain.Channel) channelOut {
 	if l := c.Location; l != nil {
 		o.Latitude, o.Longitude, o.RadiusKM = &l.Latitude, &l.Longitude, l.RadiusKM
 	}
+	o.Status, o.StatusNote, o.ReplacedBy, o.Revision, o.CopiedFrom = string(c.Status.OrActive()), c.StatusNote, c.ReplacedBy, c.Revision, c.CopiedFrom
+	if c.BackOn != nil {
+		o.BackOn = c.BackOn.Format("2006-01-02")
+	}
+	if l := c.Link; l != nil {
+		o.Link = &linkOut{SharedID: l.SharedID, Tags: nonNil(l.Tags), Notes: l.Notes, SeenRevision: l.SeenRevision, Changed: c.Changed()}
+	}
 	return o
 }
 
@@ -91,7 +115,34 @@ func writeChannel(out io.Writer, c domain.Channel, format string) error {
 		c.ID, c.Name, strings.Join(c.ShortNames, ", "), locationText(c.Location), serviceName(c.Service), domain.FormatFrequencyMHz(c.ReceiveHz), txText(c), c.Mode,
 		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, powerName(c.Power), c.Bandwidth, c.Skip,
 		strings.Join(c.Tags, ","), c.Notes)
+	fmt.Fprintf(out, "status: %s\n", statusText(c))
+	if l := c.Link; l != nil {
+		changed := ""
+		if c.Changed() {
+			changed = "; changed since you acknowledged it (see rflib shared changes)"
+		}
+		fmt.Fprintf(out, "linked to: shared channel %s, revision %d%s\nshared tags: %s\nshared notes: %s\n", l.SharedID, c.Revision, changed, strings.Join(l.Tags, ","), l.Notes)
+	}
+	if c.CopiedFrom != "" {
+		fmt.Fprintf(out, "copied from: shared channel %s\n", c.CopiedFrom)
+	}
 	return nil
+}
+
+// statusText is a channel's status for reading: off-air with its note and
+// expected return, retired with its replacement.
+func statusText(c domain.Channel) string {
+	s := string(c.Status.OrActive())
+	if c.StatusNote != "" {
+		s += " (" + c.StatusNote + ")"
+	}
+	if c.BackOn != nil {
+		s += ", expected back " + c.BackOn.Format("2006-01-02")
+	}
+	if c.ReplacedBy != "" {
+		s += ", replaced by " + c.ReplacedBy
+	}
+	return s
 }
 
 func powerName(p domain.PowerIntent) string {

@@ -28,6 +28,9 @@ a saved search.
   near:LAT,LON,KM           within KM plus the channel's radius; channels
                             without a location never match
   radio:NAME|any|none       tunes:RADIO|MODEL  in its bands and modes
+  status:active|off-air|retired               (shared channels' status)
+  in:mine|shared            search the library (default) or the whole
+                            shared list; only at the top level
   created: updated:         YYYY-MM-DD, >=, <, ranges
   id:ID
 

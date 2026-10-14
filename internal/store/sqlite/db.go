@@ -172,6 +172,23 @@ CREATE TABLE new_channels (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFEREN
 INSERT INTO new_channels SELECT c.id, c.library_id, g.latitude, g.longitude, CASE WHEN g.latitude IS NULL THEN NULL ELSE g.radius_km END, c.name, c.receive_hz, c.transmit_hz, c.mode, c.service, c.rx_only, c.receive_tone_kind, c.receive_ctcss_millihz, c.receive_dcs_code, c.receive_dcs_inverted, c.transmit_tone_kind, c.transmit_ctcss_millihz, c.transmit_dcs_code, c.transmit_dcs_inverted, c.tone_squelch, CASE WHEN c.power = '' THEN coalesce(g.power, '') ELSE c.power END, c.bandwidth, c.skip, c.notes, c.created_at, c.updated_at
 	FROM channels c LEFT JOIN groups g ON g.id = c.group_id;
 UPDATE radio_sources SET sort = 'name' WHERE sort = 'group';`},
+	// Shared channels: one shared library (a library of the user's named
+	// "shared" is renamed out of the way), links to its channels, their
+	// status, and their revisions.
+	{version: 10, sql: `
+ALTER TABLE libraries ADD COLUMN kind TEXT NOT NULL DEFAULT '';
+UPDATE libraries SET name = name || '-1' WHERE name = 'shared';
+INSERT INTO libraries (id, name, description, kind, created_at, updated_at) VALUES (` + newIDSQL + `, 'shared', 'Channels shared with everyone', 'shared', strftime('%Y-%m-%dT%H:%M:%fZ'), strftime('%Y-%m-%dT%H:%M:%fZ'));
+ALTER TABLE channels ADD COLUMN link_id TEXT REFERENCES channels(id);
+ALTER TABLE channels ADD COLUMN seen_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE channels ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE channels ADD COLUMN status_note TEXT NOT NULL DEFAULT '';
+ALTER TABLE channels ADD COLUMN back_on TEXT;
+ALTER TABLE channels ADD COLUMN replaced_by TEXT;
+ALTER TABLE channels ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE channels ADD COLUMN copied_from TEXT NOT NULL DEFAULT '';
+CREATE INDEX idx_channels_link ON channels(link_id);
+CREATE TABLE channel_revisions (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, revision INTEGER NOT NULL, changed_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', record TEXT NOT NULL, PRIMARY KEY(channel_id, revision));`},
 }
 
 // ungroup finishes migration 9 once new_channels holds the channels: it
@@ -405,16 +422,22 @@ func parseTime(s string) time.Time {
 
 // --- libraries ---
 
-const libraryColumns = `id,name,description,created_at,updated_at`
+const libraryColumns = `id,name,description,kind,created_at,updated_at`
+
+// sharedKind is the kind of the shared library.
+const sharedKind = "shared"
 
 func (d *DB) CreateLibrary(ctx context.Context, lib domain.Library) (domain.Library, error) {
 	if err := domain.ValidateLibrary(lib); err != nil {
 		return lib, err
 	}
+	if lib.Shared {
+		return lib, fmt.Errorf("there is only one shared library: %w", store.ErrConflict)
+	}
 	if err := assignIdentity(&lib.ID, &lib.CreatedAt, &lib.UpdatedAt); err != nil {
 		return lib, err
 	}
-	_, err := d.db.ExecContext(ctx, `INSERT INTO libraries (`+libraryColumns+`) VALUES (?,?,?,?,?)`,
+	_, err := d.db.ExecContext(ctx, `INSERT INTO libraries (`+libraryColumns+`) VALUES (?,?,?,'',?,?)`,
 		lib.ID, lib.Name, lib.Description, timestamp(lib.CreatedAt), timestamp(lib.UpdatedAt))
 	if err != nil {
 		return lib, conflict(fmt.Errorf("create library: %w", err), "a library named %q", lib.Name)
@@ -478,10 +501,11 @@ type scanner interface{ Scan(...any) error }
 
 func scanLibrary(r scanner) (domain.Library, error) {
 	var lib domain.Library
-	var created, updated string
-	if err := r.Scan(&lib.ID, &lib.Name, &lib.Description, &created, &updated); err != nil {
+	var created, updated, kind string
+	if err := r.Scan(&lib.ID, &lib.Name, &lib.Description, &kind, &created, &updated); err != nil {
 		return lib, err
 	}
+	lib.Shared = kind == sharedKind
 	lib.CreatedAt, lib.UpdatedAt = parseTime(created), parseTime(updated)
 	return lib, nil
 }

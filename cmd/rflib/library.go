@@ -13,9 +13,10 @@ import (
 func newLibraryCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "library", Short: "Manage separate libraries in one database",
 		Long: `A library is a separate collection of channels, radios, and saved
-searches; names only have to be unique within one. Every command works on one
-library: --library NAME, else $RFLIB_LIBRARY, else "default", which every
-database starts with.
+searches; names only have to be unique within one. One library, "shared",
+holds channels shared with everyone (see rflib shared). Every command works
+on one library: --library NAME, else $RFLIB_LIBRARY, else "default", which
+every database starts with.
 
 To copy channels between libraries, export from one and import into the
 other:
@@ -101,6 +102,9 @@ func newLibraryUpdateCommand() *cobra.Command {
 				return err
 			}
 			if cmd.Flags().Changed("name") {
+				if lib.Shared {
+					return fmt.Errorf("the shared library keeps its name")
+				}
 				lib.Name = getString(cmd, "name")
 			}
 			if cmd.Flags().Changed("description") {
@@ -124,6 +128,9 @@ func newLibraryDeleteCommand() *cobra.Command {
 			lib, err := d.GetLibrary(ctx(cmd), args[0])
 			if err != nil {
 				return err
+			}
+			if lib.Shared {
+				return fmt.Errorf("the shared library can't be deleted; other libraries link to it")
 			}
 			return d.DeleteLibrary(ctx(cmd), lib.ID)
 		})

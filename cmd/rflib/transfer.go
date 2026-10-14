@@ -261,20 +261,29 @@ func runFileImport(cmd *cobra.Command, args []string, parse func(io.Reader) (imp
 		v, _ := cmd.Flags().GetBool("rx-only")
 		opts.RXOnly = &v
 	}
-	skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
 	return withApp(cmd, func(a *app.Service) error {
 		batch, err := parseInput(cmd, args, parse)
 		if err != nil {
 			return err
 		}
-		for _, e := range batch.Errors {
-			fmt.Fprintln(cmd.ErrOrStderr(), "invalid", e)
+		invalid, err := checkRowErrors(cmd, batch)
+		if err != nil {
+			return err
 		}
-		if len(batch.Errors) > 0 && !skipInvalid {
-			return fmt.Errorf("%d invalid rows; nothing imported (fix them, or use --skip-invalid to import the rest)", len(batch.Errors))
-		}
-		return applyImport(cmd, a, batch, opts, len(batch.Errors))
+		return applyImport(cmd, a, batch, opts, invalid)
 	})
+}
+
+// checkRowErrors reports a batch's invalid rows on stderr, and fails
+// unless --skip-invalid. It returns how many rows were invalid.
+func checkRowErrors(cmd *cobra.Command, b importer.Batch) (int, error) {
+	for _, e := range b.Errors {
+		fmt.Fprintln(cmd.ErrOrStderr(), "invalid", e)
+	}
+	if skip, _ := cmd.Flags().GetBool("skip-invalid"); len(b.Errors) > 0 && !skip {
+		return 0, fmt.Errorf("%d invalid rows; nothing imported (fix them, or use --skip-invalid to import the rest)", len(b.Errors))
+	}
+	return len(b.Errors), nil
 }
 
 // importFlags adds the flags shared by every command that imports channels.

@@ -132,7 +132,7 @@ func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.Ra
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	channels, err := l.listChannels(ctx, ` AND c.id IN (SELECT channel_id FROM radio_channels WHERE radio_id=?)`, radioID)
+	channels, err := l.listChannels(ctx, `c.library_id=? AND c.id IN (SELECT channel_id FROM radio_channels WHERE radio_id=?)`, l.id, radioID)
 	if err != nil {
 		return nil, err
 	}

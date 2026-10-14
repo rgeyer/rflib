@@ -101,7 +101,7 @@ func channelColumns() []field[domain.Channel] {
 		{name: "rxonly", text: func(c c) string { return yesNo(c.RXOnly) }, json: func(c c) any { return c.RXOnly }},
 		{name: "power", text: func(c c) string { return string(c.Power) }},
 		{name: "skip", text: func(c c) string { return yesNo(c.Skip) }, json: func(c c) any { return c.Skip }},
-		{name: "tags", text: func(c c) string { return strings.Join(c.Tags, ",") }, json: func(c c) any { return nonNil(c.Tags) }},
+		{name: "tags", text: func(c c) string { return strings.Join(c.AllTags(), ",") }, json: func(c c) any { return nonNil(c.AllTags()) }},
 		{name: "shortnames", text: func(c c) string { return strings.Join(c.ShortNames, ",") }, json: func(c c) any { return nonNil(c.ShortNames) }},
 		{name: "location", text: func(c c) string { return coordinates(c.Location) }},
 		{name: "radius_km", text: func(c c) string {
@@ -116,7 +116,15 @@ func channelColumns() []field[domain.Channel] {
 			return c.Location.RadiusKM
 		}},
 		{name: "bandwidth", text: func(c c) string { return c.Bandwidth }},
-		{name: "notes", text: func(c c) string { return c.Notes }},
+		{name: "notes", text: func(c c) string { return c.AllNotes() }},
+		{name: "status", text: func(c c) string { return string(c.Status.OrActive()) }},
+		{name: "linked", text: func(c c) string { return yesNo(c.Link != nil) }, json: func(c c) any { return c.Link != nil }},
+		{name: "shared_id", id: true, text: func(c c) string {
+			if c.Link == nil {
+				return ""
+			}
+			return c.Link.SharedID
+		}},
 		{name: "created", text: func(c c) string { return date(c.CreatedAt) }, json: func(c c) any { return c.CreatedAt }},
 		{name: "updated", text: func(c c) string { return date(c.UpdatedAt) }, json: func(c c) any { return c.UpdatedAt }},
 	}

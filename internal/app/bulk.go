@@ -168,6 +168,9 @@ func (e ChannelEdit) Apply(c *domain.Channel) {
 // transaction, and returns the channels as saved and their band-plan
 // warnings, each prefixed with the channel's name.
 func (s *Service) UpdateChannels(ctx context.Context, sel Selection, e ChannelEdit) ([]domain.Channel, []string, error) {
+	if err := s.writable(); err != nil {
+		return nil, nil, err
+	}
 	cs, err := s.Select(ctx, sel)
 	if err != nil {
 		return nil, nil, err
@@ -175,7 +178,11 @@ func (s *Service) UpdateChannels(ctx context.Context, sel Selection, e ChannelEd
 	var warnings []string
 	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		for i := range cs {
+			before := cs[i]
 			e.Apply(&cs[i])
+			if err := LinkedEdit(before, cs[i]); err != nil {
+				return err
+			}
 			saved, err := tx.UpdateChannel(ctx, cs[i])
 			if err != nil {
 				return fmt.Errorf("%s: %w", cs[i].Name, err)
@@ -196,6 +203,9 @@ func (s *Service) UpdateChannels(ctx context.Context, sel Selection, e ChannelEd
 // DeleteChannels deletes the selected channels in one transaction, taking
 // them off every radio, and returns them.
 func (s *Service) DeleteChannels(ctx context.Context, sel Selection) ([]domain.Channel, error) {
+	if err := s.writable(); err != nil {
+		return nil, err
+	}
 	cs, err := s.Select(ctx, sel)
 	if err != nil {
 		return nil, err

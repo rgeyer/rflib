@@ -150,7 +150,7 @@ func (e *cycleError) Error() string { return e.msg }
 var Fields = []string{
 	"name", "notes", "service", "tag", "group", "freq", "rx", "tx", "band", "duplex",
 	"tone", "txtone", "rxtone", "mode", "power", "squelch", "skip", "is", "has",
-	"near", "radio", "tunes", "created", "updated", "id",
+	"near", "radio", "tunes", "created", "updated", "id", "status", "in",
 }
 
 var fieldAliases = map[string]string{"frequency": "freq", "tags": "tag", "svc": "service"}
@@ -172,7 +172,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		}, nil
 	case "notes":
 		v = strings.ToLower(v)
-		return func(ch domain.Channel) bool { return strings.Contains(strings.ToLower(ch.Notes), v) }, nil
+		return func(ch domain.Channel) bool { return strings.Contains(strings.ToLower(ch.AllNotes()), v) }, nil
 	case "service":
 		svc := domain.ServiceUnspecified
 		if !strings.EqualFold(v, "none") {
@@ -185,7 +185,15 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		return func(ch domain.Channel) bool { return ch.Service == svc }, nil
 	case "tag":
 		v = strings.ToLower(strings.TrimSpace(v))
-		return func(ch domain.Channel) bool { return slices.Contains(ch.Tags, v) }, nil
+		return func(ch domain.Channel) bool { return slices.Contains(ch.AllTags(), v) }, nil
+	case "status":
+		st, err := domain.ParseStatus(v)
+		if err != nil || strings.TrimSpace(v) == "" {
+			return nil, fmt.Errorf("unknown status %q; use active, off-air, or retired", v)
+		}
+		return func(ch domain.Channel) bool { return ch.Status.OrActive() == st }, nil
+	case "in":
+		return nil, fmt.Errorf("in: chooses which channels to search, so it can't be negated or inside OR or parentheses")
 	case "group":
 		// Groups became tags named after them, so group:NAME still works
 		// in queries saved before.
@@ -193,7 +201,7 @@ func (c *compiler) term(t Term) (Matcher, error) {
 			return nil, fmt.Errorf("groups are gone; each became a tag, so use -has:tag or -tag:NAME")
 		}
 		v = strings.ToLower(strings.TrimSpace(v))
-		return func(ch domain.Channel) bool { return slices.Contains(ch.Tags, v) }, nil
+		return func(ch domain.Channel) bool { return slices.Contains(ch.AllTags(), v) }, nil
 	case "freq", "rx", "tx":
 		ok, err := rangeSpec(t.Op, v, domain.ParseFrequencyMHz)
 		if err != nil {
@@ -291,7 +299,7 @@ func serviceNames() string {
 func textMatcher(v string) Matcher {
 	v = strings.ToLower(v)
 	return func(ch domain.Channel) bool {
-		fields := append([]string{ch.Name, ch.Notes}, ch.ShortNames...)
+		fields := append([]string{ch.Name, ch.AllNotes()}, ch.ShortNames...)
 		return slices.ContainsFunc(fields, func(s string) bool { return strings.Contains(strings.ToLower(s), v) })
 	}
 }
@@ -418,7 +426,7 @@ func (c *compiler) hasMatcher(v string) (Matcher, error) {
 	case "group":
 		return nil, fmt.Errorf("groups are gone; each became a tag, so use has:tag")
 	case "tag", "tags":
-		return func(ch domain.Channel) bool { return len(ch.Tags) > 0 }, nil
+		return func(ch domain.Channel) bool { return len(ch.AllTags()) > 0 }, nil
 	case "tone", "tones":
 		return func(ch domain.Channel) bool {
 			tx, rx := domain.ProgrammedTones(ch)
@@ -427,7 +435,7 @@ func (c *compiler) hasMatcher(v string) (Matcher, error) {
 	case "power":
 		return func(ch domain.Channel) bool { return ch.Power != domain.PowerUnset }, nil
 	case "notes":
-		return func(ch domain.Channel) bool { return strings.TrimSpace(ch.Notes) != "" }, nil
+		return func(ch domain.Channel) bool { return strings.TrimSpace(ch.AllNotes()) != "" }, nil
 	case "shortname", "shortnames":
 		return func(ch domain.Channel) bool { return len(ch.ShortNames) > 0 }, nil
 	case "radio":
