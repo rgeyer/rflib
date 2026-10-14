@@ -172,11 +172,11 @@ var testEnv = Env{
 		}
 		return nil, fmt.Errorf("no radio %q", ref)
 	},
-	Tunes: func(ref string) (func(int64) bool, error) {
+	Tunes: func(ref string) (func(domain.Channel) bool, error) {
 		if ref != "ht" {
 			return nil, fmt.Errorf("no radio %q", ref)
 		}
-		return func(hz int64) bool { return hz >= 136_000_000 && hz <= 174_000_000 }, nil
+		return func(c domain.Channel) bool { return c.ReceiveHz >= 136_000_000 && c.ReceiveHz <= 174_000_000 }, nil
 	},
 }
 

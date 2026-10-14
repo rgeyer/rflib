@@ -7,7 +7,9 @@ package program
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
@@ -26,6 +28,9 @@ type Memory struct {
 	Name     naming.Result
 	// Power is the effective intent before the model mapped it.
 	Power domain.PowerIntent
+	// LeftOut is set when the radio can't use the channel's mode; the
+	// memory is listed, with a warning, but not exported.
+	LeftOut bool
 }
 
 type Plan struct {
@@ -75,6 +80,10 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, er
 			c.RXOnly = true
 			warn("programmed receive-only: transmit %s MHz is outside the amateur bands and FRS, GMRS, MURS, and CB channels", domain.FormatFrequencyMHz(*c.TransmitHz))
 		}
+		leftOut := !m.HasMode(c.Mode)
+		if leftOut {
+			warn("left out: the radio doesn't have %s (it has %s)", c.Mode, strings.Join(m.Modes, ", "))
+		}
 		if !m.Tunes(c.ReceiveHz) {
 			warn("%s MHz is outside the radio's bands", domain.FormatFrequencyMHz(c.ReceiveHz))
 		}
@@ -82,7 +91,7 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, er
 			warn("transmit %s MHz is outside the radio's bands", domain.FormatFrequencyMHz(*c.TransmitHz))
 		}
 		copies[i] = c
-		p.Memories[i] = Memory{Location: locs[i], Original: e.Channel, Power: intent}
+		p.Memories[i] = Memory{Location: locs[i], Original: e.Channel, Power: intent, LeftOut: leftOut}
 	}
 	named, results := naming.Apply(copies, m.NameRules(), dedupe)
 	for i := range p.Memories {
@@ -160,10 +169,12 @@ func ExporterFor(p Plan) (Exporter, error) {
 	return export.CHIRP{Locations: locs}, nil
 }
 
-// Write exports a plan. With skipInvalid, memories the format can't
-// represent are left out (their numbers stay empty) and described on warn;
-// otherwise any of them fails the export.
+// Write exports a plan. Memories marked LeftOut are not written (Build
+// warned about them). With skipInvalid, memories the format can't
+// represent are left out too and described on warn; otherwise any of them
+// fails the export. Left-out memories' numbers stay empty.
 func Write(w io.Writer, p Plan, skipInvalid bool, warn io.Writer) (int, error) {
+	p.Memories = slices.DeleteFunc(slices.Clone(p.Memories), func(mem Memory) bool { return mem.LeftOut })
 	if skipInvalid {
 		var kept []Memory
 		ex, err := ExporterFor(p)

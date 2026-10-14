@@ -9,4 +9,5 @@ power:
   - {label: HIGH, watts: 50, intent: high}
 notes: HIGH is 55 W on 2 m and 50 W on 70 cm; 50 W is recorded so service caps are never under-estimated.
 bands_mhz: [[108, 550]]
-source: Yaesu FTM-150R/E operating manual (EH086M201), TX power and frequency range specifications (receive 108-550 MHz)
+modes: [FM, NFM, AM]
+source: Yaesu FTM-150R/E operating manual (EH086M201), TX power and frequency range specifications (receive 108-550 MHz); AM in the airband, and FM wide or narrow

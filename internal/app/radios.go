@@ -95,38 +95,42 @@ type AddRequest struct {
 	IDs   []string
 	Query query.Node
 	Sort  string
-	// AnyBand adds channels the radio can't receive, too.
-	AnyBand bool
+	// AnyBand adds channels outside the radio's bands, too, and AnyMode
+	// channels in modes it doesn't have.
+	AnyBand, AnyMode bool
 }
 
 // AddResult is what an add or a source's sync did. Add lists what was (or
-// would be) added, Skipped what the radio can't receive.
+// would be) added, Skipped what is outside the radio's bands, and
+// WrongMode what is in a mode the radio doesn't have.
 type AddResult struct {
-	Add     []domain.Channel
-	Added   int
-	Skipped []domain.Channel
+	Add       []domain.Channel
+	Added     int
+	Skipped   []domain.Channel
+	WrongMode []domain.Channel
 }
 
-// inBand splits channels by whether the model can tune their receive
-// frequency. A transmit frequency outside the bands only warns (see
-// program.Build), since the radio can still listen.
-func inBand(m model.Model, cs []domain.Channel, anyBand bool) (kept, skipped []domain.Channel) {
-	if anyBand {
-		return cs, nil
-	}
+// fit sorts channels into those the model can receive, those outside its
+// bands, and those in its bands but in a mode it lacks. A transmit
+// frequency outside the bands only warns (see program.Build), since the
+// radio can still listen.
+func (r *AddResult) fit(m model.Model, cs []domain.Channel, anyBand, anyMode bool) {
 	for _, c := range cs {
-		if m.Tunes(c.ReceiveHz) {
-			kept = append(kept, c)
-		} else {
-			skipped = append(skipped, c)
+		switch {
+		case !anyBand && !m.Tunes(c.ReceiveHz):
+			r.Skipped = append(r.Skipped, c)
+		case !anyMode && !m.HasMode(c.Mode):
+			r.WrongMode = append(r.WrongMode, c)
+		default:
+			r.Add = append(r.Add, c)
 		}
 	}
-	return kept, skipped
 }
 
 // AddChannels appends channels to the end of a radio's list. Channels
-// already on it are left where they are, and channels outside its bands
-// are skipped unless req.AnyBand.
+// already on it are left where they are. Channels outside its bands are
+// skipped unless req.AnyBand, and channels in modes it lacks unless
+// req.AnyMode.
 func (s *Service) AddChannels(ctx context.Context, radio string, req AddRequest) (domain.Radio, AddResult, error) {
 	r, m, err := s.RadioModel(ctx, radio)
 	if err != nil {
@@ -151,7 +155,7 @@ func (s *Service) AddChannels(ctx context.Context, radio string, req AddRequest)
 		cs = append(cs, found...)
 	}
 	var res AddResult
-	res.Add, res.Skipped = inBand(m, cs, req.AnyBand)
+	res.fit(m, cs, req.AnyBand, req.AnyMode)
 	ids := make([]string, len(res.Add))
 	for i, c := range res.Add {
 		ids[i] = c.ID
@@ -368,15 +372,17 @@ func (r SyncResult) Added() int {
 }
 
 // SyncOptions are a sync's choices. With DryRun nothing changes. AnyBand
-// adds channels the radio can't receive. Resort re-sorts every source, not
-// only those set to KeepSorted.
+// adds channels outside the radio's bands, and AnyMode channels in modes it
+// doesn't have. Resort re-sorts every source, not only those set to
+// KeepSorted.
 type SyncOptions struct {
-	DryRun, AnyBand, Resort bool
+	DryRun, AnyBand, AnyMode, Resort bool
 }
 
 // Sync adds each source's new matches to a radio (see AddSourceChannels).
-// An earlier source claims a channel first; channels the radio can't
-// receive are skipped, and stay unclaimed, unless AnyBand. With DryRun
+// An earlier source claims a channel first; channels outside the radio's
+// bands or in modes it lacks are skipped, and stay unclaimed, unless
+// AnyBand or AnyMode. With DryRun
 // nothing changes, Add lists what would be added, and Resorted counts the
 // channels already on the radio that would move.
 //
@@ -416,7 +422,7 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 			}
 		}
 		ss := SourceSync{Source: src}
-		ss.Add, ss.Skipped = inBand(m, unclaimed, anyBand)
+		ss.fit(m, unclaimed, anyBand, opts.AnyMode)
 		ids := make([]string, len(ss.Add))
 		for i, c := range ss.Add {
 			claimed[c.ID] = true

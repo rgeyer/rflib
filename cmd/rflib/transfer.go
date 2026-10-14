@@ -29,7 +29,7 @@ func newExportCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeOutput(cmd, len(cs), func(w io.Writer) error { return export.GenericCSV{}.Export(w, cs) })
+			return writeOutput(cmd, func(w io.Writer) (int, error) { return len(cs), export.GenericCSV{}.Export(w, cs) })
 		})
 	}
 
@@ -50,7 +50,7 @@ func newExportCommand() *cobra.Command {
 			if filtered(cmd) {
 				gs = referencedGroups(gs, cs)
 			}
-			return writeOutput(cmd, len(cs), func(w io.Writer) error { return export.WriteJSON(w, gs, cs) })
+			return writeOutput(cmd, func(w io.Writer) (int, error) { return len(cs), export.WriteJSON(w, gs, cs) })
 		})
 	}
 
@@ -152,7 +152,7 @@ func exportNumbered(cmd *cobra.Command, ex interface {
 		}
 		cs, results := naming.Apply(cs, rules, dedupe)
 		warnDuplicateNames(cmd, results)
-		return writeOutput(cmd, len(cs), func(w io.Writer) error { return ex.Export(w, cs) })
+		return writeOutput(cmd, func(w io.Writer) (int, error) { return len(cs), ex.Export(w, cs) })
 	})
 }
 
@@ -199,16 +199,19 @@ func referencedGroups(groups []domain.Group, channels []domain.Channel) []domain
 // writeOutput writes to stdout or the --output file. A failed file export is
 // removed so it can't be mistaken for a complete one. The summary goes to
 // stderr so it never mixes with exported data on stdout.
-func writeOutput(cmd *cobra.Command, count int, write func(io.Writer) error) error {
+// writeOutput runs write to --output, or stdout, and reports on stderr how
+// many channels write said it wrote to a file.
+func writeOutput(cmd *cobra.Command, write func(io.Writer) (int, error)) error {
 	path := getString(cmd, "output")
 	if path == "" || path == "-" {
-		return write(cmd.OutOrStdout())
+		_, err := write(cmd.OutOrStdout())
+		return err
 	}
 	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	err = write(file)
+	count, err := write(file)
 	if cerr := file.Close(); err == nil {
 		err = cerr
 	}

@@ -36,7 +36,10 @@ type Model struct {
 	// BandsMHz are the ranges the radio can tune, as [low, high] MHz pairs.
 	// Empty means unchecked.
 	BandsMHz [][2]float64 `yaml:"bands_mhz"`
-	Notes    string       `yaml:"notes"`
+	// Modes are the modulation modes a memory can use, from domain.Modes.
+	// Empty means unchecked.
+	Modes []string `yaml:"modes"`
+	Notes string   `yaml:"notes"`
 	// Source records where the facts came from.
 	Source string `yaml:"source"`
 }
@@ -110,6 +113,13 @@ func (m Model) Validate() error {
 			fail("power levels must run from lowest to highest")
 		}
 	}
+	for i, mode := range m.Modes {
+		if !slices.Contains(domain.Modes, mode) {
+			fail("mode %q must be one of %s", mode, strings.Join(domain.Modes, ", "))
+		} else if slices.Contains(m.Modes[:i], mode) {
+			fail("mode %s is listed twice", mode)
+		}
+	}
 	for _, b := range m.BandsMHz {
 		if b[0] <= 0 || b[1] < b[0] {
 			fail("band %v must be [low, high] MHz", b)
@@ -175,6 +185,18 @@ func (m Model) Tunes(hz int64) bool {
 	}
 	mhz := float64(hz) / 1e6
 	return slices.ContainsFunc(m.BandsMHz, func(b [2]float64) bool { return mhz >= b[0] && mhz <= b[1] })
+}
+
+// HasMode reports whether a memory can use mode, or true when the model
+// lists no modes.
+func (m Model) HasMode(mode string) bool {
+	return len(m.Modes) == 0 || slices.Contains(m.Modes, mode)
+}
+
+// Receives reports whether the radio can receive a channel: its receive
+// frequency is in the bands and its mode is one the radio has.
+func (m Model) Receives(c domain.Channel) bool {
+	return m.Tunes(c.ReceiveHz) && m.HasMode(c.Mode)
 }
 
 func Parse(data []byte) (Model, error) {

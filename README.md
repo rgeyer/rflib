@@ -124,7 +124,7 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--gro
 | `has:` | `location`, `service`, `group`, `tag`, `tone`, `power`, `notes`, `shortname`, `radio` |
 | `near:` | `LAT,LON,KM`, see below |
 | `radio:` | A radio's name, `any`, or `none` |
-| `tunes:` | A radio or model name: channels whose receive frequency it can tune |
+| `tunes:` | A radio or model name: channels in its bands and in a mode it has |
 | `created:`, `updated:` | `YYYY-MM-DD`, with comparisons and ranges like `freq:` |
 | `id:` | A channel ID |
 
@@ -197,22 +197,22 @@ A radio is one of your own radios: a model, the channels programmed into it in y
 
 ### Models
 
-| Model | Programmed with | Memories | Name length | Power levels |
-|---|---|---|---|---|
-| `yaesu-ftm150` | ADMS-17 (`yaesu-ftm150` profile) | 1-999 | 16 | LOW 5 W, MID 25 W, HIGH 50 W |
-| `yaesu-ftm6000` | ADMS-13 (`yaesu-ftm6000` profile) | 1-999 | 6 | LOW 5 W, MID 25 W, HIGH 50 W |
-| `yaesu-ft857` | CHIRP: Yaesu FT-857/897 (US) | 1-200 | 8 | set from the radio's menu |
-| `tidradio-tdh3-gmrs` | CHIRP: TIDRADIO TD-H3-GMRS | 1-199 | 8 | Low 2 W, High 5 W |
-| `baofeng-uv5rm` | CHIRP: Baofeng 5RM | 1-1000 | 12 | Low 1 W, Medium 5 W, High 8 W |
-| `explorer-qrz1` | CHIRP: Explorer QRZ-1 | 1-200 | 10 | Low 0.5 W, Mid 2.5 W, High 5 W |
-| `tyt-th9800` | CHIRP: TYT TH-9800 | 1-800 | 6, upper case | Low 5 W, Mid2 10 W, Mid1 20 W, High 50 W |
-| `radioddity-uv5g` | CHIRP: Radioddity UV-5G | 0-127 | 7, upper case | Low 1 W, High 4 W |
+| Model | Programmed with | Memories | Name length | Power levels | Modes |
+|---|---|---|---|---|---|
+| `yaesu-ftm150` | ADMS-17 (`yaesu-ftm150` profile) | 1-999 | 16 | LOW 5 W, MID 25 W, HIGH 50 W | FM, NFM, AM |
+| `yaesu-ftm6000` | ADMS-13 (`yaesu-ftm6000` profile) | 1-999 | 6 | LOW 5 W, MID 25 W, HIGH 50 W | FM, NFM, AM |
+| `yaesu-ft857` | CHIRP: Yaesu FT-857/897 (US) | 1-200 | 8 | set from the radio's menu | FM, NFM, AM, USB, LSB |
+| `tidradio-tdh3-gmrs` | CHIRP: TIDRADIO TD-H3-GMRS | 1-199 | 8 | Low 2 W, High 5 W | FM, NFM, AM |
+| `baofeng-uv5rm` | CHIRP: Baofeng 5RM | 1-1000 | 12 | Low 1 W, Medium 5 W, High 8 W | FM, NFM, AM |
+| `explorer-qrz1` | CHIRP: Explorer QRZ-1 | 1-200 | 10 | Low 0.5 W, Mid 2.5 W, High 5 W | FM, NFM |
+| `tyt-th9800` | CHIRP: TYT TH-9800 | 1-800 | 6, upper case | Low 5 W, Mid2 10 W, Mid1 20 W, High 50 W | FM, NFM, AM |
+| `radioddity-uv5g` | CHIRP: Radioddity UV-5G | 0-127 | 7, upper case | Low 1 W, High 4 W | FM, NFM |
 
-`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, and where the facts came from: CHIRP's driver source, or the radio's operating manual.
+`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, modes, and where the facts came from: CHIRP's driver source, or the radio's operating manual.
 
 ### Channel order and memory numbers
 
-`radio channels add` appends to the end of the list, by `--id` or by `--query`. Channels the radio can't receive, going by its model's bands, are skipped and listed on stderr; `--any-band` adds them anyway. `channel list tunes:Truck` previews what fits. Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
+`radio channels add` appends to the end of the list, by `--id` or by `--query`. Channels the radio can't receive are skipped and listed on stderr: those outside its model's bands (`--any-band` adds them anyway), and those in a mode it doesn't have, such as USB on an FM handheld (`--any-mode`). `channel list tunes:Truck` previews what fits. A channel in a mode the radio lacks that is on it anyway, added with `--any-mode` or before modes were checked, is listed with a warning but left out of the export. Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
 
 ```sh
 ./rflib radio channels move Truck --id <id> --before <other-id>   # or --after, --to N, --top, --bottom
@@ -263,7 +263,7 @@ A radio's **sources** are searches that `radio sync` adds new matching channels 
 
 - **Placement:** each source's new channels go after the last channel that source added. A source with none yet goes after the channels of earlier sources and before those of later ones.
 - **Order and claims:** sources are numbered from 1. An earlier source claims a channel first, and `radio sources move HT 3 --to 1` changes the order.
-- **Bands:** like `radio channels add`, sync skips channels outside the radio's bands, reports how many, and takes `--any-band`.
+- **Bands and modes:** like `radio channels add`, sync skips channels outside the radio's bands or in modes it lacks, reports how many, and takes `--any-band` and `--any-mode`.
 - **What sync leaves alone:** it never removes anything, and channels already on the radio keep their places unless re-sorted (below). Channels you add by hand stay where you put them. Moving a source's channel by hand (`radio channels move`) makes it yours: it keeps its new place and no longer counts as the source's.
 - **Re-sorting:** `radio sync HT --resort` also puts each source's channels in its sort order, within the places in the list they already hold. Channels added or moved by hand keep their places, and section starts stay put. Memory numbers change, so program the radio again afterwards; `--dry-run --resort` counts what would move. To re-sort a source on every sync, set it with `radio sources set HT 2 --keep-sorted` (or `--keep-sorted` on `radio sources add`).
 - **Changing a source:** `radio sources set HT 2 --query ... --sort ... --section-start ... --keep-sorted` changes a source. A new section start moves to the source's first channel right away.
@@ -382,8 +382,8 @@ Some radios are programmed with the manufacturer's software rather than CHIRP. A
 
 | Profile | Software | Names |
 |---|---|---|
-| `yaesu-ftm150` | ADMS-17 | 16 characters |
-| `yaesu-ftm6000` | ADMS-13 | 6 characters |
+| `yaesu-ftm150` | ADMS-17 | 16 characters | FM, NFM, AM |
+| `yaesu-ftm6000` | ADMS-13 | 6 characters | FM, NFM, AM |
 
 In ADMS, open the *Memories* tab and use *File > Import* on the exported file. As ADMS's own exports do, the file holds all 999 memories: your channels first, then empty ones.
 

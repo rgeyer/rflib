@@ -8,5 +8,6 @@ power:
   - {label: Low, watts: 2, intent: low}
   - {label: High, watts: 5, intent: high}
 bands_mhz: [[136, 175], [400, 521]]
+modes: [FM, NFM, AM]
 notes: CHIRP requires memories 31-54 to hold GMRS frequencies (462.550-462.725 MHz); plan the radio's sections around that.
 source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/tdh8.py (TDH3_GMRS)

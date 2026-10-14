@@ -296,15 +296,23 @@ func powerLabel(mem program.Memory) string {
 	return mem.Channel.ProgrammedPower.Label
 }
 
-func anyBandFlag(cmd *cobra.Command) {
+func fitFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("any-band", false, "Add channels even when their receive frequency is outside the radio's bands")
+	cmd.Flags().Bool("any-mode", false, "Add channels even when the radio doesn't have their mode, such as USB")
 }
 
-func skippedNote(n int) string {
-	if n == 0 {
+func skippedNote(res app.AddResult) string {
+	var parts []string
+	if n := len(res.Skipped); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d outside its bands", n))
+	}
+	if n := len(res.WrongMode); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d in modes it doesn't have", n))
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("; skipped %d outside its bands", n)
+	return "; skipped " + strings.Join(parts, " and ")
 }
 
 func newRadioChannelsAddCommand() *cobra.Command {
@@ -312,18 +320,20 @@ func newRadioChannelsAddCommand() *cobra.Command {
 		Long: `Append channels to the end of a radio's list, by --id or by --query (or the
 shorthand --tag, --group, --service, --lat/--lon/--radius-km), in --sort
 order. Channels already on the radio are skipped, so the existing order never
-changes, and so are channels outside the radio's bands unless --any-band. To
+changes, and so are channels outside the radio's bands unless --any-band, and
+channels in a mode the radio doesn't have (such as USB) unless --any-mode. To
 keep adding a query's new matches, make it a source instead: rflib radio
 sources add.`}
 	cmd.Flags().StringSlice("id", nil, "Channel IDs (repeat or comma-separate)")
 	cmd.Flags().String("sort", "name", "Order for channels added by filter: name, freq, or group")
-	anyBandFlag(cmd)
+	fitFlags(cmd)
 	filterFields(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		var req app.AddRequest
 		req.IDs, _ = cmd.Flags().GetStringSlice("id")
 		req.Sort = getString(cmd, "sort")
 		req.AnyBand, _ = cmd.Flags().GetBool("any-band")
+		req.AnyMode, _ = cmd.Flags().GetBool("any-mode")
 		if len(req.IDs) == 0 && !filtered(cmd) {
 			return fmt.Errorf("give channels with --id or --query")
 		}
@@ -342,7 +352,10 @@ sources add.`}
 			for _, c := range res.Skipped {
 				fmt.Fprintf(cmd.ErrOrStderr(), "skipped %q (%s MHz): %s can't receive it\n", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), r.Name)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Added %d channels to %s%s\n", res.Added, r.Name, skippedNote(len(res.Skipped)))
+			for _, c := range res.WrongMode {
+				fmt.Fprintf(cmd.ErrOrStderr(), "skipped %q (%s MHz): %s doesn't have %s\n", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), r.Name, c.Mode)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Added %d channels to %s%s\n", res.Added, r.Name, skippedNote(res))
 			return nil
 		})
 	}
@@ -445,7 +458,8 @@ func newRadioSyncCommand() *cobra.Command {
 		Long: `Add channels matching each of the radio's sources that aren't on it yet.
 Each source's new channels go after the last channel it added, in the
 source's sort order; an earlier source claims a channel first. Channels
-outside the radio's bands are skipped unless --any-band. Nothing is removed.
+outside the radio's bands are skipped unless --any-band, and channels in a mode
+the radio doesn't have unless --any-mode. Nothing is removed.
 
 Channels already on the radio stay where they are, except in sources set to
 --keep-sorted, or in every source with --resort. Re-sorting puts a source's
@@ -454,11 +468,12 @@ memory numbers change and the radio needs programming again. Channels added
 or moved by hand keep their places, and section starts stay put.`}
 	cmd.Flags().Bool("dry-run", false, "List what would change without changing the radio")
 	cmd.Flags().Bool("resort", false, "Also re-sort every source's channels already on the radio")
-	anyBandFlag(cmd)
+	fitFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		var opts app.SyncOptions
 		opts.DryRun, _ = cmd.Flags().GetBool("dry-run")
 		opts.AnyBand, _ = cmd.Flags().GetBool("any-band")
+		opts.AnyMode, _ = cmd.Flags().GetBool("any-mode")
 		opts.Resort, _ = cmd.Flags().GetBool("resort")
 		dryRun := opts.DryRun
 		return withApp(cmd, func(a *app.Service) error {
@@ -476,13 +491,16 @@ or moved by hand keep their places, and section starts stay put.`}
 					for _, c := range ss.Skipped {
 						fmt.Fprintf(out, "would skip\tsource %d\t%s\t%s\toutside the radio's bands\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
 					}
+					for _, c := range ss.WrongMode {
+						fmt.Fprintf(out, "would skip\tsource %d\t%s\t%s\tthe radio doesn't have %s\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), c.Mode)
+					}
 					if ss.Resorted > 0 {
 						fmt.Fprintf(out, "would re-sort\tsource %d\t%d channels\n", n, ss.Resorted)
 					}
 					continue
 				}
-				if len(ss.Add) > 0 || len(ss.Skipped) > 0 {
-					fmt.Fprintf(out, "%s: added %d%s\n", app.SourceLabel(ss.Source), ss.Added, skippedNote(len(ss.Skipped)))
+				if len(ss.Add) > 0 || len(ss.Skipped) > 0 || len(ss.WrongMode) > 0 {
+					fmt.Fprintf(out, "%s: added %d%s\n", app.SourceLabel(ss.Source), ss.Added, skippedNote(ss.AddResult))
 				}
 				if ss.Resorted > 0 {
 					fmt.Fprintf(out, "%s: re-sorted %d\n", app.SourceLabel(ss.Source), ss.Resorted)
@@ -699,9 +717,8 @@ manufacturer software's CSV for profile radios. Warnings go to stderr.`}
 				return err
 			}
 			printWarnings(cmd.ErrOrStderr(), p)
-			return writeOutput(cmd, len(p.Memories), func(w io.Writer) error {
-				_, err := program.Write(w, p, skipInvalid, cmd.ErrOrStderr())
-				return err
+			return writeOutput(cmd, func(w io.Writer) (int, error) {
+				return program.Write(w, p, skipInvalid, cmd.ErrOrStderr())
 			})
 		})
 	}
