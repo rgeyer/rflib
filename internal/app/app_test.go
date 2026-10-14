@@ -242,3 +242,87 @@ func mustParse(t *testing.T, text string) query.Node {
 	}
 	return n
 }
+
+func TestChannelIDPrefixes(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	for _, id := range []string{"abcd1111", "abcd2222", "ffff0000"} {
+		if _, _, err := s.CreateChannel(ctx, domain.Channel{ID: id, Name: id, ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for ref, want := range map[string]string{"abcd1111": "abcd1111", "abcd1": "abcd1111", "ffff": "ffff0000", "abcd": "ambiguous", "fff": "not found", "zzzz": "not found"} {
+		got, err := s.ChannelID(ctx, ref)
+		if err != nil {
+			got = err.Error()
+		}
+		if !strings.Contains(got, want) {
+			t.Errorf("ChannelID(%q) = %q, want %q", ref, got, want)
+		}
+	}
+}
+
+func TestBulkSelectUpdateDelete(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	wx1 := add(t, s, "WX1", 162.55, domain.ServiceNOAA)
+	wx2 := add(t, s, "WX2", 162.40, domain.ServiceNOAA)
+	call := add(t, s, "Calling", 146.52, domain.ServiceAmateur)
+	if _, err := s.Select(ctx, Selection{}); err == nil {
+		t.Error("an empty selection selected")
+	}
+	// IDs and a query: a channel must be in both.
+	cs, err := s.Select(ctx, Selection{IDs: []string{wx1.ID, call.ID}, Query: mustParse(t, "band:noaa")})
+	if err != nil || names(cs) != "WX1" {
+		t.Fatalf("select = %s, %v", names(cs), err)
+	}
+	if all, _ := s.Select(ctx, Selection{All: true}); len(all) != 3 {
+		t.Errorf("all = %s", names(all))
+	}
+
+	low, gmrs := domain.PowerLow, domain.ServiceGMRS
+	edit := ChannelEdit{Tags: &TagEdit{Add: []string{"Weather", "wx"}}, Power: &low}
+	if _, _, err := s.UpdateChannels(ctx, Selection{Query: mustParse(t, "band:noaa")}, edit); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.UpdateChannels(ctx, Selection{IDs: []string{wx2.ID}}, ChannelEdit{Tags: &TagEdit{Remove: []string{"wx"}}}); err != nil {
+		t.Fatal(err)
+	}
+	got1, _ := s.GetChannel(ctx, wx1.ID)
+	got2, _ := s.GetChannel(ctx, wx2.ID)
+	if strings.Join(got1.Tags, ",") != "weather,wx" || strings.Join(got2.Tags, ",") != "weather" || got1.Power != low {
+		t.Errorf("after edits: %v %v %s", got1.Tags, got2.Tags, got1.Power)
+	}
+	// Band-plan warnings name their channel.
+	_, warnings, err := s.UpdateChannels(ctx, Selection{IDs: []string{call.ID}}, ChannelEdit{Service: &gmrs})
+	if err != nil || len(warnings) == 0 || !strings.HasPrefix(warnings[0], "Calling: ") {
+		t.Errorf("warnings = %v, %v", warnings, err)
+	}
+
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{wx1.ID, call.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, on, _ := s.OnRadio(ctx, "HT", Selection{All: true}); names(on) != "Calling,WX1" {
+		t.Errorf("on radio = %s", names(on))
+	}
+	high := domain.PowerHigh
+	if cs, err := s.SetEntries(ctx, "HT", Selection{Query: mustParse(t, "tag:weather")}, EntryEdit{SetPower: true, Power: high}); err != nil || names(cs) != "WX1" {
+		t.Errorf("set entries = %s, %v", names(cs), err)
+	}
+	if _, e, _ := s.RadioEntry(ctx, "HT", wx1.ID[:8]); e.Power != high {
+		t.Errorf("override = %+v", e)
+	}
+	gone, err := s.DeleteChannels(ctx, Selection{Query: mustParse(t, "tag:weather")})
+	if err != nil || names(gone) != "WX1,WX2" {
+		t.Fatalf("delete = %s, %v", names(gone), err)
+	}
+	if _, on, _ := s.OnRadio(ctx, "HT", Selection{All: true}); names(on) != "Calling" {
+		t.Errorf("deleted channel still on the radio: %s", names(on))
+	}
+	if _, removed, err := s.RemoveChannels(ctx, "HT", Selection{All: true}); err != nil || names(removed) != "Calling" {
+		t.Errorf("remove all = %s, %v", names(removed), err)
+	}
+}

@@ -54,3 +54,20 @@ func ProgrammedTones(c Channel) (tx, rx Tone) {
 	}
 	return tx, rx
 }
+
+// Duplex classifies a channel's stored frequencies the way CHIRP does,
+// whether or not it is receive-only: off (no transmit frequency), simplex,
+// + or - (an offset), or split.
+func Duplex(c Channel) string {
+	switch tx := c.TransmitHz; {
+	case tx == nil:
+		return "off"
+	case *tx == c.ReceiveHz:
+		return "simplex"
+	case max(*tx-c.ReceiveHz, c.ReceiveHz-*tx) >= SplitThresholdHz:
+		return "split"
+	case *tx > c.ReceiveHz:
+		return "+"
+	}
+	return "-"
+}

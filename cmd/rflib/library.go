@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
@@ -41,10 +42,9 @@ func newLibraryAddCommand() *cobra.Command {
 
 func newLibraryListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list", Short: "List libraries; * marks the one in use", Args: cobra.NoArgs}
-	formatFlag(cmd)
+	libraryListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		format, err := getFormat(cmd)
-		if err != nil {
+		if err := libraryListing.check(cmd); err != nil {
 			return err
 		}
 		return withDB(cmd, func(d store.Store) error {
@@ -52,16 +52,8 @@ func newLibraryListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			type row struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				Description string `json:"description"`
-				Channels    int    `json:"channels"`
-				Radios      int    `json:"radios"`
-				InUse       bool   `json:"in_use"`
-			}
 			current := libraryName(cmd)
-			rows := make([]row, len(libs))
+			rows := make([]libraryRow, len(libs))
 			for i, lib := range libs {
 				a := app.New(d.Library(lib.ID))
 				cs, err := a.ListChannels(ctx(cmd))
@@ -72,18 +64,30 @@ func newLibraryListCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				rows[i] = row{lib.ID, lib.Name, lib.Description, len(cs), len(rs), lib.Name == current || lib.ID == current}
+				rows[i] = libraryRow{lib, len(cs), len(rs), lib.Name == current || lib.ID == current}
 			}
-			if format == "json" {
-				return writeJSON(cmd.OutOrStdout(), rows)
-			}
-			for _, r := range rows {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s%s\t%d channels\t%d radios\t%s\t%s\n", mark(r.InUse, "*"), r.Name, r.Channels, r.Radios, r.ID, r.Description)
-			}
-			return nil
+			return libraryListing.write(cmd, rows)
 		})
 	}
 	return cmd
+}
+
+type libraryRow struct {
+	domain.Library
+	channels, radios int
+	inUse            bool
+}
+
+var libraryListing = listing[libraryRow]{
+	fields: []field[libraryRow]{
+		{name: "in_use", text: func(r libraryRow) string { return mark(r.inUse, "*") }, json: func(r libraryRow) any { return r.inUse }},
+		{name: "name", text: func(r libraryRow) string { return r.Name }},
+		{name: "channels", text: func(r libraryRow) string { return strconv.Itoa(r.channels) }, json: func(r libraryRow) any { return r.channels }},
+		{name: "radios", text: func(r libraryRow) string { return strconv.Itoa(r.radios) }, json: func(r libraryRow) any { return r.radios }},
+		{name: "description", text: func(r libraryRow) string { return r.Description }},
+		{name: "id", id: true, text: func(r libraryRow) string { return r.ID }},
+	},
+	defaults: []string{"in_use", "name", "channels", "radios", "description"},
 }
 
 func newLibraryUpdateCommand() *cobra.Command {

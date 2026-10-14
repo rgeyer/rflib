@@ -29,10 +29,9 @@ characters from an export profile instead of the flags.`}
 	cmd.Flags().String("sort", "name", "Order: name, freq, or group")
 	dedupeFlag(cmd)
 	filterFields(cmd)
-	formatFlag(cmd)
+	nameListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		format, err := getFormat(cmd)
-		if err != nil {
+		if err := nameListing.check(cmd); err != nil {
 			return err
 		}
 		rules, err := nameRules(cmd)
@@ -52,32 +51,34 @@ characters from an export profile instead of the flags.`}
 				return err
 			}
 			_, results := naming.Apply(cs, rules, dedupe)
-			if format == "json" {
-				type row struct {
-					ID      string `json:"id"`
-					Name    string `json:"name"`
-					Radio   string `json:"radio_name"`
-					Method  string `json:"method"`
-					Deduped bool   `json:"deduped"`
-				}
-				rows := make([]row, len(cs))
-				for i, c := range cs {
-					rows[i] = row{c.ID, c.Name, results[i].Name, string(results[i].Method), results[i].Deduped}
-				}
-				return writeJSON(cmd.OutOrStdout(), rows)
-			}
+			rows := make([]nameRow, len(cs))
 			for i, c := range cs {
-				mark := ""
-				if results[i].Deduped {
-					mark = "+"
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s%s\t%s\n", results[i].Name, results[i].Method, mark, c.Name)
+				rows[i] = nameRow{c, results[i]}
+			}
+			if err := nameListing.write(cmd, rows); err != nil {
+				return err
 			}
 			warnDuplicateNames(cmd, results)
 			return nil
 		})
 	}
 	return cmd
+}
+
+type nameRow struct {
+	domain.Channel
+	result naming.Result
+}
+
+var nameListing = listing[nameRow]{
+	fields: []field[nameRow]{
+		{name: "radio_name", text: func(r nameRow) string { return r.result.Name }},
+		{name: "fit", text: func(r nameRow) string { return string(r.result.Method) + mark(r.result.Deduped, "+") }, json: func(r nameRow) any { return r.result.Method }},
+		{name: "deduped", text: func(r nameRow) string { return yesNo(r.result.Deduped) }, json: func(r nameRow) any { return r.result.Deduped }},
+		{name: "name", text: func(r nameRow) string { return r.Name }},
+		{name: "id", id: true, text: func(r nameRow) string { return r.ID }},
+	},
+	defaults: []string{"radio_name", "fit", "name"},
 }
 
 func nameRules(cmd *cobra.Command) (naming.Rules, error) {

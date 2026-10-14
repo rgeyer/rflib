@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
@@ -91,6 +93,9 @@ func (s *Service) replan(ctx context.Context, r domain.Radio) error {
 
 // AddRequest is what to add to a radio: channels by ID, then the matches
 // of Query in Sort order.
+// AddRequest is what to add to a radio: channels by ID (or ID prefix), in
+// the order given, or a query's matches in Sort order. With both, a
+// channel must be in both.
 type AddRequest struct {
 	IDs   []string
 	Query query.Node
@@ -137,22 +142,25 @@ func (s *Service) AddChannels(ctx context.Context, radio string, req AddRequest)
 		return r, AddResult{}, err
 	}
 	var cs []domain.Channel
-	for _, id := range req.IDs {
-		c, err := s.lib.GetChannel(ctx, id)
+	if req.Query == nil {
+		ids, err := s.ChannelIDs(ctx, req.IDs)
 		if err != nil {
 			return r, AddResult{}, err
 		}
-		cs = append(cs, c)
-	}
-	if req.Query != nil {
-		found, err := s.FindChannels(ctx, req.Query)
-		if err != nil {
+		for _, id := range ids {
+			c, err := s.lib.GetChannel(ctx, id)
+			if err != nil {
+				return r, AddResult{}, err
+			}
+			cs = append(cs, c)
+		}
+	} else {
+		if cs, err = s.Select(ctx, Selection{IDs: req.IDs, Query: req.Query}); err != nil {
 			return r, AddResult{}, err
 		}
-		if err := domain.SortChannels(found, orDefault(req.Sort, "name")); err != nil {
+		if err := domain.SortChannels(cs, orDefault(req.Sort, "name")); err != nil {
 			return r, AddResult{}, err
 		}
-		cs = append(cs, found...)
 	}
 	var res AddResult
 	res.fit(m, cs, req.AnyBand, req.AnyMode)
@@ -172,13 +180,34 @@ func orDefault(v, fallback string) string {
 }
 
 // RemoveChannels takes channels off a radio and returns how many.
-func (s *Service) RemoveChannels(ctx context.Context, radio string, ids []string) (domain.Radio, int, error) {
+// OnRadio returns the selected channels that are on a radio, in name
+// order.
+func (s *Service) OnRadio(ctx context.Context, radio string, sel Selection) (domain.Radio, []domain.Channel, error) {
 	r, err := s.lib.GetRadio(ctx, radio)
 	if err != nil {
-		return r, 0, err
+		return r, nil, err
 	}
-	n, err := s.lib.RemoveRadioChannels(ctx, r.ID, ids)
-	return r, n, err
+	on, err := s.lib.RadioChannelIDs(ctx, r.ID)
+	if err != nil {
+		return r, nil, err
+	}
+	cs, err := s.selectIn(ctx, sel, on)
+	return r, cs, err
+}
+
+// RemoveChannels takes the selected channels off a radio; they stay in the
+// library. It returns the channels taken off.
+func (s *Service) RemoveChannels(ctx context.Context, radio string, sel Selection) (domain.Radio, []domain.Channel, error) {
+	r, cs, err := s.OnRadio(ctx, radio, sel)
+	if err != nil || len(cs) == 0 {
+		return r, cs, err
+	}
+	ids := make([]string, len(cs))
+	for i, c := range cs {
+		ids[i] = c.ID
+	}
+	_, err = s.lib.RemoveRadioChannels(ctx, r.ID, ids)
+	return r, cs, err
 }
 
 // Move is where to move a channel in a radio's list: before or after
@@ -196,8 +225,12 @@ func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv M
 		return err
 	}
 	index := func(ref string) (int, error) {
+		id, err := s.ChannelID(ctx, ref)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return 0, err
+		}
 		for _, e := range es {
-			if e.Channel.ID == ref {
+			if e.Channel.ID == id {
 				return e.Position, nil
 			}
 		}
@@ -207,6 +240,7 @@ func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv M
 	if err != nil {
 		return err
 	}
+	channelID = es[from].Channel.ID
 	var to int
 	switch {
 	case mv.Top:
@@ -241,6 +275,11 @@ func (s *Service) RadioEntry(ctx context.Context, radio, channelID string) (doma
 	if err != nil {
 		return r, domain.RadioEntry{}, err
 	}
+	if id, err := s.ChannelID(ctx, channelID); err == nil {
+		channelID = id
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return r, domain.RadioEntry{}, err
+	}
 	for _, e := range es {
 		if e.Channel.ID == channelID {
 			return r, e, nil
@@ -261,6 +300,50 @@ func (s *Service) SetEntry(ctx context.Context, radio string, e domain.RadioEntr
 		return err
 	}
 	return s.replan(ctx, r)
+}
+
+// EntryEdit is a change to a radio's overrides for many channels at once.
+// Unset fields are left alone; a set Skip of nil removes the override.
+type EntryEdit struct {
+	SetPower bool
+	Power    domain.PowerIntent
+	SetSkip  bool
+	Skip     *bool
+}
+
+// SetEntries applies an edit to the radio's overrides for each selected
+// channel on it, and returns the channels changed. Like SetEntry, it
+// reports an error if the radio no longer plans; the overrides are saved
+// either way.
+func (s *Service) SetEntries(ctx context.Context, radio string, sel Selection, edit EntryEdit) ([]domain.Channel, error) {
+	r, cs, err := s.OnRadio(ctx, radio, sel)
+	if err != nil {
+		return nil, err
+	}
+	es, err := s.lib.RadioEntries(ctx, r.ID)
+	if err != nil {
+		return nil, err
+	}
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
+		for _, c := range cs {
+			i := slices.IndexFunc(es, func(e domain.RadioEntry) bool { return e.Channel.ID == c.ID })
+			e := es[i]
+			if edit.SetPower {
+				e.Power = edit.Power
+			}
+			if edit.SetSkip {
+				e.Skip = edit.Skip
+			}
+			if err := tx.SetRadioEntry(ctx, r.ID, e); err != nil {
+				return fmt.Errorf("%s: %w", c.Name, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cs, s.replan(ctx, r)
 }
 
 // --- sources ---

@@ -19,14 +19,17 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string, out, errOut io.Writer) error {
+// run runs rflib. Data goes to out; status messages, warnings, and errors
+// go to errOut, so out can be piped.
+func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	cmd := newRootCmd(out, errOut)
+	cmd.SetIn(in)
 	cmd.SetArgs(args)
 	return cmd.Execute()
 }
@@ -111,7 +114,7 @@ func initLibrary(cmd *cobra.Command, _ []string) error {
 	if err = d.Migrate(cmd.Context()); err != nil {
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "Library initialized:", path)
+	fmt.Fprintln(cmd.ErrOrStderr(), "Library initialized:", path)
 	return nil
 }
 
