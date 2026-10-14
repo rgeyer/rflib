@@ -595,6 +595,8 @@ paths:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
     get:
       summary: Each memory as it will be programmed
+      parameters:
+        - {name: q, in: query, description: "A query on the memories' channels; memory numbers and warnings stay the whole radio's", schema: {type: string}}
       responses:
         "200": {$ref: "#/components/responses/Memories"}
         default: {$ref: "#/components/responses/Error"}

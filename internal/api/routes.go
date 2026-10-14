@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -960,7 +961,21 @@ func (s *server) memories(w http.ResponseWriter, r *http.Request, a *app.Service
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"memories": newMemories(p, es), "warnings": nonNil(p.Warnings)})
+	ms := newMemories(p, es)
+	// A search only filters the rows: memory numbers and warnings are the
+	// whole radio's.
+	if q := r.URL.Query().Get("q"); strings.TrimSpace(q) != "" {
+		cs, err := a.Find(ctx(r), q)
+		if err != nil {
+			return err
+		}
+		match := make(map[string]bool, len(cs))
+		for _, c := range cs {
+			match[c.ID] = true
+		}
+		ms = slices.DeleteFunc(ms, func(m Memory) bool { return !match[m.Channel.ID] })
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"memories": ms, "warnings": nonNil(p.Warnings)})
 	return nil
 }
 

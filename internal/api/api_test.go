@@ -247,6 +247,13 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 	if mems.Memories[0].Name != "WX" || mems.Memories[0].Memory != 10 || !mems.Memories[0].Overrides.Name {
 		t.Errorf("memories = %+v", mems.Memories[0])
 	}
+	// A search filters the rows but keeps the whole radio's numbering.
+	c.do("GET", L+"/radios/HT/memories", nil, 200, &mems)
+	last := mems.Memories[len(mems.Memories)-1]
+	c.do("GET", L+"/radios/HT/memories?q="+urlQuery("id:"+last.Channel.ID), nil, 200, &mems)
+	if len(mems.Memories) != 1 || mems.Memories[0].Memory != last.Memory {
+		t.Errorf("searched memories = %+v, want memory %d", mems.Memories, last.Memory)
+	}
 	c.do("POST", L+"/radios/HT/sources", map[string]any{"query": "tag:ham", "section_start": 50}, 201, nil)
 	var sync struct {
 		Added int `json:"added"`
