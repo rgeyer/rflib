@@ -372,31 +372,32 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 	sh := openShared(t, d)
 	gmrs, _ := seed.Get("us-gmrs")
 
-	// A seeded private channel from before becomes a link, keeping its own
-	// name as a short name; the rest are linked new.
+	// A built-in list goes into the shared list only; a private channel
+	// that matches one becomes a link, keeping its own name as a short name.
 	mine := add(t, s, "GMRS 15 Rpt", 462.55, domain.ServiceGMRS)
 	simplex := mine.ReceiveHz
 	mine.TransmitHz, mine.Tags, mine.Notes = &simplex, []string{"family"}, "our channel"
 	if _, _, err := s.UpdateChannel(ctx, mine); err != nil {
 		t.Fatal(err)
 	}
-	dry, err := s.InstallSeed(ctx, gmrs, nil, true)
-	if err != nil || len(dry.Converted) != 1 || len(dry.Linked) != 29 || dry.SharedAdded != 30 {
-		t.Fatalf("dry run = %d converted, %d linked, %d added to the shared list, %v", len(dry.Converted), len(dry.Linked), dry.SharedAdded, err)
+	if _, err := s.UpdateSeed(ctx, gmrs, false); !errors.Is(err, errNotShared) {
+		t.Errorf("update from a private library: %v", err)
 	}
-	if all, _ := sh.ListChannels(ctx); len(all) != 0 {
-		t.Fatal("dry run filled the shared library")
+	if st, err := sh.UpdateSeed(ctx, gmrs, false); err != nil || len(st.Changes) != 30 || !st.Installed {
+		t.Fatalf("seed = %+v, %v", st, err)
 	}
-	res, err := s.InstallSeed(ctx, gmrs, []string{"seeded"}, false)
-	if err != nil || res.SharedAdded != 30 || len(res.Converted) != 1 || len(res.Linked) != 29 {
-		t.Fatalf("install = %+v, %v", res, err)
+	if mineNow, _ := s.GetChannel(ctx, mine.ID); mineNow.Link != nil {
+		t.Fatal("seeding touched a private library")
+	}
+	if cvs, err := s.ConvertToLinks(ctx, nil, nil, false); err != nil || len(cvs) != 1 {
+		t.Fatalf("convert = %+v, %v", cvs, err)
 	}
 	link, _ := s.GetChannel(ctx, mine.ID)
 	if link.Link == nil || link.Name != "GMRS 15" || strings.Join(link.ShortNames, ",") != "GMRS 15 Rpt" || strings.Join(link.Tags, ",") != "family" || link.Notes != "our channel" {
 		t.Fatalf("converted = %+v", link)
 	}
-	if again, _ := s.InstallSeed(ctx, gmrs, nil, false); again.SharedAdded != 0 || again.SharedUpdated != 0 || len(again.Linked) != 0 || len(again.Already) != 30 {
-		t.Errorf("reinstall = %+v", again)
+	if again, err := sh.UpdateSeed(ctx, gmrs, false); err != nil || again.Pending() {
+		t.Errorf("update again = %+v, %v", again.Changes, err)
 	}
 	// Linking again reports each channel's existing link, for a radio.
 	lr, err := s.LinkChannels(ctx, Selection{IDs: []string{link.Link.SharedID}}, nil)
@@ -495,20 +496,27 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 // FRS and GMRS share frequencies; converting goes by service too.
 func TestConvertMatchesService(t *testing.T) {
 	ctx := context.Background()
-	s, _ := newService(t)
+	s, d := newService(t)
 	frs := add(t, s, "FRS 1", 462.5625, domain.ServiceFRS)
 	hz := frs.ReceiveHz
 	frs.TransmitHz = &hz
 	if _, _, err := s.UpdateChannel(ctx, frs); err != nil {
 		t.Fatal(err)
 	}
+	sh := openShared(t, d)
 	gmrs, _ := seed.Get("us-gmrs")
-	if res, err := s.InstallSeed(ctx, gmrs, nil, false); err != nil || len(res.Converted) != 0 || len(res.Linked) != 30 {
-		t.Fatalf("gmrs = %d converted, %v", len(res.Converted), err)
+	if _, err := sh.UpdateSeed(ctx, gmrs, false); err != nil {
+		t.Fatal(err)
+	}
+	if cvs, err := s.ConvertToLinks(ctx, nil, nil, true); err != nil || len(cvs) != 0 {
+		t.Fatalf("gmrs = %d converted, %v", len(cvs), err)
 	}
 	frsList, _ := seed.Get("us-frs")
-	if res, err := s.InstallSeed(ctx, frsList, nil, false); err != nil || len(res.Converted) != 1 || res.Converted[0].Shared.Name != "FRS 1" {
-		t.Fatalf("frs = %+v, %v", res.Converted, err)
+	if _, err := sh.UpdateSeed(ctx, frsList, false); err != nil {
+		t.Fatal(err)
+	}
+	if cvs, err := s.ConvertToLinks(ctx, nil, nil, false); err != nil || len(cvs) != 1 || cvs[0].Shared.Name != "FRS 1" {
+		t.Fatalf("frs = %+v, %v", cvs, err)
 	}
 }
 

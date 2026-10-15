@@ -355,35 +355,6 @@ paths:
                   channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}
                   cursor: {type: string, format: date-time}
         default: {$ref: "#/components/responses/Error"}
-  /libraries/{lib}/seeds/{seed}/install:
-    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/seed"}]
-    post:
-      summary: Put a built-in list in the shared library and link it
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                tags: {type: array, items: {type: string}}
-                dry_run: {type: boolean}
-      responses:
-        "200":
-          description: What the install did (or would)
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [linked, converted, already, shared_added, shared_updated]
-                properties:
-                  linked: {type: array, items: {$ref: "#/components/schemas/Channel"}}
-                  converted: {type: array, items: {$ref: "#/components/schemas/Conversion"}}
-                  already: {type: array, items: {$ref: "#/components/schemas/Channel"}}
-                  shared_added: {type: integer}
-                  shared_updated: {type: integer}
-        default: {$ref: "#/components/responses/Error"}
-
   /libraries/{lib}/imports/{format}:
     parameters:
       - {$ref: "#/components/parameters/lib"}
@@ -1040,6 +1011,46 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Seed"}
         default: {$ref: "#/components/responses/Error"}
+  /seeds/{seed}/update:
+    parameters: [{$ref: "#/components/parameters/seed"}]
+    post:
+      summary: Bring the shared list up to date with a built-in list (maintainer)
+      description: >-
+        Adds the list's new channels, applies what the list changed since it
+        was last applied, and retires channels it dropped. A field a
+        maintainer corrected is kept, and listed in kept. With dry_run,
+        reports the changes without making them.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                dry_run: {type: boolean}
+      responses:
+        "200":
+          description: The changes made (or that would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [installed, dry_run, changes]
+                properties:
+                  installed: {type: boolean}
+                  dry_run: {type: boolean}
+                  changes:
+                    type: array
+                    items:
+                      type: object
+                      required: [kind, name, fields, kept, channel]
+                      properties:
+                        kind: {type: string, enum: [add, update, drop]}
+                        name: {type: string}
+                        fields: {type: array, items: {type: string}, description: Fields an update changes}
+                        kept: {type: array, items: {type: string}, description: "Fields the list changed that a maintainer corrected, kept as corrected"}
+                        channel: {$ref: "#/components/schemas/Channel"}
+        default: {$ref: "#/components/responses/Error"}
   /tags:
     get:
       summary: The shared tags and what they mean
@@ -1615,9 +1626,11 @@ components:
         source: {type: string}
     Seed:
       type: object
-      required: [id, description, count]
+      required: [id, description, count, installed, pending]
       properties:
         id: {type: string}
         description: {type: string}
         count: {type: integer}
+        installed: {type: boolean, description: Whether the shared list has the list}
+        pending: {type: integer, description: "Changes an update would make: channels to add, update, or retire"}
         channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}

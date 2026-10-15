@@ -29,6 +29,16 @@ const DefaultLibrary = "default"
 // SharedLibrary is the name of the library of shared channels.
 const SharedLibrary = "shared"
 
+// SeedChannel records that a shared channel came from a built-in list:
+// the list, the row's name there, and the row as last applied, so an
+// update can tell the list's own changes from a maintainer's corrections.
+type SeedChannel struct {
+	ChannelID string
+	List      string
+	Name      string
+	Applied   Channel
+}
+
 func ValidateLibrary(l Library) error {
 	if strings.TrimSpace(l.Name) == "" {
 		return Invalidf("library name is required")

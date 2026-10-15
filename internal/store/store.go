@@ -96,6 +96,11 @@ type Library interface {
 	// ChannelRevisions returns a shared channel's revisions, oldest
 	// first; for a link, its shared channel's. Private channels have none.
 	ChannelRevisions(ctx context.Context, id string) ([]domain.Revision, error)
+	// SeedChannels returns the library's channels that came from built-in
+	// lists (see domain.SeedChannel); SetSeedChannel records or replaces
+	// one. A record goes when its channel is deleted.
+	SeedChannels(ctx context.Context) ([]domain.SeedChannel, error)
+	SetSeedChannel(ctx context.Context, sc domain.SeedChannel) error
 	// ChangedSince returns the library's channels with a revision recorded
 	// after since, and the time of the latest one (since, when there are
 	// none), to ask from next time. Only shared channels have revisions.

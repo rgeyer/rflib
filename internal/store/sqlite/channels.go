@@ -484,7 +484,8 @@ type revisionRecord struct {
 	Orgs         []domain.OrgRef `json:"organizations,omitempty"`
 }
 
-func (tx *library) recordRevision(ctx context.Context, c domain.Channel) error {
+// newRecord is a channel's shared fields as a revision record.
+func newRecord(c domain.Channel) revisionRecord {
 	r := revisionRecord{Name: c.Name, ReceiveHz: c.ReceiveHz, TransmitHz: c.TransmitHz, Mode: c.Mode, Service: string(c.Service), RXOnly: c.RXOnly,
 		ReceiveTone: domain.FormatTone(c.ReceiveTone), TransmitTone: domain.FormatTone(c.TransmitTone), ToneSquelch: c.ToneSquelch, Bandwidth: c.Bandwidth,
 		Tags: c.Tags, Notes: c.Notes, Status: string(c.Status), StatusNote: c.StatusNote, ReplacedBy: c.ReplacedBy, Orgs: c.Orgs}
@@ -497,7 +498,34 @@ func (tx *library) recordRevision(ctx context.Context, c domain.Channel) error {
 	if c.BackOn != nil {
 		r.BackOn = c.BackOn.Format(time.DateOnly)
 	}
-	data, err := json.Marshal(r)
+	return r
+}
+
+// channel is a revision record's fields as a channel with the given ID.
+func (r revisionRecord) channel(id string) domain.Channel {
+	ch := domain.Channel{ID: id, Name: r.Name, ReceiveHz: r.ReceiveHz, TransmitHz: r.TransmitHz, Mode: r.Mode, Service: domain.Service(r.Service), RXOnly: r.RXOnly,
+		ToneSquelch: r.ToneSquelch, Bandwidth: r.Bandwidth, Tags: r.Tags, Notes: r.Notes, Status: domain.Status(r.Status), StatusNote: r.StatusNote, ReplacedBy: r.ReplacedBy}
+	ch.ReceiveTone, _ = domain.ParseTone(r.ReceiveTone)
+	ch.TransmitTone, _ = domain.ParseTone(r.TransmitTone)
+	if r.Latitude != nil && r.Longitude != nil {
+		ch.Location = &domain.Location{Latitude: *r.Latitude, Longitude: *r.Longitude, RadiusKM: r.RadiusKM}
+	}
+	if r.BackOn != "" {
+		if t, err := time.Parse(time.DateOnly, r.BackOn); err == nil {
+			ch.BackOn = &t
+		}
+	}
+	ch.Orgs = r.Orgs
+	for _, v := range r.Networks {
+		if n, err := domain.ParseNetworkID(v); err == nil {
+			ch.Networks = append(ch.Networks, n)
+		}
+	}
+	return ch
+}
+
+func (tx *library) recordRevision(ctx context.Context, c domain.Channel) error {
+	data, err := json.Marshal(newRecord(c))
 	if err != nil {
 		return err
 	}
@@ -532,24 +560,8 @@ func (l *library) ChannelRevisions(ctx context.Context, id string) ([]domain.Rev
 		if err := json.Unmarshal([]byte(data), &r); err != nil {
 			return nil, fmt.Errorf("revision %d: %w", rev.Number, err)
 		}
-		ch := domain.Channel{ID: id, Name: r.Name, ReceiveHz: r.ReceiveHz, TransmitHz: r.TransmitHz, Mode: r.Mode, Service: domain.Service(r.Service), RXOnly: r.RXOnly,
-			ToneSquelch: r.ToneSquelch, Bandwidth: r.Bandwidth, Tags: r.Tags, Notes: r.Notes, Status: domain.Status(r.Status), StatusNote: r.StatusNote, ReplacedBy: r.ReplacedBy, Revision: rev.Number}
-		ch.ReceiveTone, _ = domain.ParseTone(r.ReceiveTone)
-		ch.TransmitTone, _ = domain.ParseTone(r.TransmitTone)
-		if r.Latitude != nil && r.Longitude != nil {
-			ch.Location = &domain.Location{Latitude: *r.Latitude, Longitude: *r.Longitude, RadiusKM: r.RadiusKM}
-		}
-		if r.BackOn != "" {
-			if t, err := time.Parse(time.DateOnly, r.BackOn); err == nil {
-				ch.BackOn = &t
-			}
-		}
-		ch.Orgs = r.Orgs
-		for _, v := range r.Networks {
-			if n, err := domain.ParseNetworkID(v); err == nil {
-				ch.Networks = append(ch.Networks, n)
-			}
-		}
+		ch := r.channel(id)
+		ch.Revision = rev.Number
 		rev.Channel = ch
 		out = append(out, rev)
 	}
@@ -589,3 +601,42 @@ func (l *library) ChangedSince(ctx context.Context, since time.Time) ([]domain.C
 	cs, err := l.listChannels(ctx, `c.library_id=? AND c.id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`)`, append([]any{l.id}, ids...)...)
 	return cs, latest, err
 }
+
+// --- built-in list records ---
+
+func (l *library) SeedChannels(ctx context.Context) ([]domain.SeedChannel, error) {
+	rows, err := l.q.QueryContext(ctx, `SELECT s.channel_id, s.list, s.name, s.applied FROM seed_channels s JOIN channels c ON c.id=s.channel_id WHERE c.library_id=? ORDER BY s.list, s.name`, l.id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.SeedChannel
+	for rows.Next() {
+		var sc domain.SeedChannel
+		var data string
+		if err := rows.Scan(&sc.ChannelID, &sc.List, &sc.Name, &data); err != nil {
+			return nil, err
+		}
+		var r revisionRecord
+		if err := json.Unmarshal([]byte(data), &r); err != nil {
+			return nil, fmt.Errorf("built-in list record for %s: %w", sc.Name, err)
+		}
+		sc.Applied = r.channel(sc.ChannelID)
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
+func (l *library) SetSeedChannel(ctx context.Context, sc domain.SeedChannel) error {
+	if _, err := l.GetChannel(ctx, sc.ChannelID); err != nil {
+		return err
+	}
+	data, err := json.Marshal(newRecord(sc.Applied))
+	if err != nil {
+		return err
+	}
+	_, err = l.q.ExecContext(ctx, `INSERT INTO seed_channels (channel_id,list,name,applied) VALUES (?,?,?,?)
+		ON CONFLICT(channel_id) DO UPDATE SET list=excluded.list, name=excluded.name, applied=excluded.applied`, sc.ChannelID, sc.List, sc.Name, string(data))
+	return err
+}
+

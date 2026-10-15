@@ -16,7 +16,7 @@ The CLI only creates a database when you explicitly initialize one. After upgrad
 
 ```sh
 export RFLIB_DB=./radio-library.db
-./rflib init
+./rflib init                 # a new database's shared list starts with the built-in lists
 ```
 
 Back up the database by copying it while the CLI is not running.
@@ -39,7 +39,7 @@ The `shared` library holds channels shared with everyone: the built-in lists now
 
 - **What's yours on a link:** tags, notes, skip, power, and short names. Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which keeps the channel's ID (so radios keep it) and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
 - **Names:** a link shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
-- **Converting:** `shared link` and `seed install` turn a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart. In the web interface, **Link to shared list** on the Channels page lists your matching channels and links the ones you pick.
+- **Converting:** `shared link` turns a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart. In the web interface, **Link to shared list** on the Channels page lists your matching channels and links the ones you pick.
 - **Shared tags** come from a short list with agreed meanings: `rflib tag list`. None repeats a channel's fields (service, band, mode, or duplex), which search finds without a tag. Your own tags are free-form, and one with a shared tag's name means the same thing. Adding one of your own that repeats the channel's fields, such as `cb` on a CB channel, `ham` on an amateur one, or `repeater` on a repeater, is allowed but warns you that `service:cb` (and so on) already finds it.
 - **The shared library is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`.
 
@@ -208,9 +208,10 @@ Saving or importing a channel warns, without failing, when it doesn't fit its se
 ## Built-in channel lists
 
 ```sh
-./rflib seed list
+./rflib seed list                    # each list, and whether the shared list is up to date
 ./rflib seed show us-gmrs
-./rflib seed install us-gmrs us-noaa --tags handheld
+./rflib seed update --dry-run        # what a newer rflib's lists would change
+./rflib seed update                  # apply it
 ```
 
 | List | Channels |
@@ -236,7 +237,7 @@ Saving or importing a channel warns, without failing, when it doesn't fit its se
 | `us-radiofax` | NWS HF radiofax (weather fax) stations, USB dial frequencies, receive only |
 | `us-interop` | National public-safety interoperability calling and tactical channels (VHF, UHF, and 800 MHz), receive only |
 
-Installing a list puts its channels in the shared library and links them into yours (see [Shared channels](#shared-channels)). Channels you already have that match one become links. Installing again changes nothing. `--tags` adds tags of your own to the new links, and `--dry-run` reports what would change. On shared channels the lists carry only shared tags, such as `calling`; the old `gmrs`, `noaa`, and similar tags repeated the service and band.
+Built-in lists fill the shared list; your library takes channels from there (see [Shared channels](#shared-channels)). A new database's shared list starts with every list (`rflib init --no-seed` starts it empty). Upgrading rflib never changes the shared list: when a newer version changes a list, `seed list` shows the changes pending, and `seed update` applies them, as the maintainer chooses. An update adds the list's new channels, applies what the list changed since it was last applied, and retires channels it dropped. A field the maintainer corrected keeps the correction, and the update reports it. Each change is in the channel's history, with the list as its reason. The lists carry only shared tags, such as `calling`; the old `gmrs`, `noaa`, and similar tags repeated the service and band. In the web interface, **Built-in lists** is under the Shared list in the navigation.
 
 ## Radios
 
@@ -645,7 +646,7 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 - **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources, with a preview of what a new source would add before you add it; sync with a preview; and the programming file to download. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
 - **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
 - **Import:** a file, its options, a dry-run preview, then the import.
-- **Built-in lists** and **shared changes**, as `rflib seed install` and `rflib shared changes` do. An install's preview shows what the shared list gains and names your channels that will become links.
+- **Built-in lists** (under the Shared list, for the maintainer) and **shared changes**, as `rflib seed update` and `rflib shared changes` do. Each list shows whether the shared list is up to date with it; reviewing an update lists the channels to add, update, and retire, and any correction it keeps.
 
 The switch at the top moves between **My library** (the default library) and the **Shared list**. Once you have more than one library of your own, it becomes a list of their names.
 

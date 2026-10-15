@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/seed"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/ryan/rflib/internal/store/sqlite"
 	"github.com/spf13/cobra"
@@ -94,6 +96,8 @@ func initLibrary(cmd *cobra.Command, _ []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create library directory: %w", err)
 	}
+	_, statErr := os.Stat(path)
+	created := errors.Is(statErr, fs.ErrNotExist)
 	d, err := sqlite.Open(path)
 	if err != nil {
 		return err
@@ -103,6 +107,25 @@ func initLibrary(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	fmt.Fprintln(cmd.ErrOrStderr(), "Library initialized:", path)
+	sh, err := app.Open(cmd.Context(), d, domain.SharedLibrary)
+	if err != nil {
+		return err
+	}
+	if !created {
+		// Upgrading changes no shared channel; it only records which ones
+		// came from built-in lists. List changes wait for rflib seed update.
+		return sh.RecordSeeds(cmd.Context())
+	}
+	if noSeed, _ := cmd.Flags().GetBool("no-seed"); noSeed {
+		return nil
+	}
+	// A new database starts with the built-in lists in its shared list.
+	for _, l := range seed.Lists() {
+		if _, err := sh.UpdateSeed(cmd.Context(), l, false); err != nil {
+			return fmt.Errorf("seed %s: %w", l.ID, err)
+		}
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Shared list seeded with %d built-in lists\n", len(seed.Lists()))
 	return nil
 }
 
