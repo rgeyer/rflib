@@ -283,3 +283,24 @@ test("link my channels to the shared list", async ({ page, request }) => {
   await page.getByRole("button", { name: "Link to shared list" }).click();
   await expect(page.getByRole("dialog").getByText("None of your channels match a shared channel.")).toBeVisible();
 });
+
+// A search becomes a radio source, with a preview of what it would add,
+// and the Sources tab previews a new source the same way.
+test("add a search as a radio source, with a preview", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/seeds/us-gmrs/install", { data: {} });
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Previewer", model: "baofeng-uv5rm" } });
+  await page.goto("/l/default/channels");
+  await page.getByLabel("Search").first().fill("service:gmrs");
+  await page.getByRole("button", { name: "Add search as source" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("combobox", { name: "Radio" }).click();
+  await page.getByRole("option", { name: "Previewer" }).click();
+  await expect(dialog.getByText(/Sync would add \d+ channels to Previewer/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Add source and sync" }).click();
+  await expect(page.getByText(/Added the search to Previewer as a source and synced: \d+ channels added/)).toBeVisible();
+
+  await page.goto("/l/default/radios/Previewer");
+  await page.getByRole("tab", { name: "Sources" }).click();
+  await page.getByLabel("New source query", { exact: true }).fill("service:gmrs");
+  await expect(page.getByText("Would add nothing new")).toBeVisible();
+});

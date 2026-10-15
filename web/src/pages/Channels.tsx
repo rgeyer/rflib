@@ -1,13 +1,14 @@
 import { Alert, Badge, Button, Checkbox, Group, Modal, Select, Stack, Switch, Table, TagsInput, Text, Title, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconLink, IconPlus } from "@tabler/icons-react";
+import { IconLink, IconPlus, IconSearch } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, call, type Channel, type Conversion, type Library, type Radio } from "../api/client";
 import { ChannelEditor } from "../components/ChannelEditor";
 import { QueryBar } from "../components/QueryBar";
+import { SourcePreview } from "../components/SourcePreview";
 import { useLib, usePrivateLibraries, useTags } from "../lib/library";
 import { failed, ok, warn } from "../lib/notify";
 import { duplex, formatMHz, offsetMHz, SERVICES, toneSummary } from "../lib/radio";
@@ -28,6 +29,7 @@ export function Channels() {
   const [linking, setLinking] = useState(false);
   const [serviceAction, setServiceAction] = useState(false);
   const [matching, setMatching] = useState(false);
+  const [sourcing, setSourcing] = useState(false);
   const tags = useTags(lib);
 
   const library = useQuery({
@@ -90,6 +92,11 @@ export function Channels() {
         <QueryBar value={text} onChange={setText} tags={tags} />
         {!library.data?.shared && (
           <Switch label="Search the shared list" checked={shared} onChange={(e) => setShared(e.currentTarget.checked)} />
+        )}
+        {!readOnly && text.trim() !== "" && (
+          <Button variant="light" leftSection={<IconSearch size={16} />} onClick={() => setSourcing(true)}>
+            Add search as source
+          </Button>
         )}
       </Group>
       {channels.error && <Alert color="red">{channels.error.message}</Alert>}
@@ -218,6 +225,7 @@ export function Channels() {
       </Table.ScrollContainer>
       <ChannelEditor channel={editing} opened={editorOpen} onClose={() => setEditorOpen(false)} readOnly={readOnly} maintainer={maintainer} />
       <MatchModal opened={matching} onClose={() => setMatching(false)} onDone={after} />
+      <SourceModal opened={sourcing} query={text} onClose={() => setSourcing(false)} onDone={after} />
       <LinkModal opened={linking} ids={ids} current={maintainer ? null : lib} onClose={() => setLinking(false)} onDone={after} />
       <TagModal action={tagAction} ids={ids} onClose={() => setTagAction(null)} onDone={after} />
       <ServiceModal
@@ -492,6 +500,58 @@ function MatchModal(props: { opened: boolean; onClose: () => void; onDone: (msg:
         <Button onClick={() => link.mutate()} loading={link.isPending} disabled={picked.size === 0}>
           Link {picked.size} channels
         </Button>
+      </Stack>
+    </Modal>
+  );
+}
+
+/** SourceModal adds the current search to a radio as a source, showing
+ * first what it would add, and optionally syncs it. */
+function SourceModal(props: { opened: boolean; query: string; onClose: () => void; onDone: (msg: string) => void }) {
+  const lib = useLib();
+  const [radio, setRadio] = useState<string | null>(null);
+  const [sort, setSort] = useState("name");
+  const radios = useQuery({
+    queryKey: ["radios", lib],
+    queryFn: () => call<{ radios: Radio[] }>(api.GET("/libraries/{lib}/radios", { params: { path: { lib } } })),
+    enabled: props.opened,
+  });
+  const add = useMutation({
+    mutationFn: async (andSync: boolean) => {
+      const path = { lib, radio: radio! };
+      await call(api.POST("/libraries/{lib}/radios/{radio}/sources", { params: { path }, body: { query: props.query.trim(), sort } }));
+      if (!andSync) return `Added the search to ${radio} as a source; sync to add its channels`;
+      const r = await call(api.POST("/libraries/{lib}/radios/{radio}/sync", { params: { path }, body: {} }));
+      return `Added the search to ${radio} as a source and synced: ${r.added} channels added`;
+    },
+    onSuccess: (msg) => {
+      props.onClose();
+      props.onDone(msg);
+    },
+    onError: failed,
+  });
+  return (
+    <Modal opened={props.opened} onClose={props.onClose} title="Add search as source" size="lg">
+      <Stack>
+        <Text size="sm">
+          A source is a saved search on a radio: each sync adds its new matches to the radio, in its own part of the list. Search:{" "}
+          <Text span ff="monospace">
+            {props.query.trim()}
+          </Text>
+        </Text>
+        <Group grow>
+          <Select label="Radio" placeholder="Pick a radio" data={(radios.data?.radios ?? []).map((r) => r.name)} value={radio} onChange={setRadio} />
+          <Select label="Sort" data={["name", "freq"]} value={sort} allowDeselect={false} onChange={(v) => v && setSort(v)} />
+        </Group>
+        <SourcePreview lib={lib} radio={radio} query={props.query} sort={sort} />
+        <Group>
+          <Button onClick={() => add.mutate(true)} loading={add.isPending} disabled={radio === null}>
+            Add source and sync
+          </Button>
+          <Button variant="light" onClick={() => add.mutate(false)} loading={add.isPending} disabled={radio === null}>
+            Add source only
+          </Button>
+        </Group>
       </Stack>
     </Modal>
   );

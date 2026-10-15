@@ -76,6 +76,7 @@ func (s *server) routes() []route {
 		{"POST", R + "/channels/{id}/move", s.lib(s.moveRadioChannel), false},
 		{"GET", R + "/sources", s.lib(s.listSources), false},
 		{"POST", R + "/sources", s.lib(s.addSource), false},
+		{"POST", R + "/sources/preview", s.lib(s.previewSource), false},
 		{"PATCH", R + "/sources/{n}", s.lib(s.updateSource), false},
 		{"DELETE", R + "/sources/{n}", s.lib(s.removeSource), false},
 		{"POST", R + "/sources/{n}/move", s.lib(s.moveSource), false},
@@ -1273,6 +1274,25 @@ func (s *server) addSource(w http.ResponseWriter, r *http.Request, a *app.Servic
 		return err
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"sources": newSources(srcs, es)})
+	return nil
+}
+
+// previewSource reports what a new source would add, without adding it.
+func (s *server) previewSource(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in sourceInput
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	src := domain.RadioSource{Sort: "name"}
+	if err := in.apply(&src); err != nil {
+		return err
+	}
+	ss, err := a.PreviewSource(ctx(r), r.PathValue("radio"), src, app.SyncOptions{})
+	if err != nil {
+		return err
+	}
+	ss.Added = len(ss.Add)
+	writeJSON(w, http.StatusOK, newAddResult(ss.AddResult))
 	return nil
 }
 

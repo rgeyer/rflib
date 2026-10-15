@@ -14,6 +14,7 @@ export type Model = S["Model"];
 export type Seed = S["Seed"];
 export type Change = S["Change"];
 export type Conversion = S["Conversion"];
+export type AddResult = S["AddResult"];
 export type ImportResult = S["ImportResult"];
 export type ChannelInput = S["ChannelInput"];
 export type Selection = S["Selection"];

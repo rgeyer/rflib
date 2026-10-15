@@ -724,6 +724,26 @@ paths:
       responses:
         "201": {$ref: "#/components/responses/Sources"}
         default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sources/preview:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Preview what a new source would add, without adding it
+      description: >-
+        The channels a sync would add for the source if it were added at the
+        end: those it matches that aren't on the radio, after the radio's
+        sources claim theirs, and those it skips for the radio's bands or modes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SourceInput"}
+      responses:
+        "200":
+          description: What the source would add
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AddResult"}
+        default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/radios/{radio}/sources/{n}:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/n"}]
     patch:
