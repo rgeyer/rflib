@@ -166,15 +166,8 @@ func TestAuthAndErrors(t *testing.T) {
 	if code := c.errCode("GET", "/libraries/default/channels?q=frq:1", nil, 400); code != "invalid" {
 		t.Errorf("bad query: %s", code)
 	}
-	c.do("POST", "/libraries", map[string]any{"name": "club"}, 201, nil)
-	if code := c.errCode("POST", "/libraries", map[string]any{"name": "club"}, 409); code != "conflict" {
-		t.Errorf("duplicate library: %s", code)
-	}
 	if code := c.errCode("POST", "/libraries/shared/channels", map[string]any{"name": "x", "rx_hz": 146520000}, 403); code != "read_only" {
 		t.Errorf("write to shared: %s", code)
-	}
-	if code := c.errCode("DELETE", "/libraries/shared", nil, 400); code != "invalid" {
-		t.Errorf("delete shared: %s", code)
 	}
 }
 

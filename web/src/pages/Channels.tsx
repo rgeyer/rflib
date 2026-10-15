@@ -9,7 +9,7 @@ import { api, call, type Channel, type Conversion, type Library, type Radio } fr
 import { ChannelEditor } from "../components/ChannelEditor";
 import { QueryBar } from "../components/QueryBar";
 import { SourcePreview } from "../components/SourcePreview";
-import { useLib, usePrivateLibraries, useTags } from "../lib/library";
+import { useLib, useLibraries, useTags } from "../lib/library";
 import { failed, ok, warn } from "../lib/notify";
 import { duplex, formatMHz, offsetMHz, SERVICES, toneSummary } from "../lib/radio";
 
@@ -226,7 +226,7 @@ export function Channels() {
       <ChannelEditor channel={editing} opened={editorOpen} onClose={() => setEditorOpen(false)} readOnly={readOnly} maintainer={maintainer} />
       <MatchModal opened={matching} onClose={() => setMatching(false)} onDone={after} />
       <SourceModal opened={sourcing} query={text} onClose={() => setSourcing(false)} onDone={after} />
-      <LinkModal opened={linking} ids={ids} current={maintainer ? null : lib} onClose={() => setLinking(false)} onDone={after} />
+      <LinkModal opened={linking} ids={ids} onClose={() => setLinking(false)} onDone={after} />
       <TagModal action={tagAction} ids={ids} onClose={() => setTagAction(null)} onDone={after} />
       <ServiceModal
         opened={serviceAction}
@@ -351,13 +351,11 @@ function AddToRadioModal(props: { opened: boolean; ids: string[]; onClose: () =>
   );
 }
 
-/** LinkModal links shared channels into a private library (current, when
- * one is open), and optionally puts the links on one of its radios. */
-function LinkModal(props: { opened: boolean; ids: string[]; current: string | null; onClose: () => void; onDone: (msg: string) => void }) {
-  const libraries = usePrivateLibraries();
-  const [chosen, setChosen] = useState<string | null>(null);
+/** LinkModal links shared channels into the user's library, and optionally
+ * puts the links on one of their radios. */
+function LinkModal(props: { opened: boolean; ids: string[]; onClose: () => void; onDone: (msg: string) => void }) {
+  const target = useLibraries().mine;
   const [radio, setRadio] = useState<string | null>(null);
-  const target = props.current ?? chosen ?? libraries[0]?.name ?? null;
   const radios = useQuery({
     queryKey: ["radios", target],
     queryFn: () => call<{ radios: Radio[] }>(api.GET("/libraries/{lib}/radios", { params: { path: { lib: target! } } })),
@@ -386,18 +384,6 @@ function LinkModal(props: { opened: boolean; ids: string[]; current: string | nu
     <Modal opened={props.opened} onClose={props.onClose} title="Link into my library">
       <Stack>
         <Text size="sm">Links follow the shared channels' corrections. Your tags, notes, power, and skip stay your own.</Text>
-        {props.current === null && libraries.length > 1 && (
-          <Select
-            label="Library"
-            data={libraries.map((l) => ({ value: l.name, label: l.default ? `${l.name} (default)` : l.name }))}
-            value={target}
-            allowDeselect={false}
-            onChange={(v) => {
-              setChosen(v);
-              setRadio(null);
-            }}
-          />
-        )}
         <Select
           label="Also add to a radio"
           placeholder="None"
