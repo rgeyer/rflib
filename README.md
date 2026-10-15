@@ -714,3 +714,9 @@ go run ./tools/datacheck -chirp /tmp/chirp.json         # -only ID,ID for some d
 ```
 
 Resolve a finding by fixing the data, or by recording an accepted difference or a fresh review in `sources.yaml`. In Claude Code, `/maintain-data` works through open findings. GitHub stops scheduled workflows in repositories with no activity for 60 days; re-enable it from the Actions tab, or run the same commands from cron with `GH_TOKEN` set and `-issues`.
+
+## License
+
+Copyright (C) 2026 Ryan Geyer.
+
+rflib is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License, version 3 (AGPL-3.0); see [LICENSE](LICENSE). In short: anyone who distributes a modified rflib, or runs one as a service for others (such as a club's instance), must make its source available to those who receive or use it. The built-in channel lists and shared list data aren't covered by a separate data license yet.
