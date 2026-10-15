@@ -311,6 +311,7 @@ paths:
               additionalProperties: false
               properties:
                 dry_run: {type: boolean}
+                ids: {type: array, items: {type: string}, description: "Only these private channels (by full ID); default all"}
       responses:
         "200":
           description: What became links (or would)

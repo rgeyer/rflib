@@ -58,7 +58,7 @@ The `shared` library holds channels shared with everyone: the built-in lists now
 
 - **What's yours on a link:** tags, notes, skip, power, and short names. Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which keeps the channel's ID (so radios keep it) and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
 - **Names:** a link shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
-- **Converting:** `shared link` and `seed install` turn a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart.
+- **Converting:** `shared link` and `seed install` turn a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart. In the web interface, **Link to shared list** on the Channels page lists your matching channels and links the ones you pick.
 - **Shared tags** come from a short list with agreed meanings: `rflib tag list`. Your own tags are free-form, and one with a shared tag's name means the same thing.
 - **The shared library is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`.
 

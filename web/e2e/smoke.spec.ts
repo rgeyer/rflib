@@ -267,3 +267,19 @@ test("tags suggest existing ones", async ({ page, request }) => {
   await expect(page.getByRole("dialog").getByText("fieldday", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByText("brandnew", { exact: true })).toBeVisible();
 });
+
+// A private channel that matches a shared one is offered for linking.
+test("link my channels to the shared list", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/seeds/us-murs/install", { data: {} });
+  await request.post("/api/v1/libraries/default/channels", {
+    data: { name: "My MURS 1", rx_hz: 151_820_000, tx_hz: 151_820_000, mode: "NFM", service: "murs" },
+  });
+  await page.goto("/l/default/channels");
+  await page.getByRole("button", { name: "Link to shared list" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("row", { name: /My MURS 1/ })).toBeVisible();
+  await dialog.getByRole("button", { name: /^Link \d+ channels$/ }).click();
+  await expect(page.getByText(/Linked \d+ channels to the shared list/)).toBeVisible();
+  await page.getByRole("button", { name: "Link to shared list" }).click();
+  await expect(page.getByRole("dialog").getByText("None of your channels match a shared channel.")).toBeVisible();
+});

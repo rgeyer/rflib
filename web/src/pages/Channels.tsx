@@ -3,9 +3,9 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { IconLink, IconPlus } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, call, type Channel, type Library, type Radio } from "../api/client";
+import { api, call, type Channel, type Conversion, type Library, type Radio } from "../api/client";
 import { ChannelEditor } from "../components/ChannelEditor";
 import { QueryBar } from "../components/QueryBar";
 import { useLib, usePrivateLibraries, useTags } from "../lib/library";
@@ -27,6 +27,7 @@ export function Channels() {
   const [radioAction, setRadioAction] = useState(false);
   const [linking, setLinking] = useState(false);
   const [serviceAction, setServiceAction] = useState(false);
+  const [matching, setMatching] = useState(false);
   const tags = useTags(lib);
 
   const library = useQuery({
@@ -69,15 +70,20 @@ export function Channels() {
       <Group justify="space-between">
         <Title order={2}>Channels</Title>
         {!readOnly && (
-          <Button
-            leftSection={<IconPlus size={16} />}
-            onClick={() => {
-              setEditing(null);
-              setEditorOpen(true);
-            }}
-          >
-            New channel
-          </Button>
+          <Group>
+            <Button variant="light" leftSection={<IconLink size={16} />} onClick={() => setMatching(true)}>
+              Link to shared list
+            </Button>
+            <Button
+              leftSection={<IconPlus size={16} />}
+              onClick={() => {
+                setEditing(null);
+                setEditorOpen(true);
+              }}
+            >
+              New channel
+            </Button>
+          </Group>
         )}
       </Group>
       <Group align="start">
@@ -211,6 +217,7 @@ export function Channels() {
         </Table>
       </Table.ScrollContainer>
       <ChannelEditor channel={editing} opened={editorOpen} onClose={() => setEditorOpen(false)} readOnly={readOnly} maintainer={maintainer} />
+      <MatchModal opened={matching} onClose={() => setMatching(false)} onDone={after} />
       <LinkModal opened={linking} ids={ids} current={maintainer ? null : lib} onClose={() => setLinking(false)} onDone={after} />
       <TagModal action={tagAction} ids={ids} onClose={() => setTagAction(null)} onDone={after} />
       <ServiceModal
@@ -392,6 +399,97 @@ function LinkModal(props: { opened: boolean; ids: string[]; current: string | nu
         />
         <Button onClick={() => link.mutate()} loading={link.isPending} disabled={target === null}>
           Link {props.ids.length} channels
+        </Button>
+      </Stack>
+    </Modal>
+  );
+}
+
+/** MatchModal finds the library's private channels that match a shared
+ * channel on the air, and turns the ones picked into links to it. */
+function MatchModal(props: { opened: boolean; onClose: () => void; onDone: (msg: string) => void }) {
+  const lib = useLib();
+  const matches = useQuery({
+    queryKey: ["matches", lib],
+    queryFn: () =>
+      call<{ conversions: Conversion[] }>(api.POST("/libraries/{lib}/shared/convert", { params: { path: { lib } }, body: { dry_run: true } })),
+    enabled: props.opened,
+    gcTime: 0,
+  });
+  const found = matches.data?.conversions ?? [];
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  useEffect(() => setPicked(new Set(found.map((m) => m.channel.id))), [matches.data]);
+  const link = useMutation({
+    mutationFn: () =>
+      call(api.POST("/libraries/{lib}/shared/convert", { params: { path: { lib } }, body: { ids: [...picked] } })),
+    onSuccess: (r) => {
+      props.onClose();
+      props.onDone(`Linked ${r.conversions.length} channels to the shared list`);
+    },
+    onError: failed,
+  });
+  const toggle = (id: string) =>
+    setPicked((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  return (
+    <Modal opened={props.opened} onClose={props.onClose} title="Link to shared list" size="xl">
+      <Stack>
+        <Text size="sm">
+          These channels match a shared channel on the air: the same frequencies, tones, and tone squelch, and the same service or none. A
+          link follows the shared channel's corrections. It stays on your radios, keeps your tags and notes, and keeps a different name as
+          a short name.
+        </Text>
+        {matches.error && <Alert color="red">{matches.error.message}</Alert>}
+        {matches.isLoading ? (
+          <Text size="sm">Looking for matches…</Text>
+        ) : found.length === 0 ? (
+          <Text size="sm">None of your channels match a shared channel.</Text>
+        ) : (
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>
+                  <Checkbox
+                    aria-label="Pick all"
+                    checked={picked.size === found.length}
+                    indeterminate={picked.size > 0 && picked.size < found.length}
+                    onChange={() => setPicked(picked.size === found.length ? new Set() : new Set(found.map((m) => m.channel.id)))}
+                  />
+                </Table.Th>
+                <Table.Th>Your channel</Table.Th>
+                <Table.Th>Shared channel</Table.Th>
+                <Table.Th>Frequency</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {found.map((m) => (
+                <Table.Tr key={m.channel.id}>
+                  <Table.Td>
+                    <Checkbox aria-label={`Link ${m.channel.name}`} checked={picked.has(m.channel.id)} onChange={() => toggle(m.channel.id)} />
+                  </Table.Td>
+                  <Table.Td>{m.channel.name}</Table.Td>
+                  <Table.Td>
+                    {m.shared.name}
+                    {m.shared.status && m.shared.status !== "active" && (
+                      <Badge ml="xs" size="sm" color="orange" variant="light">
+                        {m.shared.status}
+                      </Badge>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {formatMHz(m.channel.rx_hz)} {toneSummary(m.channel)}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        )}
+        <Button onClick={() => link.mutate()} loading={link.isPending} disabled={picked.size === 0}>
+          Link {picked.size} channels
         </Button>
       </Stack>
     </Modal>

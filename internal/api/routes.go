@@ -483,12 +483,13 @@ func (s *server) copyChannels(w http.ResponseWriter, r *http.Request, a *app.Ser
 
 func (s *server) convert(w http.ResponseWriter, r *http.Request, a *app.Service) error {
 	var in struct {
-		DryRun bool `json:"dry_run"`
+		DryRun bool     `json:"dry_run"`
+		IDs    []string `json:"ids"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	cvs, err := a.ConvertToLinks(ctx(r), nil, in.DryRun)
+	cvs, err := a.ConvertToLinks(ctx(r), nil, in.IDs, in.DryRun)
 	if err != nil {
 		return err
 	}

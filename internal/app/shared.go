@@ -162,8 +162,9 @@ type Conversion struct {
 // radios keep it; its tags and notes stay its own, less what the shared
 // channel already has, and a name that differs from the shared one is kept
 // as a short name. only, when not nil, limits the shared channels
-// considered. With dryRun nothing changes.
-func (s *Service) ConvertToLinks(ctx context.Context, only map[string]bool, dryRun bool) ([]Conversion, error) {
+// considered, and ids, when not nil, limits the private channels. With
+// dryRun nothing changes.
+func (s *Service) ConvertToLinks(ctx context.Context, only map[string]bool, ids []string, dryRun bool) ([]Conversion, error) {
 	if err := s.writable(); err != nil {
 		return nil, err
 	}
@@ -175,11 +176,11 @@ func (s *Service) ConvertToLinks(ctx context.Context, only map[string]bool, dryR
 	if err != nil {
 		return nil, err
 	}
-	return s.convertTo(ctx, shared, only, dryRun)
+	return s.convertTo(ctx, shared, only, ids, dryRun)
 }
 
 // convertTo is ConvertToLinks against the given shared channels.
-func (s *Service) convertTo(ctx context.Context, shared []domain.Channel, only map[string]bool, dryRun bool) ([]Conversion, error) {
+func (s *Service) convertTo(ctx context.Context, shared []domain.Channel, only map[string]bool, ids []string, dryRun bool) ([]Conversion, error) {
 	byKey := map[string][]domain.Channel{}
 	for _, c := range shared {
 		if only == nil || only[c.ID] {
@@ -193,7 +194,7 @@ func (s *Service) convertTo(ctx context.Context, shared []domain.Channel, only m
 	}
 	var out []Conversion
 	for _, c := range mine {
-		if c.Link != nil {
+		if c.Link != nil || (ids != nil && !slices.Contains(ids, c.ID)) {
 			continue
 		}
 		target, ok := bestMatch(c, byKey[domain.ProgrammedKey(c)])
@@ -713,7 +714,7 @@ func (s *Service) InstallSeed(ctx context.Context, l seed.List, tags []string, d
 			return res, err
 		}
 	}
-	if res.Converted, err = s.convertTo(ctx, target, ids, dryRun); err != nil {
+	if res.Converted, err = s.convertTo(ctx, target, ids, nil, dryRun); err != nil {
 		return res, err
 	}
 	linked, err := s.linkedTo(ctx)

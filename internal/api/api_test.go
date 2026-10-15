@@ -452,3 +452,30 @@ func TestOrganizationsSystemsAndPlans(t *testing.T) {
 	}
 	c.do("DELETE", "/systems/SBARC%20Hub", nil, 204, nil)
 }
+
+// Private channels that match shared ones are found with a dry run, and
+// only the ones picked become links.
+func TestConvertPickedChannels(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	c.do("POST", L+"/seeds/us-noaa/install", map[string]any{}, 200, nil)
+	var a, b channelResult
+	c.do("POST", L+"/channels", map[string]any{"name": "Weather 1", "rx_hz": 162_550_000, "mode": "FM", "service": "noaa", "rx_only": true}, 201, &a)
+	c.do("POST", L+"/channels", map[string]any{"name": "Weather 2", "rx_hz": 162_400_000, "mode": "FM", "service": "noaa", "rx_only": true}, 201, &b)
+	var found struct {
+		Conversions []Conversion `json:"conversions"`
+	}
+	c.do("POST", L+"/shared/convert", map[string]any{"dry_run": true}, 200, &found)
+	if len(found.Conversions) != 2 {
+		t.Fatalf("dry run = %+v", found.Conversions)
+	}
+	c.do("POST", L+"/shared/convert", map[string]any{"ids": []string{a.Channel.ID}}, 200, &found)
+	if len(found.Conversions) != 1 || found.Conversions[0].Channel.ID != a.Channel.ID || found.Conversions[0].Link.Link == nil {
+		t.Fatalf("converted = %+v", found.Conversions)
+	}
+	var left Channel
+	c.do("GET", L+"/channels/"+b.Channel.ID, nil, 200, &left)
+	if left.Link != nil {
+		t.Errorf("Weather 2 was linked without being picked: %+v", left.Link)
+	}
+}
