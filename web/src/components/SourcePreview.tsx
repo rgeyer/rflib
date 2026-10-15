@@ -8,17 +8,27 @@ import { formatMHz, toneSummary } from "../lib/radio";
  * radio's sources claim their channels, before the source is added. With
  * maxHeight, as in a dialog, the list scrolls within that height; without,
  * it takes the room it needs. */
-export function SourcePreview(props: { lib: string; radio: string | null; query: string; plan?: string | null; sort: string; maxHeight?: number }) {
+export function SourcePreview(props: {
+  lib: string;
+  radio: string | null;
+  query: string;
+  plan?: string | null;
+  sort: string;
+  maxHeight?: number;
+  /** An existing source being edited, previewed in its place. */
+  number?: number;
+}) {
   const [key] = useDebouncedValue(JSON.stringify({ query: props.query.trim(), plan: props.plan ?? null, sort: props.sort }), 300);
   const input = JSON.parse(key) as { query: string; plan: string | null; sort: string };
+  const number = props.number;
   const radio = props.radio;
   const preview = useQuery({
-    queryKey: ["source-preview", props.lib, radio, input],
+    queryKey: ["source-preview", props.lib, radio, number ?? 0, input],
     queryFn: () =>
       call<AddResult>(
         api.POST("/libraries/{lib}/radios/{radio}/sources/preview", {
           params: { path: { lib: props.lib, radio: radio! } },
-          body: input.plan ? { plan: input.plan } : { query: input.query, sort: input.sort },
+          body: { ...(number ? { number } : {}), ...(input.plan ? { plan: input.plan } : { query: input.query, sort: input.sort }) },
         }),
       ),
     enabled: radio !== null && (input.query !== "" || input.plan !== null),

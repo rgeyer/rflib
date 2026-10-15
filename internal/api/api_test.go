@@ -576,4 +576,17 @@ func TestPreviewSource(t *testing.T) {
 	if code := c.errCode("POST", L+"/radios/HT/sources/preview", map[string]any{"query": "band:nowhere"}, 400); code != "invalid" {
 		t.Errorf("bad query: %s", code)
 	}
+	// An existing source previews in its place, with the changes given:
+	// source 1 widened to the calling channels finds those not yet on HT.
+	c.do("POST", L+"/radios/HT/sources/preview", map[string]any{"number": 1, "query": `band:noaa OR name:"2m FM Call"`}, 200, &p)
+	if p.Added != 8 || len(p.Channels) != 8 {
+		t.Errorf("edit preview = %d: %+v", p.Added, p.Channels)
+	}
+	c.do("POST", L+"/radios/HT/sources/preview", map[string]any{"number": 1}, 200, &p)
+	if p.Added != 7 {
+		t.Errorf("unchanged source preview = %d", p.Added)
+	}
+	if code := c.errCode("POST", L+"/radios/HT/sources/preview", map[string]any{"number": 9}, 400); code != "invalid" {
+		t.Errorf("missing source: %s", code)
+	}
 }

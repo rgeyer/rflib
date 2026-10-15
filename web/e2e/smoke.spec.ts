@@ -341,4 +341,19 @@ test("add a search as a radio source, with a preview", async ({ page, request })
   await expect(preview.getByText(/Sync would add 7 channels to Previewer/)).toBeVisible();
   await expect(preview.getByRole("row")).toHaveCount(7);
   await expect(preview.locator(".mantine-ScrollArea-root")).toHaveCount(0);
+
+  // Add it, then edit it with a preview in its place, and move it first.
+  await page.getByRole("button", { name: "Add source" }).click();
+  await expect(page.getByText("Source added")).toBeVisible();
+  await page.getByRole("button", { name: "Edit source 2" }).click();
+  const edit = page.getByRole("dialog");
+  await edit.getByRole("textbox", { name: "Query" }).fill('service:noaa OR name:"2m FM Call"');
+  await expect(edit.getByText(/Sync would add 8 channels to Previewer/)).toBeVisible();
+  await edit.getByRole("button", { name: "Save source" }).click();
+  await expect(page.getByText("Source saved")).toBeVisible();
+  await expect(page.getByRole("row", { name: /2m FM Call/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move source 1 up" })).toBeDisabled();
+  await page.getByRole("button", { name: "Move source 2 up" }).click();
+  await expect(page.getByText("Source moved")).toBeVisible();
+  await expect(page.getByRole("row").nth(1)).toContainText("2m FM Call");
 });

@@ -538,8 +538,10 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 	return res, nil
 }
 
-// PreviewSource reports what a new source would add to a radio, after its
-// existing sources claim their channels, without adding the source.
+// PreviewSource reports what a source would add to a radio without
+// changing anything: a new one (no ID) at the end, after the radio's
+// sources claim their channels, or, with an existing source's ID, that
+// source as given, in its place.
 func (s *Service) PreviewSource(ctx context.Context, radio string, src domain.RadioSource, opts SyncOptions) (SourceSync, error) {
 	r, m, err := s.RadioModel(ctx, radio)
 	if err != nil {
@@ -552,13 +554,28 @@ func (s *Service) PreviewSource(ctx context.Context, radio string, src domain.Ra
 	if err != nil {
 		return SourceSync{}, err
 	}
-	src.RadioID, src.Position, src.Sort = r.ID, len(sources), orDefault(src.Sort, "name")
+	src.RadioID, src.Sort = r.ID, orDefault(src.Sort, "name")
+	at := len(sources)
+	for i, existing := range sources {
+		if src.ID != "" && existing.ID == src.ID {
+			at, src.Position = i, existing.Position
+		}
+	}
+	if at == len(sources) {
+		if src.ID != "" {
+			return SourceSync{}, fmt.Errorf("source %q: %w", src.ID, store.ErrNotFound)
+		}
+		src.Position = len(sources)
+		sources = append(sources, src)
+	} else {
+		sources[at] = src
+	}
 	opts.DryRun = true
-	synced, err := s.syncSources(ctx, r, m, append(sources, src), opts)
+	synced, err := s.syncSources(ctx, r, m, sources, opts)
 	if err != nil {
 		return SourceSync{}, err
 	}
-	return synced[len(synced)-1], nil
+	return synced[at], nil
 }
 
 // syncSources works out each source's additions in order (see Sync), and
