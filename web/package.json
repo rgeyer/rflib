@@ -4,13 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "gen": "node node_modules/openapi-typescript/bin/cli.js ../internal/api/openapi.yaml -o src/api/schema.d.ts",
-    "dev": "npm run gen && node node_modules/vite/bin/vite.js",
-    "build": "npm run gen && node node_modules/typescript/bin/tsc -p . && node scripts/clean-dist.mjs && node node_modules/vite/bin/vite.js build",
-    "typecheck": "npm run gen && node node_modules/typescript/bin/tsc -p .",
-    "test": "node node_modules/vitest/vitest.mjs run",
-    "e2e": "node node_modules/@playwright/test/cli.js test",
-    "browsers": "node node_modules/@playwright/test/cli.js install chromium"
+    "gen": "openapi-typescript ../internal/api/openapi.yaml -o src/api/schema.d.ts",
+    "dev": "npm run gen && vite",
+    "build": "npm run gen && tsc -p . && node scripts/clean-dist.mjs && vite build",
+    "typecheck": "npm run gen && tsc -p .",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "browsers": "playwright install chromium"
   },
   "dependencies": {
     "@mantine/core": "^9.7.2",
