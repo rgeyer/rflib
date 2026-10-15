@@ -296,6 +296,8 @@ test("add a search as a radio source, with a preview", async ({ page, request })
   await dialog.getByRole("combobox", { name: "Radio" }).click();
   await page.getByRole("option", { name: "Previewer" }).click();
   await expect(dialog.getByText(/Sync would add \d+ channels to Previewer/)).toBeVisible();
+  // In the dialog the list scrolls within a set height.
+  await expect(dialog.locator(".mantine-ScrollArea-root")).toHaveCount(1);
   await dialog.getByRole("button", { name: "Add source and sync" }).click();
   await expect(page.getByText(/Added the search to Previewer as a source and synced: \d+ channels added/)).toBeVisible();
 
@@ -303,4 +305,11 @@ test("add a search as a radio source, with a preview", async ({ page, request })
   await page.getByRole("tab", { name: "Sources" }).click();
   await page.getByLabel("New source query", { exact: true }).fill("service:gmrs");
   await expect(page.getByText("Would add nothing new")).toBeVisible();
+  // On the page the list takes the room it needs, not a scrolling box.
+  await request.post("/api/v1/libraries/default/seeds/us-noaa/install", { data: {} });
+  await page.getByLabel("New source query", { exact: true }).fill("service:noaa");
+  const preview = page.getByLabel("Source preview");
+  await expect(preview.getByText(/Sync would add 7 channels to Previewer/)).toBeVisible();
+  await expect(preview.getByRole("row")).toHaveCount(7);
+  await expect(preview.locator(".mantine-ScrollArea-root")).toHaveCount(0);
 });

@@ -543,7 +543,7 @@ function SourceModal(props: { opened: boolean; query: string; onClose: () => voi
           <Select label="Radio" placeholder="Pick a radio" data={(radios.data?.radios ?? []).map((r) => r.name)} value={radio} onChange={setRadio} />
           <Select label="Sort" data={["name", "freq"]} value={sort} allowDeselect={false} onChange={(v) => v && setSort(v)} />
         </Group>
-        <SourcePreview lib={lib} radio={radio} query={props.query} sort={sort} />
+        <SourcePreview lib={lib} radio={radio} query={props.query} sort={sort} maxHeight={320} />
         <Group>
           <Button onClick={() => add.mutate(true)} loading={add.isPending} disabled={radio === null}>
             Add source and sync

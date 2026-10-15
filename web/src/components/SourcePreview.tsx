@@ -5,8 +5,10 @@ import { api, call, type AddResult, type Channel } from "../api/client";
 import { formatMHz, toneSummary } from "../lib/radio";
 
 /** SourcePreview shows what a new source would add to a radio, after the
- * radio's sources claim their channels, before the source is added. */
-export function SourcePreview(props: { lib: string; radio: string | null; query: string; plan?: string | null; sort: string }) {
+ * radio's sources claim their channels, before the source is added. With
+ * maxHeight, as in a dialog, the list scrolls within that height; without,
+ * it takes the room it needs. */
+export function SourcePreview(props: { lib: string; radio: string | null; query: string; plan?: string | null; sort: string; maxHeight?: number }) {
   const [key] = useDebouncedValue(JSON.stringify({ query: props.query.trim(), plan: props.plan ?? null, sort: props.sort }), 300);
   const input = JSON.parse(key) as { query: string; plan: string | null; sort: string };
   const radio = props.radio;
@@ -34,30 +36,29 @@ export function SourcePreview(props: { lib: string; radio: string | null; query:
           ? "Would add nothing new: its matches are already on the radio, or an earlier source claims them."
           : `Sync would add ${p.added} channels to ${radio}.`}
       </Text>
-      {p.channels.length > 0 && <Channels channels={p.channels} />}
+      {p.channels.length > 0 && <Channels channels={p.channels} maxHeight={props.maxHeight} />}
       {p.skipped.length > 0 && <Skipped label={`${p.skipped.length} outside ${radio}'s bands`} channels={p.skipped} />}
       {p.wrong_mode.length > 0 && <Skipped label={`${p.wrong_mode.length} in modes ${radio} doesn't have`} channels={p.wrong_mode} />}
     </Stack>
   );
 }
 
-function Channels(props: { channels: Channel[] }) {
-  return (
-    <ScrollArea.Autosize mah={240}>
-      <Table>
-        <Table.Tbody>
-          {props.channels.map((c) => (
-            <Table.Tr key={c.id}>
-              <Table.Td>{c.name}</Table.Td>
-              <Table.Td>
-                {formatMHz(c.rx_hz)} {toneSummary(c)}
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
-    </ScrollArea.Autosize>
+function Channels(props: { channels: Channel[]; maxHeight?: number }) {
+  const table = (
+    <Table>
+      <Table.Tbody>
+        {props.channels.map((c) => (
+          <Table.Tr key={c.id}>
+            <Table.Td>{c.name}</Table.Td>
+            <Table.Td>
+              {formatMHz(c.rx_hz)} {toneSummary(c)}
+            </Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
   );
+  return props.maxHeight ? <ScrollArea.Autosize mah={props.maxHeight}>{table}</ScrollArea.Autosize> : table;
 }
 
 function Skipped(props: { label: string; channels: Channel[] }) {
