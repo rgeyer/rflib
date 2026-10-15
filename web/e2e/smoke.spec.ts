@@ -252,3 +252,18 @@ test("map markers stay clickable inside a radius", async ({ page, request }) => 
   await page.mouse.click(marker.x + marker.width / 2, marker.y + marker.height / 2);
   await expect(page.locator(".leaflet-popup").getByText("Radius Test")).toBeVisible();
 });
+
+// The channel editor suggests tags already in use, and still takes new ones.
+test("tags suggest existing ones", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/channels", { data: { name: "Tagged", rx_hz: 146_550_000, mode: "FM", tags: ["fieldday"] } });
+  await page.goto("/l/default/channels");
+  await page.getByRole("button", { name: "New channel" }).click();
+  const tags = page.getByRole("combobox", { name: "Tags" });
+  await tags.click();
+  await tags.fill("field");
+  await page.getByRole("option", { name: "fieldday" }).click();
+  await tags.fill("brandnew");
+  await tags.press("Enter");
+  await expect(page.getByRole("dialog").getByText("fieldday", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("brandnew", { exact: true })).toBeVisible();
+});

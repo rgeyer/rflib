@@ -228,6 +228,7 @@ export function Channels() {
 function TagModal(props: { action: "add" | "remove" | null; ids: string[]; onClose: () => void; onDone: (msg: string) => void }) {
   const lib = useLib();
   const [tags, setTags] = useState<string[]>([]);
+  const known = useTags(lib);
   const save = useMutation({
     mutationFn: () =>
       call(
@@ -246,7 +247,14 @@ function TagModal(props: { action: "add" | "remove" | null; ids: string[]; onClo
   return (
     <Modal opened={props.action !== null} onClose={props.onClose} title={props.action === "add" ? "Add tags" : "Remove tags"}>
       <Stack>
-        <TagsInput label="Tags" value={tags} onChange={setTags} data-autofocus />
+        <TagsInput
+          label="Tags"
+          description={props.action === "add" ? "Pick a tag in use, or type a new one" : undefined}
+          data={known}
+          value={tags}
+          onChange={setTags}
+          data-autofocus
+        />
         <Button onClick={() => save.mutate()} loading={save.isPending} disabled={tags.length === 0}>
           {props.action === "add" ? "Add" : "Remove"} on {props.ids.length} channels
         </Button>
