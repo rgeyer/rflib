@@ -1,6 +1,9 @@
 package model
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,7 +13,7 @@ import (
 )
 
 func TestBuiltinsAreValid(t *testing.T) {
-	all, err := All()
+	all, err := Builtins()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +29,7 @@ func TestBuiltinsAreValid(t *testing.T) {
 			}
 		}
 	}
-	want := "baofeng-uv5rm,explorer-qrz1,radioddity-uv5g,tidradio-tdh3-gmrs,tyt-th9800,yaesu-ft857,yaesu-ftm150,yaesu-ftm6000"
+	want := "baofeng-uv5rm,chirp-generic,explorer-qrz1,radioddity-uv5g,tidradio-tdh3-gmrs,tyt-th9800,yaesu-ft857,yaesu-ftm150,yaesu-ftm6000"
 	if got := strings.Join(names, ","); got != want {
 		t.Fatalf("built-ins = %s", got)
 	}
@@ -131,5 +134,35 @@ func TestValidate(t *testing.T) {
 		if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("err = %v, want %q", err, tc.want)
 		}
+	}
+}
+
+func TestUserModels(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	dir := filepath.Join(cfg, "rflib", "models")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, yaml string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(yaml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("mine.yaml", "name: my-ht\nformat: chirp\nmemories: {first: 0, last: 127}\nnames: {max_length: 6}\n")
+	write("fix.yml", "name: yaesu-ft857\nformat: chirp\nmemories: {first: 1, last: 10}\n")
+	e, err := Lookup("my-ht")
+	if err != nil || e.Origin != filepath.Join(dir, "mine.yaml") || e.Model.Names.MaxLength != 6 || !strings.HasPrefix(string(e.YAML()), "name: my-ht") {
+		t.Fatalf("user model = %+v, %v", e, err)
+	}
+	if m := mustFind(t, "yaesu-ft857"); m.Memories.Last != 10 {
+		t.Fatalf("user model didn't replace the built-in: %+v", m)
+	}
+	if b, _ := Builtins(); slices.ContainsFunc(b, func(m Model) bool { return m.Name == "my-ht" }) {
+		t.Fatal("Builtins includes a user model")
+	}
+	write("bad.yaml", "name: x\nformat: nope\n")
+	if _, err := All(); err == nil || !strings.Contains(err.Error(), "bad.yaml") {
+		t.Fatalf("bad user model: %v", err)
 	}
 }

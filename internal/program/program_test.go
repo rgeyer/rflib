@@ -219,6 +219,24 @@ func TestTransmitOnlyWhereAllowed(t *testing.T) {
 	}
 }
 
+// A radio's name length overrides its model's, so chirp-generic radios get
+// readable names.
+func TestRadioNameLengthOverridesModel(t *testing.T) {
+	c := ch("Santa Barbara Sheriff Dispatch", 460_275_000, 0, domain.ServiceUnspecified)
+	for _, tc := range []struct {
+		length int
+		want   int
+	}{{0, len(c.Name)}, {8, 8}} {
+		p, err := Build(domain.Radio{Name: "HT", NameLength: tc.length}, mustModel(t, "chirp-generic"), entries(c))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len([]rune(p.Memories[0].Name.Name)); got > tc.want || (tc.length == 0 && got != tc.want) {
+			t.Errorf("name length %d: name %q", tc.length, p.Memories[0].Name.Name)
+		}
+	}
+}
+
 // CW is left out on an FM-only mobile and kept on the all-mode FT-857.
 func TestCWNeedsARadioWithCW(t *testing.T) {
 	cw := ch("NCDXF 20m", 14_100_000, 0, domain.ServiceAmateur)

@@ -17,8 +17,12 @@ type Radio struct {
 	DefaultPower PowerIntent
 	// Dedupe is how duplicate names on this radio are told apart: none,
 	// index, or freq (see package naming).
-	Dedupe    string
-	Notes     string
+	Dedupe string
+	// NameLength overrides the model's name length when set, for a radio
+	// whose model doesn't know it (such as chirp-generic); 0 uses the
+	// model's.
+	NameLength int
+	Notes      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -138,6 +142,9 @@ func MemoryNumbers(entries []RadioEntry, first int) ([]int, error) {
 	return out, nil
 }
 
+// MaxRadioNameLength bounds a radio's name length override.
+const MaxRadioNameLength = 64
+
 func ValidateRadio(r Radio) error {
 	if strings.TrimSpace(r.Name) == "" {
 		return Invalidf("radio name is required")
@@ -152,6 +159,9 @@ func ValidateRadio(r Radio) error {
 	case "", "none", "index", "freq":
 	default:
 		return Invalidf("unknown dedupe %q; use none, index, or freq", r.Dedupe)
+	}
+	if r.NameLength < 0 || r.NameLength > MaxRadioNameLength {
+		return Invalidf("name length must be 0 (the model's) to %d", MaxRadioNameLength)
 	}
 	return nil
 }

@@ -334,6 +334,7 @@ type Radio struct {
 	Model        string    `json:"model"`
 	DefaultPower string    `json:"default_power"`
 	Dedupe       string    `json:"dedupe"`
+	NameLength   int       `json:"name_length"`
 	Notes        string    `json:"notes"`
 	Channels     int       `json:"channels"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -341,7 +342,7 @@ type Radio struct {
 }
 
 func newRadio(r domain.Radio, channels int) Radio {
-	return Radio{r.ID, r.Name, r.Model, string(r.DefaultPower), cmpOr(r.Dedupe, "none"), r.Notes, channels, r.CreatedAt, r.UpdatedAt}
+	return Radio{r.ID, r.Name, r.Model, string(r.DefaultPower), cmpOr(r.Dedupe, "none"), r.NameLength, r.Notes, channels, r.CreatedAt, r.UpdatedAt}
 }
 
 func cmpOr(v, fallback string) string {

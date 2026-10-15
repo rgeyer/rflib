@@ -282,8 +282,39 @@ A radio is one of your own radios: a model, the channels programmed into it in y
 | `explorer-qrz1` | CHIRP: Explorer QRZ-1 | 1-200 | 10 | Low 0.5 W, Mid 2.5 W, High 5 W | FM, NFM |
 | `tyt-th9800` | CHIRP: TYT TH-9800 | 1-800 | 6, upper case | Low 5 W, Mid2 10 W, Mid1 20 W, High 50 W | FM, NFM, AM |
 | `radioddity-uv5g` | CHIRP: Radioddity UV-5G | 0-127 | 7, upper case | Low 1 W, High 4 W | FM, NFM |
+| `chirp-generic` | CHIRP: any radio it supports | 1-999 | unlimited | left to CHIRP | not checked |
 
-`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, modes, and where the facts came from: CHIRP's driver source, or the radio's operating manual.
+`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, modes, and where the facts came from: CHIRP's driver source, or the radio's operating manual. `rflib model list` also lists your own models and the directory they're read from.
+
+### Radios CHIRP supports but rflib doesn't
+
+**The quick way:** use `chirp-generic` and tell rflib how long a name the radio shows.
+
+```sh
+./rflib radio add HT --model chirp-generic --name-length 7
+```
+
+Nothing else is checked: rflib doesn't know the radio's bands, modes, or memory count, so make sure its channels suit it. Export the file, then in CHIRP download your radio's image and import the file into it. CHIRP drops characters the radio can't show, and since power is left blank, it picks the radio's middle or highest power level.
+
+**A model of your own** gets rflib's checks and per-memory power. `rflib model new` copies `chirp-generic` (or `--from` another model) into your models directory; edit it to match your radio, then check it:
+
+```sh
+./rflib model new my-ht            # prints the new file's path
+./rflib model validate ~/.config/rflib/models/my-ht.yaml
+./rflib radio update HT --model my-ht
+```
+
+To fill it in from CHIRP itself, `tools/chirp_model.py` drafts a model from CHIRP's driver: memories, name length and characters, power levels with watts, bands, and modes. It needs [uv](https://docs.astral.sh/uv/), which fetches CHIRP the first time:
+
+```sh
+uv run tools/chirp_model.py --list uv-5r                     # find the radio as CHIRP names it
+uv run tools/chirp_model.py "Baofeng UV-5R" > ~/.config/rflib/models/baofeng-uv-5r.yaml
+./rflib model validate ~/.config/rflib/models/baofeng-uv-5r.yaml
+```
+
+Check the draft against the radio's manual or a CHIRP export of your radio: some drivers depend on the radio's region or firmware, which the draft can't see. Optionally tag power levels with an `intent` (low, medium, high, or max) to choose which level each power setting uses.
+
+**Share it:** once a model works on your radio, [submit it](https://github.com/rgeyer/rflib/issues/new?template=radio-model.yml) with a sample CHIRP export, so others get it built in.
 
 ### Channel order and memory numbers
 
@@ -315,7 +346,7 @@ A section start can't go backwards, and the list must fit the model's memories. 
 
 `radio channels list Truck` shows every memory as it will be programmed: number, name on the radio and how it was fitted, power level, scan, frequency, duplex and offset, tone, and the library channel's name when the radio's differs. `§` marks a section start, and `*` marks a radio override. Tones read as repeater lists write them: `T131.8` sends a tone, `TSQL 131.8` also squelches on it, and `T131.8 R88.5` uses different ones; DCS codes read `D023N` or `D023I`. Warnings, such as a power cap or a frequency outside the radio's bands, go to stderr, and `radio export` repeats them.
 
-Each radio has its own `--dedupe` (`none`, `index`, or `freq`) for duplicate names; see [Names on radio displays](#names-on-radio-displays).
+Each radio has its own `--dedupe` (`none`, `index`, or `freq`) for duplicate names, and `--name-length` for a radio whose model doesn't know how long a name it shows, such as `chirp-generic` (0 uses the model's); see [Names on radio displays](#names-on-radio-displays).
 
 ### Where radios transmit
 

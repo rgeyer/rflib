@@ -103,7 +103,11 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, 
 		copies[i] = c
 		p.Memories[i] = Memory{Location: locs[i], Original: e.Channel, Power: intent, LeftOut: leftOut}
 	}
-	named, results := naming.Apply(copies, m.NameRules(), dedupe)
+	rules := m.NameRules()
+	if r.NameLength > 0 {
+		rules.MaxLen = r.NameLength
+	}
+	named, results := naming.Apply(copies, rules, dedupe)
 	for i := range p.Memories {
 		p.Memories[i].Channel = named[i]
 		p.Memories[i].Name = results[i]

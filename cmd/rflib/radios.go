@@ -3,6 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -16,42 +20,123 @@ import (
 // --- models ---
 
 func newModelCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "model", Short: "List the radio models rflib can program"}
+	cmd := &cobra.Command{Use: "model", Short: "List the radio models rflib can program, and add your own",
+		Long: `A radio model describes radio hardware: its programming format, memories,
+names, power levels, bands, and modes. Built-in models ship with rflib; add
+your own as .yaml files in the directory shown by "rflib model list" (rflib
+model new writes one). A file there with a built-in's name replaces it.
+
+For a radio CHIRP supports but rflib doesn't, use chirp-generic, or copy it
+with rflib model new and fill in the radio's limits.`}
 	list := &cobra.Command{Use: "list", Short: "List radio models", Args: cobra.NoArgs}
 	modelListing.flags(list)
 	list.RunE = func(cmd *cobra.Command, _ []string) error {
-		all, err := model.All()
+		all, err := model.Available()
 		if err != nil {
 			return err
 		}
-		return modelListing.write(cmd, all)
+		if err := modelListing.write(cmd, all); err != nil {
+			return err
+		}
+		if dir, err := model.UserDir(); err == nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "User models are read from %s\n", dir)
+		}
+		return nil
 	}
 	show := &cobra.Command{Use: "show MODEL", Short: "Show a radio model's facts and where they came from", Args: cobra.ExactArgs(1)}
 	show.RunE = func(cmd *cobra.Command, args []string) error {
-		if _, err := model.Find(args[0]); err != nil {
-			return err
-		}
-		data, err := model.YAML(args[0])
+		e, err := model.Lookup(args[0])
 		if err != nil {
 			return err
 		}
-		_, err = cmd.OutOrStdout().Write(data)
+		_, err = cmd.OutOrStdout().Write(e.YAML())
 		return err
 	}
-	cmd.AddCommand(list, show)
+	create := &cobra.Command{Use: "new NAME", Short: "Start a model of your own, copied from another", Args: cobra.ExactArgs(1),
+		Long: `Write a new model file to the user models directory, copied from --from
+(chirp-generic by default) with the new name. Edit it to match your radio,
+then check it with rflib model validate.`}
+	create.Flags().String("from", "chirp-generic", "Model to copy")
+	create.RunE = func(cmd *cobra.Command, args []string) error {
+		path, replaces, err := newUserModel(args[0], getString(cmd, "from"))
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n", path)
+		if replaces {
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: %s replaces the built-in model of the same name\n", args[0])
+		}
+		return nil
+	}
+	validate := &cobra.Command{Use: "validate FILE", Short: "Check a model file for errors", Args: cobra.ExactArgs(1)}
+	validate.RunE = func(cmd *cobra.Command, args []string) error {
+		m, err := model.Load(args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s is valid (memories %d-%d)\n", m.Name, m.Memories.First, m.Memories.Last)
+		return nil
+	}
+	cmd.AddCommand(list, show, create, validate)
 	return cmd
 }
 
-var modelListing = listing[model.Model]{
-	fields: []field[model.Model]{
-		{name: "name", text: func(m model.Model) string { return m.Name }},
-		{name: "description", text: func(m model.Model) string { return m.Description }},
-		{name: "format", text: formatName},
-		{name: "memories", text: func(m model.Model) string { return fmt.Sprintf("%d-%d", m.Memories.First, m.Memories.Last) }},
-		{name: "name_length", text: func(m model.Model) string { return strconv.Itoa(m.Names.MaxLength) }, json: func(m model.Model) any { return m.Names.MaxLength }},
-		{name: "modes", text: func(m model.Model) string { return strings.Join(m.Modes, ",") }, json: func(m model.Model) any { return nonNil(m.Modes) }},
+var modelNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+
+// newUserModel copies the model named from into the user models directory
+// as name. It reports whether name replaces a built-in.
+func newUserModel(name, from string) (string, bool, error) {
+	if !modelNamePattern.MatchString(name) {
+		return "", false, domain.Invalidf("model name %q must be lower-case letters, digits, '.', '_', or '-'", name)
+	}
+	src, err := model.Lookup(from)
+	if err != nil {
+		return "", false, err
+	}
+	dir, err := model.UserDir()
+	if err != nil {
+		return "", false, err
+	}
+	path := filepath.Join(dir, name+".yaml")
+	if _, err := os.Stat(path); err == nil {
+		return "", false, domain.Invalidf("%s already exists", path)
+	}
+	// Replace the name line, keeping the rest of the file as written.
+	lines := strings.Split(string(src.YAML()), "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "name:") {
+			lines[i] = "name: " + name
+			break
+		}
+	}
+	data := []byte(strings.Join(lines, "\n"))
+	if _, err := model.Parse(data); err != nil {
+		return "", false, err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", false, err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", false, err
+	}
+	builtins, err := model.Builtins()
+	if err != nil {
+		return "", false, err
+	}
+	return path, slices.ContainsFunc(builtins, func(m model.Model) bool { return m.Name == name }), nil
+}
+
+var modelListing = listing[model.Entry]{
+	fields: []field[model.Entry]{
+		{name: "name", text: func(e model.Entry) string { return e.Model.Name }},
+		{name: "description", text: func(e model.Entry) string { return e.Model.Description }},
+		{name: "format", text: func(e model.Entry) string { return formatName(e.Model) }},
+		{name: "memories", text: func(e model.Entry) string { return fmt.Sprintf("%d-%d", e.Model.Memories.First, e.Model.Memories.Last) }},
+		{name: "name_length", text: func(e model.Entry) string { return strconv.Itoa(e.Model.Names.MaxLength) }, json: func(e model.Entry) any { return e.Model.Names.MaxLength }},
+		{name: "modes", text: func(e model.Entry) string { return strings.Join(e.Model.Modes, ",") }, json: func(e model.Entry) any { return nonNil(e.Model.Modes) }},
+		{name: "origin", text: func(e model.Entry) string { return e.Origin }},
 	},
-	defaults: []string{"name", "description", "format"},
+	defaults: []string{"name", "description", "format", "origin"},
 }
 
 func formatName(m model.Model) string {
@@ -85,6 +170,7 @@ func radioFields(cmd *cobra.Command) {
 	cmd.Flags().String("model", "", "Radio model (see rflib model list)")
 	cmd.Flags().String("default-power", "", "Power for channels without their own: low, medium, high, or max")
 	cmd.Flags().String("dedupe", "", "Tell apart duplicate names: none, index, or freq")
+	cmd.Flags().Int("name-length", 0, "Longest name the radio shows, for a model that doesn't know it (such as chirp-generic); 0 uses the model's")
 	cmd.Flags().String("notes", "", "Notes")
 }
 
@@ -106,6 +192,13 @@ func applyRadioFlags(cmd *cobra.Command, r *domain.Radio, all bool) error {
 	}
 	if set("dedupe") {
 		r.Dedupe = getString(cmd, "dedupe")
+	}
+	if set("name-length") {
+		n, err := cmd.Flags().GetInt("name-length")
+		if err != nil {
+			return err
+		}
+		r.NameLength = n
 	}
 	if set("notes") {
 		r.Notes = getString(cmd, "notes")
@@ -171,10 +264,19 @@ var radioListing = listing[radioRow]{
 		{name: "channels", text: func(r radioRow) string { return strconv.Itoa(r.channels) }, json: func(r radioRow) any { return r.channels }},
 		{name: "default_power", text: func(r radioRow) string { return string(r.DefaultPower) }},
 		{name: "dedupe", text: func(r radioRow) string { return orDefault(r.Dedupe, "none") }},
+		{name: "name_length", text: func(r radioRow) string { return nameLength(r.NameLength) }, json: func(r radioRow) any { return r.NameLength }},
 		{name: "notes", text: func(r radioRow) string { return r.Notes }},
 		{name: "id", id: true, text: func(r radioRow) string { return r.ID }},
 	},
 	defaults: []string{"name", "model", "channels", "default_power"},
+}
+
+// nameLength shows a radio's name length override.
+func nameLength(n int) string {
+	if n == 0 {
+		return "model's"
+	}
+	return strconv.Itoa(n)
 }
 
 func newRadioShowCommand() *cobra.Command {
@@ -186,8 +288,8 @@ func newRadioShowCommand() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "%s\nname: %s\nmodel: %s\nchannels: %d\ndefault power: %s\ndedupe: %s\nnotes: %s\nsources:",
-				r.ID, r.Name, r.Model, len(es), powerName(r.DefaultPower), orDefault(r.Dedupe, "none"), r.Notes)
+			fmt.Fprintf(out, "%s\nname: %s\nmodel: %s\nchannels: %d\ndefault power: %s\ndedupe: %s\nname length: %s\nnotes: %s\nsources:",
+				r.ID, r.Name, r.Model, len(es), powerName(r.DefaultPower), orDefault(r.Dedupe, "none"), nameLength(r.NameLength), r.Notes)
 			if len(sources) == 0 {
 				fmt.Fprint(out, " none")
 			}

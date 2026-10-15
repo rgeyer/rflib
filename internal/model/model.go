@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -215,13 +217,39 @@ func Parse(data []byte) (Model, error) {
 //go:embed builtin/*.yaml
 var builtinFS embed.FS
 
-// All returns the built-in models by name.
-func All() ([]Model, error) {
+// UserDir is where user models live: $XDG_CONFIG_HOME/rflib/models (or the
+// OS equivalent).
+func UserDir() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "rflib", "models"), nil
+}
+
+// Entry is a model available by name.
+type Entry struct {
+	Model Model
+	// Origin is "built-in" or the file the model was loaded from.
+	Origin string
+	data   []byte
+}
+
+// Builtins returns the built-in models by name.
+func Builtins() ([]Model, error) {
+	es, err := builtins()
+	if err != nil {
+		return nil, err
+	}
+	return models(es), nil
+}
+
+func builtins() ([]Entry, error) {
 	paths, err := fs.Glob(builtinFS, "builtin/*.yaml")
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Model, 0, len(paths))
+	out := make([]Entry, 0, len(paths))
 	for _, p := range paths {
 		data, err := builtinFS.ReadFile(p)
 		if err != nil {
@@ -231,27 +259,97 @@ func All() ([]Model, error) {
 		if err != nil {
 			return nil, fmt.Errorf("built-in %s: %w", p, err)
 		}
-		out = append(out, m)
+		out = append(out, Entry{m, "built-in", data})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-// Find returns a built-in model by name.
-func Find(name string) (Model, error) {
-	all, err := All()
+// Available lists the built-in models and those in UserDir, by name. A user
+// model with a built-in's name replaces it, so a model can be fixed locally.
+func Available() ([]Entry, error) {
+	es, err := builtins()
 	if err != nil {
-		return Model{}, err
+		return nil, err
 	}
-	names := make([]string, len(all))
-	for i, m := range all {
-		if m.Name == name {
-			return m, nil
+	byName := map[string]Entry{}
+	for _, e := range es {
+		byName[e.Model.Name] = e
+	}
+	if dir, err := UserDir(); err == nil {
+		files, _ := filepath.Glob(filepath.Join(dir, "*.yaml"))
+		more, _ := filepath.Glob(filepath.Join(dir, "*.yml"))
+		for _, path := range append(files, more...) {
+			e, err := load(path)
+			if err != nil {
+				return nil, err
+			}
+			byName[e.Model.Name] = e
 		}
-		names[i] = m.Name
 	}
-	return Model{}, domain.Invalidf("unknown radio model %q; available: %s", name, strings.Join(names, ", "))
+	out := make([]Entry, 0, len(byName))
+	for _, e := range byName {
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Model.Name < out[j].Model.Name })
+	return out, nil
 }
 
-// YAML returns a built-in model's source, for `model show`.
-func YAML(name string) ([]byte, error) { return builtinFS.ReadFile("builtin/" + name + ".yaml") }
+// Load reads and validates a model file.
+func Load(path string) (Model, error) {
+	e, err := load(path)
+	return e.Model, err
+}
+
+func load(path string) (Entry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Entry{}, err
+	}
+	m, err := Parse(data)
+	if err != nil {
+		return Entry{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return Entry{m, path, data}, nil
+}
+
+// All returns the available models (built-in and user) by name.
+func All() ([]Model, error) {
+	es, err := Available()
+	if err != nil {
+		return nil, err
+	}
+	return models(es), nil
+}
+
+func models(es []Entry) []Model {
+	out := make([]Model, len(es))
+	for i, e := range es {
+		out[i] = e.Model
+	}
+	return out
+}
+
+// Lookup returns an available model's entry by name.
+func Lookup(name string) (Entry, error) {
+	es, err := Available()
+	if err != nil {
+		return Entry{}, err
+	}
+	names := make([]string, len(es))
+	for i, e := range es {
+		if e.Model.Name == name {
+			return e, nil
+		}
+		names[i] = e.Model.Name
+	}
+	return Entry{}, domain.Invalidf("unknown radio model %q; available: %s", name, strings.Join(names, ", "))
+}
+
+// Find returns an available model by name.
+func Find(name string) (Model, error) {
+	e, err := Lookup(name)
+	return e.Model, err
+}
+
+// YAML returns a model's source, for `model show` and `model new`.
+func (e Entry) YAML() []byte { return e.data }

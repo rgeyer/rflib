@@ -234,6 +234,12 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 	// A radio, its channels, overrides, sources, sync, and export.
 	var radio Radio
 	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, &radio)
+	var generic Radio
+	c.do("POST", L+"/radios", map[string]any{"name": "Spare", "model": "chirp-generic", "name_length": 6}, 201, &generic)
+	if generic.NameLength != 6 {
+		t.Errorf("generic radio = %+v", generic)
+	}
+	c.do("DELETE", L+"/radios/Spare", nil, 204, nil)
 	var added AddResult
 	c.do("POST", L+"/radios/HT/channels", map[string]any{"query": "band:noaa", "sort": "freq"}, 200, &added)
 	if added.Added != 7 {

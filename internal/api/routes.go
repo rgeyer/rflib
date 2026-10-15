@@ -856,6 +856,7 @@ type radioInput struct {
 	Model        *string `json:"model"`
 	DefaultPower *string `json:"default_power"`
 	Dedupe       *string `json:"dedupe"`
+	NameLength   *int    `json:"name_length"`
 	Notes        *string `json:"notes"`
 }
 
@@ -879,6 +880,9 @@ func (in radioInput) apply(r *domain.Radio) error {
 	}
 	if in.Dedupe != nil {
 		r.Dedupe = *in.Dedupe
+	}
+	if in.NameLength != nil {
+		r.NameLength = *in.NameLength
 	}
 	if in.Notes != nil {
 		r.Notes = *in.Notes

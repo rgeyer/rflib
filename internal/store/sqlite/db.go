@@ -220,6 +220,9 @@ CREATE INDEX idx_plan_entries_channel ON plan_entries(channel_id);
 CREATE TABLE record_revisions (kind TEXT NOT NULL, record_id TEXT NOT NULL, revision INTEGER NOT NULL, changed_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', record TEXT NOT NULL, PRIMARY KEY(kind, record_id, revision));
 ALTER TABLE radio_sources ADD COLUMN plan_id TEXT REFERENCES plans(id);
 DELETE FROM channel_tags WHERE tag IN ('linked', 'allstar', 'echolink', 'wires-x') AND channel_id IN (SELECT id FROM channels WHERE link_id IS NULL AND library_id IN (SELECT id FROM libraries WHERE kind = 'shared'));`},
+	// A radio's own name length, for models that don't know the radio's
+	// (such as chirp-generic); 0 uses the model's.
+	{version: 13, sql: `ALTER TABLE radios ADD COLUMN name_length INTEGER NOT NULL DEFAULT 0;`},
 }
 
 // ungroup finishes migration 9 once new_channels holds the channels: it

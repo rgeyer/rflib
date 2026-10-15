@@ -13,7 +13,7 @@ import (
 	"github.com/ryan/rflib/internal/store"
 )
 
-const radioColumns = `id,name,model,default_power,dedupe,notes,created_at,updated_at`
+const radioColumns = `id,name,model,default_power,dedupe,name_length,notes,created_at,updated_at`
 
 func (l *library) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error) {
 	if err := domain.ValidateRadio(r); err != nil {
@@ -22,8 +22,8 @@ func (l *library) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio
 	if err := assignIdentity(&r.ID, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return r, err
 	}
-	_, err := l.q.ExecContext(ctx, `INSERT INTO radios (library_id,`+radioColumns+`) VALUES (?,?,?,?,?,?,?,?,?)`,
-		l.id, r.ID, r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.Notes, timestamp(r.CreatedAt), timestamp(r.UpdatedAt))
+	_, err := l.q.ExecContext(ctx, `INSERT INTO radios (library_id,`+radioColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		l.id, r.ID, r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.NameLength, r.Notes, timestamp(r.CreatedAt), timestamp(r.UpdatedAt))
 	if err != nil {
 		return r, conflict(fmt.Errorf("create radio: %w", err), "a radio named %q", r.Name)
 	}
@@ -60,8 +60,8 @@ func (l *library) UpdateRadio(ctx context.Context, r domain.Radio) (domain.Radio
 		return r, err
 	}
 	r.UpdatedAt = time.Now().UTC()
-	res, err := l.q.ExecContext(ctx, `UPDATE radios SET name=?,model=?,default_power=?,dedupe=?,notes=?,updated_at=? WHERE id=? AND library_id=?`,
-		r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.Notes, timestamp(r.UpdatedAt), r.ID, l.id)
+	res, err := l.q.ExecContext(ctx, `UPDATE radios SET name=?,model=?,default_power=?,dedupe=?,name_length=?,notes=?,updated_at=? WHERE id=? AND library_id=?`,
+		r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.NameLength, r.Notes, timestamp(r.UpdatedAt), r.ID, l.id)
 	if err != nil {
 		return r, conflict(fmt.Errorf("update radio: %w", err), "a radio named %q", r.Name)
 	}
@@ -85,7 +85,7 @@ func (l *library) DeleteRadio(ctx context.Context, id string) error {
 func scanRadio(r scanner) (domain.Radio, error) {
 	var x domain.Radio
 	var created, updated string
-	err := r.Scan(&x.ID, &x.Name, &x.Model, &x.DefaultPower, &x.Dedupe, &x.Notes, &created, &updated)
+	err := r.Scan(&x.ID, &x.Name, &x.Model, &x.DefaultPower, &x.Dedupe, &x.NameLength, &x.Notes, &created, &updated)
 	if err != nil {
 		return x, err
 	}

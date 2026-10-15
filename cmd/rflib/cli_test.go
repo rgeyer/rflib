@@ -1083,3 +1083,43 @@ func TestSharedChannels(t *testing.T) {
 		t.Errorf("link printed %q", got)
 	}
 }
+
+// A radio CHIRP supports but rflib doesn't: chirp-generic with the radio's
+// name length, then a user model of its own.
+func TestGenericChirpRadioAndUserModels(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	c := newCLI(t)
+	c.ok("channel", "add", "--name", "Santa Barbara Sheriff Dispatch", "--rx", "460.275")
+	c.ok("radio", "add", "HT", "--model", "chirp-generic")
+	c.ok("radio", "channels", "add", "HT", "-q", "name:sheriff")
+	if csv := c.ok("radio", "export", "HT"); !strings.Contains(csv, "\r\n1,Santa Barbara Sheriff Dispatch,460.275000,") {
+		t.Fatalf("generic export = %q", csv)
+	}
+	c.fails("name length must be 0", "radio", "update", "HT", "--name-length", "-1")
+	c.ok("radio", "update", "HT", "--name-length", "7")
+	if out := c.ok("radio", "show", "HT"); !strings.Contains(out, "name length: 7\n") {
+		t.Fatalf("radio show = %q", out)
+	}
+	csv := c.ok("radio", "export", "HT")
+	name := strings.Split(strings.Split(csv, "\r\n")[1], ",")[1]
+	if len(name) == 0 || len(name) > 7 {
+		t.Fatalf("name %q doesn't fit 7:\n%s", name, csv)
+	}
+
+	path := c.ok("model", "new", "my-ht")
+	if !strings.HasSuffix(path, filepath.Join("rflib", "models", "my-ht.yaml")) {
+		t.Fatalf("model new = %q", path)
+	}
+	c.fails("already exists", "model", "new", "my-ht")
+	c.fails("must be lower-case", "model", "new", "My HT")
+	c.ok("model", "validate", path)
+	if out := c.ok("model", "list"); !strings.Contains(out, "my-ht\t") || !strings.Contains(out, path) || !strings.Contains(out, "chirp-generic\t") {
+		t.Fatalf("model list = %q", out)
+	}
+	if out := c.ok("model", "show", "my-ht"); !strings.HasPrefix(out, "name: my-ht\n") {
+		t.Fatalf("model show = %q", out)
+	}
+	bad := writeFile(t, "name: x\nformat: chirp\nmemories: {first: 5, last: 1}\n")
+	c.fails("memories must run", "model", "validate", bad)
+	c.ok("radio", "update", "HT", "--model", "my-ht")
+}

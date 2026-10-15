@@ -28,7 +28,7 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.getByRole("link", { name: "Channels" }).click();
   await expect(page.getByText("7 channels")).toBeVisible();
   await page.getByRole("button", { name: "New channel" }).click();
-  await page.getByRole("textbox", { name: "Name" }).fill("Marian");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Marian");
   await page.getByRole("textbox", { name: "Receive MHz" }).fill("147.3");
   await page.getByRole("textbox", { name: "Transmit MHz" }).fill("147.9");
   await page.getByRole("dialog").getByText("CTCSS", { exact: true }).first().click();
@@ -70,7 +70,7 @@ test("lists, channels, radios, and export", async ({ page }) => {
   // A radio with a source; sync adds the matches.
   await page.getByRole("link", { name: "Radios" }).click();
   await page.getByRole("button", { name: "Add radio" }).click();
-  await page.getByRole("textbox", { name: "Name" }).fill("HT");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("HT");
   await page.getByRole("combobox", { name: "Model" }).click();
   await page.getByRole("option", { name: /baofeng-uv5rm/ }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Add" }).click();
@@ -131,7 +131,7 @@ test("organizations, systems, and plans", async ({ page, request }) => {
 
   await page.goto("/l/default/orgs");
   await page.getByRole("button", { name: "New organization" }).click();
-  await page.getByRole("textbox", { name: "Name" }).fill("SBARC");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("SBARC");
   await page.getByRole("textbox", { name: "Callsign" }).fill("w6sba");
   await saveWithReason("pilot");
   await expect(page.getByRole("heading", { name: "SBARC" })).toBeVisible();
@@ -140,7 +140,7 @@ test("organizations, systems, and plans", async ({ page, request }) => {
   // A system, with a member picked from the shared list.
   await page.getByRole("link", { name: "Systems" }).click();
   await page.getByRole("button", { name: "New system" }).click();
-  await page.getByRole("textbox", { name: "Name" }).fill("Hub");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Hub");
   await page.getByRole("combobox", { name: "The system's own nodes" }).fill("allstar:43763");
   await page.keyboard.press("Enter");
   await saveWithReason("pilot");
@@ -154,7 +154,7 @@ test("organizations, systems, and plans", async ({ page, request }) => {
   // A plan: a channel renamed for the event, and the system as a section.
   await page.getByRole("link", { name: "Plans" }).click();
   await page.getByRole("button", { name: "New plan" }).click();
-  await page.getByRole("textbox", { name: "Name" }).fill("Fair");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Fair");
   await saveWithReason("pilot");
   await expect(page.getByRole("heading", { name: "Fair" })).toBeVisible();
   await page.getByLabel("Add a shared channel").fill("name:2m mode:fm");
@@ -218,4 +218,19 @@ test("the shared list: link, correct, and take off the air", async ({ page }) =>
   await saveWithReason("club notice");
   await expect(page.getByText("NOAA WX1 is off-air; links follow")).toBeVisible();
   await expect(page.getByRole("row", { name: /WX1/ })).toContainText("off-air");
+});
+
+// A radio CHIRP supports but rflib doesn't: chirp-generic with the radio's
+// name length.
+test("generic CHIRP radio with a name length", async ({ page }) => {
+  await page.goto("/l/default/radios");
+  await page.getByRole("button", { name: "Add radio" }).click();
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Spare");
+  await page.getByRole("combobox", { name: "Model" }).click();
+  await page.getByRole("option", { name: /chirp-generic/ }).click();
+  await expect(page.getByText("This model doesn't know the radio's limit")).toBeVisible();
+  await page.getByRole("textbox", { name: "Name length" }).fill("7");
+  await page.getByRole("dialog").getByRole("button", { name: "Add" }).click();
+  await expect(page).toHaveURL(/\/radios\/Spare$/);
+  await expect(page.getByText("names up to 7")).toBeVisible();
 });

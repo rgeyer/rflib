@@ -1,4 +1,4 @@
-import { Button, Group, Modal, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Button, Group, Modal, NumberInput, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconPlus } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -56,13 +56,14 @@ function AddRadio(props: { opened: boolean; onClose: () => void }) {
   const client = useQueryClient();
   const [name, setName] = useState("");
   const [model, setModel] = useState<string | null>(null);
+  const [nameLength, setNameLength] = useState<number | "">("");
   const models = useQuery({
     queryKey: ["models"],
     queryFn: () => call<{ models: Model[] }>(api.GET("/models")),
     enabled: props.opened,
   });
   const add = useMutation({
-    mutationFn: () => call(api.POST("/libraries/{lib}/radios", { params: { path: { lib } }, body: { name, model: model! } })),
+    mutationFn: () => call(api.POST("/libraries/{lib}/radios", { params: { path: { lib } }, body: { name, model: model!, name_length: nameLength || 0 } })),
     onSuccess: (r) => {
       void client.invalidateQueries({ queryKey: ["radios", lib] });
       props.onClose();
@@ -88,6 +89,16 @@ function AddRadio(props: { opened: boolean; onClose: () => void }) {
             value={model}
             onChange={setModel}
           />
+          <NumberInput
+            label="Name length"
+            description={nameLengthHint(models.data?.models.find((m) => m.name === model))}
+            placeholder="Model's"
+            min={1}
+            max={64}
+            allowDecimal={false}
+            value={nameLength}
+            onChange={(v) => setNameLength(typeof v === "number" ? v : "")}
+          />
           <Button type="submit" loading={add.isPending} disabled={!name || !model}>
             Add
           </Button>
@@ -95,4 +106,11 @@ function AddRadio(props: { opened: boolean; onClose: () => void }) {
       </form>
     </Modal>
   );
+}
+
+// nameLengthHint explains the name length field for the chosen model.
+function nameLengthHint(m: Model | undefined): string {
+  if (!m) return "The longest name the radio shows; leave blank to use the model's";
+  if (m.name_length === 0) return "This model doesn't know the radio's limit; set it for readable shortened names";
+  return `Leave blank to use the model's (${m.name_length})`;
 }
