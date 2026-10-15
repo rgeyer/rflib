@@ -74,8 +74,11 @@ and, as a short name, a name of your own. Installing again changes nothing.`}
 				if dryRun {
 					prefix = "would have "
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %slinked %d, converted %d of your channels, %d already linked\n",
-					l.ID, prefix, len(res.Linked), len(res.Converted), len(res.Already))
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %slinked %d, converted %d of your channels, %d already linked; %d added to the shared list, %d updated there\n",
+					l.ID, prefix, len(res.Linked), len(res.Converted), len(res.Already), res.SharedAdded, res.SharedUpdated)
+				for _, cv := range res.Converted {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  %s becomes a link to %s\n", cv.Private.Name, cv.Shared.Name)
+				}
 			}
 			return nil
 		})

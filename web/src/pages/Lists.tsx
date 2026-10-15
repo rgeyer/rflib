@@ -1,16 +1,20 @@
-import { Button, Card, Group, Modal, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { Button, Card, Group, List, Modal, ScrollArea, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, call, type Channel, type Conversion, type Seed } from "../api/client";
-import { useLib } from "../lib/library";
+import { useLib, usePrivateLibraries } from "../lib/library";
 import { failed, ok } from "../lib/notify";
 
-type Install = { linked: Channel[]; converted: Conversion[]; already: Channel[] };
+type Install = { linked: Channel[]; converted: Conversion[]; already: Channel[]; shared_added: number; shared_updated: number };
 
 /** Lists installs the built-in channel lists: they go in the shared library,
- * and the library links to them. */
+ * and the library links to them (the default library, from the shared
+ * list). */
 export function Lists() {
-  const lib = useLib();
+  const open = useLib();
+  const libraries = usePrivateLibraries();
+  const lib = libraries.some((l) => l.name === open) ? open : (libraries[0]?.name ?? open);
+  const label = libraries.length === 1 ? "My library" : lib;
   const client = useQueryClient();
   const [preview, setPreview] = useState<{ seed: string; result: Install } | null>(null);
   const seeds = useQuery({ queryKey: ["seeds"], queryFn: () => call<{ seeds: Seed[] }>(api.GET("/seeds")) });
@@ -56,10 +60,33 @@ export function Lists() {
       <Modal opened={preview !== null} onClose={() => setPreview(null)} title={`Install ${preview?.seed}`}>
         {preview && (
           <Stack>
-            <Text size="sm">
-              Links {preview.result.linked.length} new channels, turns {preview.result.converted.length} of yours into links, and{" "}
-              {preview.result.already.length} are linked already.
-            </Text>
+            <List size="sm">
+              <List.Item>
+                The shared list gains {preview.result.shared_added} channels
+                {preview.result.shared_updated > 0 && ` and ${preview.result.shared_updated} there are updated`}.
+              </List.Item>
+              <List.Item>
+                {label} gains {preview.result.linked.length} new links{preview.result.already.length > 0 && `; ${preview.result.already.length} are linked already`}.
+              </List.Item>
+              <List.Item>
+                {preview.result.converted.length === 0
+                  ? "None of your channels change."
+                  : `${preview.result.converted.length} of your channels become links, keeping their radios, tags, and notes${
+                      preview.result.converted.some((cv) => cv.channel.name !== cv.shared.name) ? "; a different name of yours stays as a short name" : ""
+                    }:`}
+              </List.Item>
+            </List>
+            {preview.result.converted.length > 0 && (
+              <ScrollArea.Autosize mah={240}>
+                <List size="sm" spacing={2}>
+                  {preview.result.converted.map((cv) => (
+                    <List.Item key={cv.channel.id}>
+                      {cv.channel.name === cv.shared.name ? cv.channel.name : `${cv.channel.name} → ${cv.shared.name}`}
+                    </List.Item>
+                  ))}
+                </List>
+              </ScrollArea.Autosize>
+            )}
             <Button onClick={() => install.mutate({ seed: preview.seed, dryRun: false })} loading={install.isPending}>
               Install
             </Button>

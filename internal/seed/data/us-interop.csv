@@ -1,0 +1,10 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+VCALL10,155.7525,,FM,public_safety,true,calling,National VHF interoperability calling channel (narrowband; CTCSS 156.7 standard)
+VTAC11,151.1375,,FM,public_safety,true,,National VHF interoperability tactical (narrowband; CTCSS 156.7 standard)
+VTAC12,154.4525,,FM,public_safety,true,,National VHF interoperability tactical (narrowband; CTCSS 156.7 standard)
+VTAC13,158.7375,,FM,public_safety,true,,National VHF interoperability tactical (narrowband; CTCSS 156.7 standard)
+VTAC14,159.4725,,FM,public_safety,true,,National VHF interoperability tactical (narrowband; CTCSS 156.7 standard)
+UCALL40,453.2125,,FM,public_safety,true,calling,National UHF interoperability calling channel (narrowband; CTCSS 156.7 standard)
+UTAC41,453.4625,,FM,public_safety,true,,National UHF interoperability tactical (narrowband; CTCSS 156.7 standard)
+UTAC42,453.7125,,FM,public_safety,true,,National UHF interoperability tactical (narrowband; CTCSS 156.7 standard)
+UTAC43,453.8625,,FM,public_safety,true,,National UHF interoperability tactical (narrowband; CTCSS 156.7 standard)

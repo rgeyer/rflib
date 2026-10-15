@@ -8,9 +8,9 @@ import { useSearchParams } from "react-router-dom";
 import { api, call, type Channel, type Library, type Radio } from "../api/client";
 import { ChannelEditor } from "../components/ChannelEditor";
 import { QueryBar } from "../components/QueryBar";
-import { useLib, useTags } from "../lib/library";
-import { failed, ok } from "../lib/notify";
-import { duplex, formatMHz, offsetMHz, toneSummary } from "../lib/radio";
+import { useLib, usePrivateLibraries, useTags } from "../lib/library";
+import { failed, ok, warn } from "../lib/notify";
+import { duplex, formatMHz, offsetMHz, SERVICES, toneSummary } from "../lib/radio";
 
 export function Channels() {
   const lib = useLib();
@@ -25,6 +25,8 @@ export function Channels() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [tagAction, setTagAction] = useState<"add" | "remove" | null>(null);
   const [radioAction, setRadioAction] = useState(false);
+  const [linking, setLinking] = useState(false);
+  const [serviceAction, setServiceAction] = useState(false);
   const tags = useTags(lib);
 
   const library = useQuery({
@@ -36,7 +38,9 @@ export function Channels() {
     queryFn: () => call<{ channels: Channel[]; total: number }>(api.GET("/libraries/{lib}/channels", { params: { path: { lib }, query: { q } } })),
     placeholderData: keepPreviousData,
   });
-  const readOnly = library.data?.shared === true || shared;
+  const maintainer = library.data?.shared === true;
+  // The rows are shared channels, which change only as corrections.
+  const readOnly = maintainer || shared;
   const rows = channels.data?.channels ?? [];
   const ids = [...selected];
   const select = { ids };
@@ -46,11 +50,6 @@ export function Channels() {
     void client.invalidateQueries();
   };
 
-  const link = useMutation({
-    mutationFn: () => call(api.POST("/libraries/{lib}/channels/link", { params: { path: { lib } }, body: { select } })),
-    onSuccess: (r) => after(`Linked ${r.linked.length} channels${r.already.length ? `; ${r.already.length} already linked` : ""}`),
-    onError: failed,
-  });
   const remove = useMutation({
     mutationFn: () => call(api.POST("/libraries/{lib}/channels/bulk-delete", { params: { path: { lib } }, body: { select } })),
     onSuccess: (r) => after(`Deleted ${r.channels.length} channels`),
@@ -88,47 +87,50 @@ export function Channels() {
         )}
       </Group>
       {channels.error && <Alert color="red">{channels.error.message}</Alert>}
-      {library.data?.shared && <Alert>
-          The shared list's channels change through rflib shared commands. A channel's organizations and network nodes can be corrected here, in
-          its editor.
-        </Alert>}
+      {maintainer && (
+        <Alert>
+          Select channels to link them into your library. Open one to correct it; every correction asks for a reason, is kept in its history,
+          and reaches everyone who links it.
+        </Alert>
+      )}
       {selected.size > 0 && (
         <Group>
           <Text size="sm">{selected.size} selected</Text>
-          {shared ? (
-            <Button size="xs" leftSection={<IconLink size={14} />} onClick={() => link.mutate()} loading={link.isPending}>
-              Link into {lib}
+          {readOnly ? (
+            <Button size="xs" leftSection={<IconLink size={14} />} onClick={() => setLinking(true)}>
+              Link into my library
             </Button>
           ) : (
-            !readOnly && (
-              <>
-                <Button size="xs" variant="light" onClick={() => setTagAction("add")}>
-                  Add tags
-                </Button>
-                <Button size="xs" variant="light" onClick={() => setTagAction("remove")}>
-                  Remove tags
-                </Button>
-                <Button size="xs" variant="light" onClick={() => setRadioAction(true)}>
-                  Add to radio
-                </Button>
-                <Button
-                  size="xs"
-                  color="red"
-                  variant="light"
-                  onClick={() =>
-                    modals.openConfirmModal({
-                      title: `Delete ${selected.size} channels?`,
-                      children: <Text size="sm">They come off every radio too.</Text>,
-                      labels: { confirm: "Delete", cancel: "Cancel" },
-                      confirmProps: { color: "red" },
-                      onConfirm: () => remove.mutate(),
-                    })
-                  }
-                >
-                  Delete
-                </Button>
-              </>
-            )
+            <>
+              <Button size="xs" variant="light" onClick={() => setTagAction("add")}>
+                Add tags
+              </Button>
+              <Button size="xs" variant="light" onClick={() => setTagAction("remove")}>
+                Remove tags
+              </Button>
+              <Button size="xs" variant="light" onClick={() => setServiceAction(true)}>
+                Set service
+              </Button>
+              <Button size="xs" variant="light" onClick={() => setRadioAction(true)}>
+                Add to radio
+              </Button>
+              <Button
+                size="xs"
+                color="red"
+                variant="light"
+                onClick={() =>
+                  modals.openConfirmModal({
+                    title: `Delete ${selected.size} channels?`,
+                    children: <Text size="sm">They come off every radio too.</Text>,
+                    labels: { confirm: "Delete", cancel: "Cancel" },
+                    confirmProps: { color: "red" },
+                    onConfirm: () => remove.mutate(),
+                  })
+                }
+              >
+                Delete
+              </Button>
+            </>
           )}
           <Button size="xs" variant="subtle" onClick={() => setSelected(new Set())}>
             Clear
@@ -208,8 +210,16 @@ export function Channels() {
           </Table.Tbody>
         </Table>
       </Table.ScrollContainer>
-      <ChannelEditor channel={editing} opened={editorOpen} onClose={() => setEditorOpen(false)} readOnly={readOnly} />
+      <ChannelEditor channel={editing} opened={editorOpen} onClose={() => setEditorOpen(false)} readOnly={readOnly} maintainer={maintainer} />
+      <LinkModal opened={linking} ids={ids} current={maintainer ? null : lib} onClose={() => setLinking(false)} onDone={after} />
       <TagModal action={tagAction} ids={ids} onClose={() => setTagAction(null)} onDone={after} />
+      <ServiceModal
+        opened={serviceAction}
+        ids={ids}
+        links={rows.filter((c) => selected.has(c.id) && c.link)}
+        onClose={() => setServiceAction(false)}
+        onDone={after}
+      />
       <AddToRadioModal opened={radioAction} ids={ids} onClose={() => setRadioAction(false)} onDone={after} />
     </Stack>
   );
@@ -245,6 +255,48 @@ function TagModal(props: { action: "add" | "remove" | null; ids: string[]; onClo
   );
 }
 
+/** ServiceModal sets the service on the selected channels. A link's
+ * service comes from the shared list, so links are left out. */
+function ServiceModal(props: { opened: boolean; ids: string[]; links: Channel[]; onClose: () => void; onDone: (msg: string) => void }) {
+  const lib = useLib();
+  const [service, setService] = useState<string | null>(null);
+  const linked = new Set(props.links.map((c) => c.id));
+  const ids = props.ids.filter((id) => !linked.has(id));
+  const save = useMutation({
+    mutationFn: () =>
+      call(api.POST("/libraries/{lib}/channels/bulk-update", { params: { path: { lib } }, body: { select: { ids }, edit: { service: service! } } })),
+    onSuccess: (r) => {
+      props.onClose();
+      setService(null);
+      warn(r.warnings);
+      props.onDone(`Set the service on ${r.channels.length} channels`);
+    },
+    onError: failed,
+  });
+  return (
+    <Modal opened={props.opened} onClose={props.onClose} title="Set service">
+      <Stack>
+        <Select
+          label="Service"
+          description="Weather and public-safety services also make them receive-only"
+          data={SERVICES.map((s) => ({ value: s, label: s || "unspecified" }))}
+          value={service}
+          onChange={setService}
+          data-autofocus
+        />
+        {props.links.length > 0 && (
+          <Text size="sm" c="dimmed">
+            {props.links.length} of them are linked; their service comes from the shared list, so they're left out.
+          </Text>
+        )}
+        <Button onClick={() => save.mutate()} loading={save.isPending} disabled={service === null || ids.length === 0}>
+          Set on {ids.length} channels
+        </Button>
+      </Stack>
+    </Modal>
+  );
+}
+
 function AddToRadioModal(props: { opened: boolean; ids: string[]; onClose: () => void; onDone: (msg: string) => void }) {
   const lib = useLib();
   const [radio, setRadio] = useState<string | null>(null);
@@ -269,6 +321,69 @@ function AddToRadioModal(props: { opened: boolean; ids: string[]; onClose: () =>
         <Select label="Radio" data={(radios.data?.radios ?? []).map((r) => r.name)} value={radio} onChange={setRadio} />
         <Button onClick={() => add.mutate()} loading={add.isPending} disabled={!radio}>
           Add {props.ids.length} channels
+        </Button>
+      </Stack>
+    </Modal>
+  );
+}
+
+/** LinkModal links shared channels into a private library (current, when
+ * one is open), and optionally puts the links on one of its radios. */
+function LinkModal(props: { opened: boolean; ids: string[]; current: string | null; onClose: () => void; onDone: (msg: string) => void }) {
+  const libraries = usePrivateLibraries();
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [radio, setRadio] = useState<string | null>(null);
+  const target = props.current ?? chosen ?? libraries[0]?.name ?? null;
+  const radios = useQuery({
+    queryKey: ["radios", target],
+    queryFn: () => call<{ radios: Radio[] }>(api.GET("/libraries/{lib}/radios", { params: { path: { lib: target! } } })),
+    enabled: props.opened && target !== null,
+  });
+  const link = useMutation({
+    mutationFn: async () => {
+      const lib = target!;
+      const r = await call(api.POST("/libraries/{lib}/channels/link", { params: { path: { lib } }, body: { select: { ids: props.ids } } }));
+      let msg = `Linked ${r.linked.length} channels${r.already.length ? `; ${r.already.length} already linked` : ""}`;
+      if (radio) {
+        const a = await call(api.POST("/libraries/{lib}/radios/{radio}/channels", { params: { path: { lib, radio } }, body: { ids: r.link_ids } }));
+        const skipped = a.skipped.length + a.wrong_mode.length;
+        msg += `. Added ${a.added} to ${radio}${skipped ? `; ${skipped} skipped (outside its bands or modes)` : ""}`;
+      }
+      return msg;
+    },
+    onSuccess: (msg) => {
+      props.onClose();
+      setRadio(null);
+      props.onDone(msg);
+    },
+    onError: failed,
+  });
+  return (
+    <Modal opened={props.opened} onClose={props.onClose} title="Link into my library">
+      <Stack>
+        <Text size="sm">Links follow the shared channels' corrections. Your tags, notes, power, and skip stay your own.</Text>
+        {props.current === null && libraries.length > 1 && (
+          <Select
+            label="Library"
+            data={libraries.map((l) => ({ value: l.name, label: l.default ? `${l.name} (default)` : l.name }))}
+            value={target}
+            allowDeselect={false}
+            onChange={(v) => {
+              setChosen(v);
+              setRadio(null);
+            }}
+          />
+        )}
+        <Select
+          label="Also add to a radio"
+          placeholder="None"
+          clearable
+          data={(radios.data?.radios ?? []).map((r) => r.name)}
+          value={radio}
+          onChange={setRadio}
+        />
+        <Button onClick={() => link.mutate()} loading={link.isPending} disabled={target === null}>
+          Link {props.ids.length} channels
         </Button>
       </Stack>
     </Modal>

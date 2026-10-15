@@ -1,0 +1,12 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+FT8 160m,1.840,1.840,USB,amateur,false,,FT8 dial frequency
+FT8 80m,3.573,3.573,USB,amateur,false,,FT8 dial frequency
+FT8 40m,7.074,7.074,USB,amateur,false,,FT8 dial frequency
+FT8 30m,10.136,10.136,USB,amateur,false,,FT8 dial frequency
+FT8 20m,14.074,14.074,USB,amateur,false,,FT8 dial frequency
+FT8 17m,18.100,18.100,USB,amateur,false,,FT8 dial frequency
+FT8 15m,21.074,21.074,USB,amateur,false,,FT8 dial frequency
+FT8 12m,24.915,24.915,USB,amateur,false,,FT8 dial frequency
+FT8 10m,28.074,28.074,USB,amateur,false,,FT8 dial frequency
+FT8 6m,50.313,50.313,USB,amateur,false,,FT8 dial frequency; 50.323 is also used for DX
+FT8 2m,144.174,144.174,USB,amateur,false,,FT8 dial frequency

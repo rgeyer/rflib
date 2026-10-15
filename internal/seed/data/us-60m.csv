@@ -1,0 +1,6 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+60m Ch 1,5.3305,5.3305,USB,amateur,false,,USB dial frequency (channel center 5.332); 100 W ERP limit
+60m Ch 2,5.3465,5.3465,USB,amateur,false,,USB dial frequency (channel center 5.348); 100 W ERP limit
+60m Ch 3,5.3570,5.3570,USB,amateur,false,,USB dial frequency (channel center 5.3585); 100 W ERP limit; also used for FT8
+60m Ch 4,5.3715,5.3715,USB,amateur,false,,USB dial frequency (channel center 5.373); 100 W ERP limit
+60m Ch 5,5.4035,5.4035,USB,amateur,false,,USB dial frequency (channel center 5.405); 100 W ERP limit

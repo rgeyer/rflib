@@ -23,12 +23,18 @@ type List struct {
 // lists describes every file in data/; TestEveryListIsDescribed keeps them in
 // step.
 var lists = []List{
+	{"us-60m", "US amateur 60m channels 1-5 (USB dial frequencies)"},
+	{"us-aprs", "APRS: the national frequency and the space digipeaters"},
 	{"us-cb", "Citizens Band channels 1-40 (AM)"},
+	{"us-ft8", "FT8 dial frequencies, 160m to 2m (USB; 60m is in us-60m)"},
 	{"us-frs", "FRS channels 1-22, with power limits"},
 	{"us-gmrs", "GMRS channels 1-22 and repeater pairs 15R-22R (license required)"},
 	{"us-ham-calling", "US amateur FM and SSB simplex calling frequencies"},
+	{"us-interop", "National public-safety interoperability channels (receive only)"},
+	{"us-iss", "International Space Station voice and cross-band repeater"},
 	{"us-murs", "MURS channels 1-5"},
 	{"us-noaa", "NOAA Weather Radio WX1-WX7 (receive only)"},
+	{"us-time", "WWV and CHU time signals (receive only)"},
 }
 
 func Lists() []List {

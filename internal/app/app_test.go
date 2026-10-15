@@ -355,8 +355,8 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	dry, err := s.InstallSeed(ctx, gmrs, nil, true)
-	if err != nil || len(dry.Converted) != 1 || len(dry.Linked) != 29 {
-		t.Fatalf("dry run = %d converted, %d linked, %v", len(dry.Converted), len(dry.Linked), err)
+	if err != nil || len(dry.Converted) != 1 || len(dry.Linked) != 29 || dry.SharedAdded != 30 {
+		t.Fatalf("dry run = %d converted, %d linked, %d added to the shared list, %v", len(dry.Converted), len(dry.Linked), dry.SharedAdded, err)
 	}
 	if all, _ := sh.ListChannels(ctx); len(all) != 0 {
 		t.Fatal("dry run filled the shared library")
@@ -371,6 +371,11 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 	}
 	if again, _ := s.InstallSeed(ctx, gmrs, nil, false); again.SharedAdded != 0 || again.SharedUpdated != 0 || len(again.Linked) != 0 || len(again.Already) != 30 {
 		t.Errorf("reinstall = %+v", again)
+	}
+	// Linking again reports each channel's existing link, for a radio.
+	lr, err := s.LinkChannels(ctx, Selection{IDs: []string{link.Link.SharedID}}, nil)
+	if err != nil || len(lr.Linked) != 0 || strings.Join(lr.LinkIDs, ",") != mine.ID {
+		t.Errorf("link again = %+v, %v", lr, err)
 	}
 	// Seed tags that repeat fields are left off shared channels.
 	if cs, _ := sh.Find(ctx, "tag:gmrs"); len(cs) != 0 {

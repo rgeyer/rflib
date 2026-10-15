@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { api, call, type Channel } from "../api/client";
+import { api, call, type Channel, type Library } from "../api/client";
 
 /** useLib is the library in the URL (/l/:lib/...). */
 export function useLib(): string {
@@ -26,4 +26,14 @@ export function useTags(lib: string): string[] {
   const all = new Set<string>(curated.data?.tags.map((t) => t.name));
   for (const c of channels.data?.channels ?? []) for (const t of [...c.tags, ...(c.link?.tags ?? [])]) all.add(t);
   return [...all].sort((a, b) => a.localeCompare(b));
+}
+
+/** usePrivateLibraries lists the libraries a user's own channels live in,
+ * the default first: where shared channels get linked. */
+export function usePrivateLibraries(): Library[] {
+  const libraries = useQuery({
+    queryKey: ["libraries"],
+    queryFn: () => call<{ libraries: Library[] }>(api.GET("/libraries")),
+  });
+  return (libraries.data?.libraries ?? []).filter((l) => !l.shared).sort((a, b) => Number(b.default) - Number(a.default));
 }

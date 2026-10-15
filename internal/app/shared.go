@@ -72,9 +72,12 @@ func localQuery(n query.Node) error {
 
 // LinkResult is what linking did: the links made, and the shared channels
 // skipped because the library already links to them.
+// LinkIDs is the library's link to each selected shared channel, new or
+// already there, in the selection's order, so they can go on a radio.
 type LinkResult struct {
 	Linked  []domain.Channel
 	Already []domain.Channel
+	LinkIDs []string
 }
 
 // LinkChannels links the selected shared channels into the library. The
@@ -93,22 +96,24 @@ func (s *Service) LinkChannels(ctx context.Context, sel Selection, tags []string
 	if err != nil {
 		return res, err
 	}
-	linked, err := s.linkedTo(ctx)
+	links, err := s.linksTo(ctx)
 	if err != nil {
 		return res, err
 	}
 	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		for _, t := range targets {
-			if linked[t.ID] {
+			if id, ok := links[t.ID]; ok {
 				res.Already = append(res.Already, t)
+				res.LinkIDs = append(res.LinkIDs, id)
 				continue
 			}
 			c, err := tx.CreateChannel(ctx, domain.Channel{Tags: tags, Link: &domain.Link{SharedID: t.ID, SeenRevision: t.Revision}})
 			if err != nil {
 				return fmt.Errorf("%s: %w", t.Name, err)
 			}
-			linked[t.ID] = true
+			links[t.ID] = c.ID
 			res.Linked = append(res.Linked, c)
+			res.LinkIDs = append(res.LinkIDs, c.ID)
 		}
 		return nil
 	})
@@ -117,14 +122,27 @@ func (s *Service) LinkChannels(ctx context.Context, sel Selection, tags []string
 
 // linkedTo returns the shared channels the library links to.
 func (s *Service) linkedTo(ctx context.Context) (map[string]bool, error) {
+	links, err := s.linksTo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(links))
+	for id := range links {
+		out[id] = true
+	}
+	return out, nil
+}
+
+// linksTo maps each shared channel the library links to to its link's ID.
+func (s *Service) linksTo(ctx context.Context) (map[string]string, error) {
 	cs, err := s.lib.ListChannels(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]bool{}
+	out := map[string]string{}
 	for _, c := range cs {
 		if c.Link != nil {
-			out[c.Link.SharedID] = true
+			out[c.Link.SharedID] = c.ID
 		}
 	}
 	return out, nil
@@ -654,36 +672,39 @@ func (s *Service) InstallSeed(ctx context.Context, l seed.List, tags []string, d
 		ids[c.ID] = true
 		want = append(want, c)
 	}
-	if !dryRun {
-		ctx := store.WithChange(ctx, "built-in list "+l.ID, "")
-		err = sh.InTx(ctx, func(tx store.Library) error {
-			for _, c := range want {
-				old, err := tx.GetChannel(ctx, c.ID)
-				switch {
-				case errors.Is(err, store.ErrNotFound):
-					if _, err := tx.CreateChannel(ctx, c); err != nil {
-						return fmt.Errorf("%s: %w", c.Name, err)
-					}
-					res.SharedAdded++
-				case err != nil:
-					return err
-				default:
-					// Keep what the list doesn't say, such as a status.
-					c.Status, c.StatusNote, c.BackOn, c.ReplacedBy, c.CreatedAt = old.Status, old.StatusNote, old.BackOn, old.ReplacedBy, old.CreatedAt
-					saved, err := tx.UpdateChannel(ctx, c)
-					if err != nil {
-						return fmt.Errorf("%s: %w", c.Name, err)
-					}
-					if saved.Revision != old.Revision {
-						res.SharedUpdated++
-					}
+	// A dry run writes the list too, and rolls back, to count what would
+	// be added and updated.
+	wctx := store.WithChange(ctx, "built-in list "+l.ID, "")
+	err = sh.InTx(wctx, func(tx store.Library) error {
+		for _, c := range want {
+			old, err := tx.GetChannel(wctx, c.ID)
+			switch {
+			case errors.Is(err, store.ErrNotFound):
+				if _, err := tx.CreateChannel(wctx, c); err != nil {
+					return fmt.Errorf("%s: %w", c.Name, err)
+				}
+				res.SharedAdded++
+			case err != nil:
+				return err
+			default:
+				// Keep what the list doesn't say, such as a status.
+				c.Status, c.StatusNote, c.BackOn, c.ReplacedBy, c.CreatedAt = old.Status, old.StatusNote, old.BackOn, old.ReplacedBy, old.CreatedAt
+				saved, err := tx.UpdateChannel(wctx, c)
+				if err != nil {
+					return fmt.Errorf("%s: %w", c.Name, err)
+				}
+				if saved.Revision != old.Revision {
+					res.SharedUpdated++
 				}
 			}
-			return nil
-		})
-		if err != nil {
-			return res, err
 		}
+		if dryRun {
+			return errDryRun
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errDryRun) {
+		return res, err
 	}
 	// A dry run matches against the list as the install would leave it.
 	target := want

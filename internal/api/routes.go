@@ -458,7 +458,7 @@ func (s *server) linkChannels(w http.ResponseWriter, r *http.Request, a *app.Ser
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"linked": newChannels(res.Linked), "already": newChannels(res.Already)})
+	writeJSON(w, http.StatusOK, map[string]any{"linked": newChannels(res.Linked), "already": newChannels(res.Already), "link_ids": nonNil(res.LinkIDs)})
 	return nil
 }
 

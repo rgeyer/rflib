@@ -1,13 +1,13 @@
-import { Alert, Button, Divider, Drawer, Group, MultiSelect, Select, Stack, Switch, TagsInput, Text, Textarea, TextInput } from "@mantine/core";
+import { Alert, Button, Divider, Drawer, Group, MultiSelect, SegmentedControl, Select, Stack, Switch, TagsInput, Text, Textarea, TextInput } from "@mantine/core";
 import { IconLink } from "@tabler/icons-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, call, type Channel, type ChannelInput } from "../api/client";
 import { useLib } from "../lib/library";
 import { useOrgs } from "../lib/records";
 import { failed, ok, warn } from "../lib/notify";
 import { formatMHz, MODES, parseMHz, POWERS, SERVICES } from "../lib/radio";
-import { NetworkLinks, ReasonModal } from "./Records";
+import { NetworkLinks, ReasonModal, SharedChannelPicker } from "./Records";
 import { ToneInput } from "./ToneInput";
 
 type Form = {
@@ -30,11 +30,14 @@ type Form = {
   lon: string;
   radius: string;
   networks: string[];
+  operators: string[];
+  partners: string[];
 };
 
 const blank: Form = {
   name: "", rx: "", tx: "", mode: "FM", service: "", rx_only: false, tx_tone: "none", rx_tone: "none", tone_squelch: false,
   power: "", bandwidth: "", skip: false, tags: [], short_names: [], notes: "", lat: "", lon: "", radius: "", networks: [],
+  operators: [], partners: [],
 };
 
 function fromChannel(c: Channel): Form {
@@ -45,6 +48,8 @@ function fromChannel(c: Channel): Form {
     lat: c.location ? String(c.location.latitude) : "", lon: c.location ? String(c.location.longitude) : "",
     radius: c.location?.radius_km != null ? String(c.location.radius_km) : "",
     networks: c.networks,
+    operators: c.organizations.filter((o) => o.role === "operator").map((o) => o.org_id),
+    partners: c.organizations.filter((o) => o.role === "partner").map((o) => o.org_id),
   };
 }
 
@@ -72,13 +77,34 @@ function toInput(f: Form, linked: boolean): ChannelInput | string {
   };
 }
 
-/** ChannelEditor creates a channel (channel null) or edits one. */
-export function ChannelEditor(props: { channel: Channel | null; opened: boolean; onClose: () => void; readOnly?: boolean }) {
+/** correction turns the form into a maintainer's correction of a shared
+ * channel: its shared fields, curated tags, notes, organizations, and
+ * nodes. Power, skip, and short names belong to each link. */
+function correction(f: Form): ChannelInput | string {
+  const body = toInput(f, false);
+  if (typeof body === "string") return body;
+  const { power: _power, skip: _skip, short_names: _short, ...rest } = body;
+  return {
+    ...rest,
+    organizations: [...f.operators.map((org_id) => ({ org_id, role: "operator" as const })), ...f.partners.map((org_id) => ({ org_id, role: "partner" as const }))],
+  };
+}
+
+/**
+ * ChannelEditor creates a channel (channel null) or edits one. readOnly
+ * shows a shared channel; with maintainer as well, it corrects one in the
+ * shared list, asking for a reason.
+ */
+export function ChannelEditor(props: { channel: Channel | null; opened: boolean; onClose: () => void; readOnly?: boolean; maintainer?: boolean }) {
   const lib = useLib();
   const client = useQueryClient();
   const [form, setForm] = useState<Form>(blank);
   const c = props.channel;
   const linked = c?.link != null;
+  const maintainer = props.maintainer === true && c !== null && !linked;
+  const [asking, setAsking] = useState(false);
+  const orgs = useOrgs();
+  const curated = useQuery({ queryKey: ["tags"], queryFn: () => call<{ tags: { name: string }[] }>(api.GET("/tags")), staleTime: Infinity });
   useEffect(() => setForm(c ? fromChannel(c) : blank), [c, props.opened]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
   const done = (warnings: string[]) => {
@@ -86,6 +112,19 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
     void client.invalidateQueries();
     props.onClose();
   };
+  const correct = useMutation({
+    mutationFn: async (reason: string) => {
+      const body = correction(form);
+      if (typeof body === "string") throw new Error(body);
+      return call(api.PATCH("/libraries/{lib}/channels/{id}", { params: { path: { lib, id: c!.id } }, body: { ...body, reason } as ChannelInput }));
+    },
+    onSuccess: (r) => {
+      ok("Corrected; links follow");
+      setAsking(false);
+      done(r.warnings);
+    },
+    onError: failed,
+  });
   const save = useMutation({
     mutationFn: async () => {
       const body = toInput(form, linked);
@@ -115,13 +154,21 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
     },
     onError: failed,
   });
-  const shared = linked || props.readOnly;
+  // Shared fields are fixed on a link, and on a shared channel unless a
+  // maintainer corrects it; own fields are fixed on any shared channel.
+  const shared = linked || (props.readOnly && !maintainer);
+  const ownFixed = props.readOnly;
+  const orgData = (orgs.data?.organizations ?? []).map((o) => ({ value: o.id, label: o.name }));
   return (
     <Drawer opened={props.opened} onClose={props.onClose} position="right" size="lg" title={c ? c.name : "New channel"}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          save.mutate();
+          if (maintainer) {
+            const body = correction(form);
+            if (typeof body === "string") failed(new Error(body));
+            else setAsking(true);
+          } else save.mutate();
         }}
       >
         <Stack gap="sm">
@@ -168,33 +215,49 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
           <Group>
             <Switch label="Tone squelch" disabled={shared} checked={form.tone_squelch} onChange={(e) => set("tone_squelch", e.currentTarget.checked)} />
             <Switch label="Receive only" disabled={shared} checked={form.rx_only} onChange={(e) => set("rx_only", e.currentTarget.checked)} />
-            <Switch label="Skip in scans" disabled={props.readOnly} checked={form.skip} onChange={(e) => set("skip", e.currentTarget.checked)} />
+            {!maintainer && (
+              <Switch label="Skip in scans" disabled={ownFixed} checked={form.skip} onChange={(e) => set("skip", e.currentTarget.checked)} />
+            )}
           </Group>
           <Group grow>
-            <Select
-              label="Power"
-              disabled={props.readOnly}
-              data={POWERS.map((p) => ({ value: p, label: p || "radio's default" }))}
-              value={form.power}
-              allowDeselect={false}
-              onChange={(v) => v !== null && set("power", v)}
-            />
+            {!maintainer && (
+              <Select
+                label="Power"
+                disabled={ownFixed}
+                data={POWERS.map((p) => ({ value: p, label: p || "radio's default" }))}
+                value={form.power}
+                allowDeselect={false}
+                onChange={(v) => v !== null && set("power", v)}
+              />
+            )}
             <TextInput label="Bandwidth" disabled={shared} value={form.bandwidth} onChange={(e) => set("bandwidth", e.currentTarget.value)} />
           </Group>
-          <TagsInput label="Tags" disabled={props.readOnly} value={form.tags} onChange={(v) => set("tags", v)} />
+          {maintainer ? (
+            <MultiSelect
+              label="Shared tags"
+              description="From the curated list"
+              data={curated.data?.tags.map((t) => t.name) ?? []}
+              value={form.tags}
+              onChange={(v) => set("tags", v)}
+            />
+          ) : (
+            <TagsInput label="Tags" disabled={ownFixed} value={form.tags} onChange={(v) => set("tags", v)} />
+          )}
           {linked && c?.link && c.link.tags.length > 0 && (
             <Text size="xs" c="dimmed">
               Shared tags: {c.link.tags.join(", ")}
             </Text>
           )}
-          <TagsInput
-            label="Short names"
-            description="Your abbreviations for narrow radio displays"
-            disabled={props.readOnly}
-            value={form.short_names}
-            onChange={(v) => set("short_names", v)}
-          />
-          <Textarea label="Notes" autosize minRows={2} disabled={props.readOnly} value={form.notes} onChange={(e) => set("notes", e.currentTarget.value)} />
+          {!maintainer && (
+            <TagsInput
+              label="Short names"
+              description="Your abbreviations for narrow radio displays"
+              disabled={ownFixed}
+              value={form.short_names}
+              onChange={(v) => set("short_names", v)}
+            />
+          )}
+          <Textarea label="Notes" autosize minRows={2} disabled={ownFixed && !maintainer} value={form.notes} onChange={(e) => set("notes", e.currentTarget.value)} />
           {linked && c?.link?.notes && (
             <Text size="xs" c="dimmed">
               Shared notes: {c.link.notes}
@@ -208,15 +271,26 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
             onChange={(v) => set("networks", v)}
           />
           {c && <NetworkLinks networks={c.networks} />}
-          {c && c.organizations.length > 0 && (
-            <Text size="sm">Organizations: {c.organizations.map((o) => `${o.name} (${o.role})`).join(", ")}</Text>
+          {maintainer ? (
+            <Group grow>
+              <MultiSelect label="Operators" data={orgData} searchable value={form.operators} onChange={(v) => set("operators", v)} />
+              <MultiSelect label="Partners" data={orgData} searchable value={form.partners} onChange={(v) => set("partners", v)} />
+            </Group>
+          ) : (
+            c &&
+            c.organizations.length > 0 && <Text size="sm">Organizations: {c.organizations.map((o) => `${o.name} (${o.role})`).join(", ")}</Text>
           )}
           <Group grow>
             <TextInput label="Latitude" disabled={shared} value={form.lat} onChange={(e) => set("lat", e.currentTarget.value)} />
             <TextInput label="Longitude" disabled={shared} value={form.lon} onChange={(e) => set("lon", e.currentTarget.value)} />
             <TextInput label="Radius km" disabled={shared} value={form.radius} onChange={(e) => set("radius", e.currentTarget.value)} />
           </Group>
-          {props.readOnly && c && !linked && c.revision > 0 && <SharedCorrection channel={c} onSaved={() => done([])} />}
+          {maintainer && (
+            <Group justify="flex-end" mt="md">
+              <Button type="submit">Save correction</Button>
+            </Group>
+          )}
+          {maintainer && <StatusEditor channel={c} onSaved={() => done([])} />}
           {!props.readOnly && (
             <Group justify="space-between" mt="md">
               {c ? (
@@ -233,36 +307,50 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
           )}
         </Stack>
       </form>
+      <ReasonModal opened={asking} title={c ? `Correct ${c.name}` : ""} loading={correct.isPending} onClose={() => setAsking(false)} onConfirm={(r) => correct.mutate(r)} />
     </Drawer>
   );
 }
 
-/** SharedCorrection lets a maintainer set a shared channel's organizations
- * and network nodes; the change is recorded with a reason, and links
- * follow it. */
-function SharedCorrection(props: { channel: Channel; onSaved: () => void }) {
+/** StatusEditor lets a maintainer take a shared channel off the air,
+ * retire it, or bring it back; links follow, and the change is recorded
+ * with a reason. */
+function StatusEditor(props: { channel: Channel; onSaved: () => void }) {
   const c = props.channel;
-  const orgs = useOrgs();
-  const ids = (role: string) => c.organizations.filter((o) => o.role === role).map((o) => o.org_id);
-  const [operators, setOperators] = useState(ids("operator"));
-  const [partners, setPartners] = useState(ids("partner"));
-  const [networks, setNetworks] = useState(c.networks);
+  const [status, setStatus] = useState(c.status);
+  const [note, setNote] = useState(c.status_note);
+  const [backOn, setBackOn] = useState(c.back_on ?? "");
+  // undefined keeps the current replacement; null clears it.
+  const [replacement, setReplacement] = useState<Channel | null | undefined>(undefined);
+  const current = useQuery({
+    queryKey: ["channel", "shared", c.replaced_by],
+    queryFn: () => call<Channel>(api.GET("/libraries/{lib}/channels/{id}", { params: { path: { lib: "shared", id: c.replaced_by! } } })),
+    enabled: c.replaced_by != null && c.replaced_by !== "",
+  });
   const [asking, setAsking] = useState(false);
-  const data = (orgs.data?.organizations ?? []).map((o) => ({ value: o.id, label: o.name }));
+  useEffect(() => {
+    setStatus(c.status);
+    setNote(c.status_note);
+    setBackOn(c.back_on ?? "");
+    setReplacement(undefined);
+  }, [c]);
+  const shown = replacement === undefined ? (current.data ?? null) : replacement;
   const save = useMutation({
     mutationFn: (reason: string) =>
       call(
-        api.PATCH("/libraries/{lib}/channels/{id}", {
+        api.POST("/libraries/{lib}/channels/{id}/status", {
           params: { path: { lib: "shared", id: c.id } },
           body: {
-            networks,
-            organizations: [...operators.map((org_id) => ({ org_id, role: "operator" as const })), ...partners.map((org_id) => ({ org_id, role: "partner" as const }))],
+            status,
+            note,
+            back_on: status === "off-air" && backOn ? backOn : null,
+            replaced_by: status === "retired" ? (shown?.id ?? "") : "",
             reason,
-          } as ChannelInput,
+          },
         }),
       ),
-    onSuccess: () => {
-      ok("Corrected; links follow");
+    onSuccess: (r) => {
+      ok(`${r.name} is ${r.status}; links follow`);
       setAsking(false);
       props.onSaved();
     },
@@ -270,16 +358,43 @@ function SharedCorrection(props: { channel: Channel; onSaved: () => void }) {
   });
   return (
     <>
-      <Divider label="Maintainer: who runs it, and its nodes" mt="sm" />
-      <MultiSelect label="Operators" data={data} searchable value={operators} onChange={setOperators} />
-      <MultiSelect label="Partners" data={data} searchable value={partners} onChange={setPartners} />
-      <TagsInput label="Nodes" description="Such as allstar:43761" value={networks} onChange={setNetworks} />
+      <Divider label="Maintainer: on the air?" mt="sm" />
+      <SegmentedControl
+        data={[
+          { value: "active", label: "Active" },
+          { value: "off-air", label: "Off the air" },
+          { value: "retired", label: "Retired" },
+        ]}
+        value={status}
+        onChange={(v) => setStatus(v as Channel["status"])}
+      />
+      {status !== "active" && (
+        <TextInput label="Status note" description="What's happening, such as antenna work" value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+      )}
+      {status === "off-air" && (
+        <TextInput label="Expected back" type="date" value={backOn} onChange={(e) => setBackOn(e.currentTarget.value)} />
+      )}
+      {status === "retired" && (
+        <>
+          <SharedChannelPicker label="Replaced by" onPick={setReplacement} />
+          {shown && (
+            <Group gap="xs">
+              <Text size="sm">
+                Replaced by {shown.name} · {formatMHz(shown.rx_hz)}
+              </Text>
+              <Button size="compact-xs" variant="subtle" onClick={() => setReplacement(null)}>
+                Clear
+              </Button>
+            </Group>
+          )}
+        </>
+      )}
       <Group justify="flex-end">
         <Button variant="light" onClick={() => setAsking(true)}>
-          Save correction
+          Change status
         </Button>
       </Group>
-      <ReasonModal opened={asking} title={`Correct ${c.name}`} loading={save.isPending} onClose={() => setAsking(false)} onConfirm={(r) => save.mutate(r)} />
+      <ReasonModal opened={asking} title={`Status of ${c.name}`} loading={save.isPending} onClose={() => setAsking(false)} onConfirm={(r) => save.mutate(r)} />
     </>
   );
 }

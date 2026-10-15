@@ -1,0 +1,10 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+WWV 2.5,2.500,,AM,other,true,,NIST time signal (Colorado); WWVH (Hawaii) shares this frequency
+WWV 5,5.000,,AM,other,true,,NIST time signal (Colorado); WWVH (Hawaii) shares this frequency
+WWV 10,10.000,,AM,other,true,,NIST time signal (Colorado); WWVH (Hawaii) shares this frequency
+WWV 15,15.000,,AM,other,true,,NIST time signal (Colorado); WWVH (Hawaii) shares this frequency
+WWV 20,20.000,,AM,other,true,,NIST time signal (Colorado)
+WWV 25,25.000,,AM,other,true,,NIST time signal (Colorado)
+CHU 3.33,3.330,,AM,other,true,,Canadian time signal (Ottawa)
+CHU 7.85,7.850,,AM,other,true,,Canadian time signal (Ottawa)
+CHU 14.67,14.670,,AM,other,true,,Canadian time signal (Ottawa)
