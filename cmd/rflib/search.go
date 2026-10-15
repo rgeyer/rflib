@@ -26,7 +26,8 @@ a saved search.
   is:repeater|simplex|rxonly|transmit|skip
   has:location|service|tag|tone|power|notes|shortname|radio|network|org
   near:LAT,LON,KM           within KM plus the channel's radius; channels
-                            without a location never match
+  near:GRID,KM              without a location never match; GRID is a
+                            grid square (CM94sq), searched from its center
   radio:NAME|any|none       tunes:RADIO|MODEL  in its bands and modes
   status:active|off-air|retired               (shared channels' status)
   org:NAME                  operated by an organization

@@ -148,7 +148,7 @@ export function Channels() {
         </Group>
       )}
       <Text size="sm" c="dimmed">
-        {channels.data ? `${channels.data.total} channels` : "Loading…"}
+        {channels.data ? `${channels.data.total} channel${channels.data.total === 1 ? "" : "s"}` : "Loading…"}
       </Text>
       <Table.ScrollContainer minWidth={800}>
         <Table striped highlightOnHover stickyHeader>

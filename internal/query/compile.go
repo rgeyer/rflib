@@ -536,20 +536,28 @@ func toneMatcher(field, v string) (Matcher, error) {
 	}, nil
 }
 
-// nearMatcher parses LAT,LON,KM (KM may end in "km"). A channel is near
-// when its location is within KM plus its own radius, so a repeater's
+// nearMatcher parses LAT,LON,KM or GRID,KM, where GRID is a Maidenhead
+// grid square searched from its center (KM may end in "km"). A channel is
+// near when its location is within KM plus its own radius, so a repeater's
 // coverage counts. Channels without a location never match.
 func nearMatcher(v string) (Matcher, error) {
 	parts := strings.Split(v, ",")
+	if len(parts) == 2 && domain.IsGrid(parts[0]) {
+		g, err := domain.ParseGrid(parts[0])
+		if err != nil {
+			return nil, err
+		}
+		parts = []string{fmt.Sprint(g.Latitude), fmt.Sprint(g.Longitude), parts[1]}
+	}
 	if len(parts) != 3 {
-		return nil, domain.Invalidf("use LAT,LON,KM, such as 34.64,-120.46,40km")
+		return nil, domain.Invalidf("use LAT,LON,KM or GRID,KM, such as 34.64,-120.46,40km or CM94sq,40km")
 	}
 	var nums [3]float64
 	for i, p := range parts {
 		p = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(p)), "km")
 		n, err := strconv.ParseFloat(p, 64)
 		if err != nil {
-			return nil, domain.Invalidf("%q is not a number; use LAT,LON,KM", parts[i])
+			return nil, domain.Invalidf("%q is not a number; use LAT,LON,KM or GRID,KM", parts[i])
 		}
 		nums[i] = n
 	}

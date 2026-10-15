@@ -29,15 +29,34 @@ func (l *library) inTx(ctx context.Context, fn func(*library) error) error {
 	if l.tx != nil {
 		return fn(l)
 	}
-	tx, err := l.db.BeginTx(ctx, nil)
+	// Once begun, a write transaction always finishes: its statements
+	// ignore a canceled request, which would otherwise interrupt them on the
+	// database's one connection and could leave it inside the transaction.
+	tx, err := l.db.BeginTx(context.WithoutCancel(ctx), nil)
 	if err != nil {
 		return err
 	}
-	if err := fn(&library{db: l.db, q: tx, tx: tx, id: l.id}); err != nil {
+	if err := fn(&library{db: l.db, q: uncanceled{tx}, tx: tx, id: l.id}); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
+}
+
+// uncanceled runs a transaction's statements whether or not their context
+// is canceled (see inTx).
+type uncanceled struct{ tx *sql.Tx }
+
+func (u uncanceled) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
+	return u.tx.ExecContext(context.WithoutCancel(ctx), q, args...)
+}
+
+func (u uncanceled) QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+	return u.tx.QueryContext(context.WithoutCancel(ctx), q, args...)
+}
+
+func (u uncanceled) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row {
+	return u.tx.QueryRowContext(context.WithoutCancel(ctx), q, args...)
 }
 
 // owns checks that a record in table belongs to this library.

@@ -85,6 +85,7 @@ func channelFields(cmd *cobra.Command) {
 	cmd.Flags().String("lat", "", "Latitude of where the channel is used, with --lon (empty clears on update)")
 	cmd.Flags().String("lon", "", "Longitude, with --lat")
 	cmd.Flags().String("radius-km", "", "How far the location reaches, in km: its uncertainty or the coverage (empty clears on update)")
+	cmd.Flags().String("grid", "", "A Maidenhead grid square, such as CM94sq, instead of --lat and --lon: its center, reaching its corners unless --radius-km is given")
 	cmd.Flags().String("rx", "", "Receive frequency in MHz")
 	cmd.Flags().String("tx", "", "Transmit frequency in MHz; omit for receive-only (empty clears on update)")
 	cmd.Flags().String("mode", "FM", "FM, NFM, AM, USB, LSB, or CW")
@@ -187,7 +188,12 @@ func applyChannelFlags(cmd *cobra.Command, a *app.Service, c *domain.Channel, al
 		}
 		c.Networks = ns
 	}
-	if set("lat") || set("lon") || set("radius-km") {
+	if loc, ok, err := gridLocation(cmd); ok || err != nil {
+		if err != nil {
+			return err
+		}
+		c.Location = loc
+	} else if set("lat") || set("lon") || set("radius-km") {
 		var lat, lon, radius *float64
 		if l := c.Location; l != nil {
 			lat, lon, radius = &l.Latitude, &l.Longitude, l.RadiusKM
@@ -295,7 +301,7 @@ func newChannelShowCommand() *cobra.Command {
 }
 
 // bulkFields are the channel flags that can change many channels at once.
-var bulkFields = []string{"tags", "skip", "power", "service", "rx-only", "lat", "lon", "radius-km"}
+var bulkFields = []string{"tags", "skip", "power", "service", "rx-only", "lat", "lon", "radius-km", "grid"}
 
 func newChannelUpdateCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "update", Short: "Update channels; only supplied flags change", Args: cobra.NoArgs,
@@ -374,14 +380,14 @@ x and removes y, leaving other tags alone; --tags x,y replaces them.
 func channelEdit(cmd *cobra.Command) (app.ChannelEdit, error) {
 	var e app.ChannelEdit
 	var refused []string
-	channelFieldNames := []string{"name", "lat", "lon", "radius-km", "rx", "tx", "mode", "service", "rx-only", "rx-tone", "tx-tone", "tone-squelch", "power", "bandwidth", "skip", "notes", "tags", "short-names"}
+	channelFieldNames := []string{"name", "lat", "lon", "radius-km", "grid", "rx", "tx", "mode", "service", "rx-only", "rx-tone", "tx-tone", "tone-squelch", "power", "bandwidth", "skip", "notes", "tags", "short-names"}
 	for _, name := range channelFieldNames {
 		if cmd.Flags().Changed(name) && !slices.Contains(bulkFields, name) {
 			refused = append(refused, "--"+name)
 		}
 	}
 	if len(refused) > 0 {
-		return e, fmt.Errorf("%s can't change many channels at once; update them one at a time with --id, or use --tags, --skip, --power, --service, --rx-only, or --lat and --lon", strings.Join(refused, ", "))
+		return e, fmt.Errorf("%s can't change many channels at once; update them one at a time with --id, or use --tags, --skip, --power, --service, --rx-only, --lat and --lon, or --grid", strings.Join(refused, ", "))
 	}
 	if cmd.Flags().Changed("tags") {
 		t, err := parseTagEdit(getString(cmd, "tags"))
@@ -412,7 +418,12 @@ func channelEdit(cmd *cobra.Command) (app.ChannelEdit, error) {
 		v, _ := cmd.Flags().GetBool("rx-only")
 		e.RXOnly = &v
 	}
-	if cmd.Flags().Changed("lat") || cmd.Flags().Changed("lon") || cmd.Flags().Changed("radius-km") {
+	if loc, ok, err := gridLocation(cmd); ok || err != nil {
+		if err != nil {
+			return e, err
+		}
+		e.SetLocation, e.Location = true, loc
+	} else if cmd.Flags().Changed("lat") || cmd.Flags().Changed("lon") || cmd.Flags().Changed("radius-km") {
 		if !cmd.Flags().Changed("lat") || !cmd.Flags().Changed("lon") {
 			return e, fmt.Errorf("a location for many channels needs --lat and --lon (both empty to clear it)")
 		}
@@ -431,9 +442,34 @@ func channelEdit(cmd *cobra.Command) (app.ChannelEdit, error) {
 		e.SetLocation, e.Location = true, loc
 	}
 	if e == (app.ChannelEdit{}) {
-		return e, fmt.Errorf("nothing to change; give --tags, --skip, --power, --service, --rx-only, or --lat and --lon")
+		return e, fmt.Errorf("nothing to change; give --tags, --skip, --power, --service, --rx-only, --lat and --lon, or --grid")
 	}
 	return e, nil
+}
+
+// gridLocation reads --grid: the square's center, with --radius-km if given,
+// else a radius reaching the square's corners. ok reports whether --grid
+// was given.
+func gridLocation(cmd *cobra.Command) (loc *domain.Location, ok bool, err error) {
+	if !cmd.Flags().Changed("grid") {
+		return nil, false, nil
+	}
+	if cmd.Flags().Changed("lat") || cmd.Flags().Changed("lon") {
+		return nil, true, fmt.Errorf("give --grid or --lat and --lon, not both")
+	}
+	g, err := domain.ParseGrid(getString(cmd, "grid"))
+	if err != nil {
+		return nil, true, err
+	}
+	loc = g.Location()
+	if cmd.Flags().Changed("radius-km") {
+		r, err := parseOptionalFloat("radius-km", getString(cmd, "radius-km"))
+		if err != nil {
+			return nil, true, err
+		}
+		loc.RadiusKM = r
+	}
+	return loc, true, domain.ValidateLocation(*loc)
 }
 
 // parseTagEdit reads --tags: "+x,-y" adds and removes tags; anything else

@@ -51,11 +51,18 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.getByRole("dialog").getByText("CTCSS", { exact: true }).first().click();
   await page.getByRole("combobox", { name: "Transmit tone CTCSS tone" }).fill("131.8");
   await page.getByRole("option", { name: "131.8", exact: true }).click();
+  // A grid square fills in the location.
+  await page.getByRole("textbox", { name: "Grid square" }).fill("CM94sq");
+  await expect(page.getByRole("textbox", { name: "Latitude" })).toHaveValue("34.6875");
+  await expect(page.getByRole("textbox", { name: "Radius km" })).toHaveValue("4.5");
   await page.getByRole("button", { name: "Add channel" }).click();
   await expect(page.getByText("Channel added")).toBeVisible();
   const row = page.getByRole("row", { name: /Marian/ });
   await expect(row).toContainText("147.300000");
   await expect(row).toContainText("T131.8");
+  await page.getByLabel("Search", { exact: true }).fill("near:cm94sq,1");
+  await expect(page.getByText("1 channel", { exact: true })).toBeVisible();
+  await page.getByLabel("Search", { exact: true }).fill("");
 
   // Search narrows the table; a guided filter writes its term into the search.
   await page.getByLabel("Search", { exact: true }).fill("band:noaa");
@@ -216,7 +223,7 @@ test("the shared list: add to a radio, correct, and take off the air", async ({ 
   await page.getByRole("button", { name: "Source filter" }).click();
   await page.getByRole("menuitem", { name: "the shared list", exact: true }).click();
   await expect(page.getByLabel("Search", { exact: true })).toHaveValue(/in:shared/);
-  await expect(page.getByText("1 channels", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 channel", { exact: true })).toBeVisible();
   await page.getByRole("checkbox", { name: "Select NOAA WX7" }).click();
   await page.getByRole("button", { name: "Add to radio" }).click();
   await page.getByRole("dialog").getByRole("combobox").click();
@@ -227,7 +234,7 @@ test("the shared list: add to a radio, correct, and take off the air", async ({ 
   // The maintainer corrects it in the shared list.
   await page.goto("/l/shared/channels");
   await page.getByLabel("Search", { exact: true }).fill("name:wx1");
-  await expect(page.getByText("1 channels")).toBeVisible();
+  await expect(page.getByText("1 channel", { exact: true })).toBeVisible();
 
   // A correction of a shared field, then a status, each with a reason.
   await page.getByRole("row", { name: /WX1/ }).getByText(/WX1/).click();
@@ -341,4 +348,19 @@ test("add a search as a radio source, with a preview", async ({ page, request })
   await expect(preview.getByText(/Sync would add 7 channels to Previewer/)).toBeVisible();
   await expect(preview.getByRole("row")).toHaveCount(7);
   await expect(preview.locator(".mantine-ScrollArea-root")).toHaveCount(0);
+
+  // Add it, then edit it with a preview in its place, and move it first.
+  await page.getByRole("button", { name: "Add source" }).click();
+  await expect(page.getByText("Source added")).toBeVisible();
+  await page.getByRole("button", { name: "Edit source 2" }).click();
+  const edit = page.getByRole("dialog");
+  await edit.getByRole("textbox", { name: "Query" }).fill('service:noaa OR name:"2m FM Call"');
+  await expect(edit.getByText(/Sync would add 8 channels to Previewer/)).toBeVisible();
+  await edit.getByRole("button", { name: "Save source" }).click();
+  await expect(page.getByText("Source saved")).toBeVisible();
+  await expect(page.getByRole("row", { name: /2m FM Call/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move source 1 up" })).toBeDisabled();
+  await page.getByRole("button", { name: "Move source 2 up" }).click();
+  await expect(page.getByText("Source moved")).toBeVisible();
+  await expect(page.getByRole("row").nth(1)).toContainText("2m FM Call");
 });

@@ -1162,11 +1162,21 @@ func (s *server) addSource(w http.ResponseWriter, r *http.Request, a *app.Servic
 
 // previewSource reports what a new source would add, without adding it.
 func (s *server) previewSource(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	var in sourceInput
+	var in struct {
+		sourceInput
+		Number *int `json:"number"`
+	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
 	src := domain.RadioSource{Sort: "name"}
+	if in.Number != nil {
+		// An existing source, with the changes given.
+		var err error
+		if _, src, err = a.Source(ctx(r), r.PathValue("radio"), *in.Number); err != nil {
+			return err
+		}
+	}
 	if err := in.apply(&src); err != nil {
 		return err
 	}

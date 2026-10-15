@@ -1,7 +1,7 @@
 import { ActionIcon, Alert, Badge, Spoiler, Button, Checkbox, Group, List, Menu, Modal, NumberInput, Select, Stack, Switch, Table, Tabs, Text, TextInput, Title, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconArrowUp, IconChevronDown, IconDownload, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { IconArrowDown, IconArrowUp, IconChevronDown, IconDownload, IconPencil, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
@@ -368,6 +368,17 @@ function Sources() {
     onSuccess: () => void client.invalidateQueries(),
     onError: failed,
   });
+  const move = useMutation({
+    mutationFn: ({ n, to }: { n: number; to: number }) =>
+      call(api.POST("/libraries/{lib}/radios/{radio}/sources/{n}/move", { params: { path: { ...path, n } }, body: { to } })),
+    onSuccess: () => {
+      ok("Source moved; sync to apply its new order of claims");
+      void client.invalidateQueries();
+    },
+    onError: failed,
+  });
+  const [editing, setEditing] = useState<Source | null>(null);
+  const count = sources.data?.sources.length ?? 0;
   return (
     <Stack>
       <Text size="sm" c="dimmed">
@@ -397,21 +408,42 @@ function Sources() {
               <Table.Td>{s.section_start ?? ""}</Table.Td>
               <Table.Td>{s.channels}</Table.Td>
               <Table.Td>
-                <ActionIcon
-                  variant="subtle"
-                  color="red"
-                  aria-label={`Remove source ${s.number}`}
-                  onClick={() =>
-                    modals.openConfirmModal({
-                      title: `Remove source ${s.number}?`,
-                      children: <Text size="sm">{s.plan ? "Its channels come off the radio." : "Its channels stay on the radio."}</Text>,
-                      labels: { confirm: "Remove", cancel: "Cancel" },
-                      onConfirm: () => remove.mutate(s.number),
-                    })
-                  }
-                >
-                  <IconTrash size={14} />
-                </ActionIcon>
+                <Group gap={2} wrap="nowrap">
+                  <ActionIcon variant="subtle" aria-label={`Edit source ${s.number}`} onClick={() => setEditing(s)}>
+                    <IconPencil size={14} />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="subtle"
+                    aria-label={`Move source ${s.number} up`}
+                    disabled={s.number === 1}
+                    onClick={() => move.mutate({ n: s.number, to: s.number - 1 })}
+                  >
+                    <IconArrowUp size={14} />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="subtle"
+                    aria-label={`Move source ${s.number} down`}
+                    disabled={s.number === count}
+                    onClick={() => move.mutate({ n: s.number, to: s.number + 1 })}
+                  >
+                    <IconArrowDown size={14} />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="subtle"
+                    color="red"
+                    aria-label={`Remove source ${s.number}`}
+                    onClick={() =>
+                      modals.openConfirmModal({
+                        title: `Remove source ${s.number}?`,
+                        children: <Text size="sm">{s.plan ? "Its channels come off the radio." : "Its channels stay on the radio."}</Text>,
+                        labels: { confirm: "Remove", cancel: "Cancel" },
+                        onConfirm: () => remove.mutate(s.number),
+                      })
+                    }
+                  >
+                    <IconTrash size={14} />
+                  </ActionIcon>
+                </Group>
               </Table.Td>
             </Table.Tr>
           ))}
@@ -441,6 +473,7 @@ function Sources() {
         </Button>
       </Group>
       <SourcePreview lib={lib} radio={radio} query={query} plan={plan} sort={sort} />
+      {editing && <EditSource source={editing} onClose={() => setEditing(null)} />}
     </Stack>
   );
 }
@@ -511,3 +544,57 @@ function BulkMenu(props: { label: string; options: { label: string; body: SetBod
     </Menu>
   );
 }
+
+/** EditSource changes a radio's source, previewing in its place what the
+ * changed source would add before saving. */
+function EditSource(props: { source: Source; onClose: () => void }) {
+  const lib = useLib();
+  const radio = useParams().radio ?? "";
+  const client = useQueryClient();
+  const s = props.source;
+  const [query, setQuery] = useState(s.query);
+  const [sort, setSort] = useState(s.sort);
+  const [section, setSection] = useState<number | string>(s.section_start ?? "");
+  const [keepSorted, setKeepSorted] = useState(s.keep_sorted);
+  const save = useMutation({
+    mutationFn: () =>
+      call(
+        api.PATCH("/libraries/{lib}/radios/{radio}/sources/{n}", {
+          params: { path: { lib, radio, n: s.number } },
+          body: { ...(s.plan ? {} : { query, sort, keep_sorted: keepSorted }), section_start: section === "" ? null : Number(section) },
+        }),
+      ),
+    onSuccess: () => {
+      ok("Source saved; sync to add its new matches");
+      void client.invalidateQueries();
+      props.onClose();
+    },
+    onError: failed,
+  });
+  return (
+    <Modal opened onClose={props.onClose} title={`Edit source ${s.number}`} size="lg">
+      <Stack>
+        {s.plan ? (
+          <Text size="sm">Plan: {s.plan}. A plan source follows its plan; only its section start changes here.</Text>
+        ) : (
+          <>
+            <TextInput label="Query" ff="monospace" value={query} onChange={(e) => setQuery(e.currentTarget.value)} data-autofocus />
+            <Group grow>
+              <Select label="Sort" data={["name", "freq"]} value={sort} allowDeselect={false} onChange={(v) => v && setSort(v)} />
+              <Switch mt="lg" label="Keep sorted" checked={keepSorted} onChange={(e) => setKeepSorted(e.currentTarget.checked)} />
+            </Group>
+          </>
+        )}
+        <NumberInput label="Section start" min={0} value={section} onChange={setSection} />
+        {!s.plan && <SourcePreview lib={lib} radio={radio} query={query} sort={sort} number={s.number} maxHeight={320} />}
+        <Text size="xs" c="dimmed">
+          Channels the source already put on the radio stay; a sync adds the changed source's new matches.
+        </Text>
+        <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!s.plan && query.trim() === ""}>
+          Save source
+        </Button>
+      </Stack>
+    </Modal>
+  );
+}
+

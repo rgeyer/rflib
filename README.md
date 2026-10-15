@@ -95,7 +95,7 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--lat
 ./rflib channel delete --id <channel-id> --yes
 ```
 
-**Location.** `--lat` and `--lon` say where a channel is used, such as a repeater's site, and `--radius-km` how far that reaches: either how rough the position is, or the repeater's coverage. Searches use it with `near:` (see [Search](#search)). `--radius-km` alone changes the radius and keeps the coordinates; an empty `--lat` and `--lon` clear the location.
+**Location.** `--lat` and `--lon` say where a channel is used, such as a repeater's site, and `--radius-km` how far that reaches: either how rough the position is, or the repeater's coverage. Searches use it with `near:` (see [Search](#search)). `--grid CM94sq` gives a Maidenhead grid square instead (4, 6, or 8 characters): its center, with a radius reaching its corners unless `--radius-km` says otherwise; a CSV import's `grid` column does the same. `--radius-km` alone changes the radius and keeps the coordinates; an empty `--lat` and `--lon` clear the location.
 
 **Groups are gone.** Earlier versions collected channels into groups. Upgrading (`rflib init`) gives each grouped channel its group's location and power, where it had none, and a tag named after the group. Saved searches and radio sources that used `group:NAME` now say `tag:NAME`, and `group:NAME` still works as `tag:NAME`. Old backups and CSV files with groups import the same way.
 
@@ -161,7 +161,7 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 | `squelch:`, `skip:` | `yes` or `no` |
 | `is:` | `repeater` (transmit differs from receive), `simplex`, `rxonly`, `transmit` (a radio export would let it transmit; see [Where radios transmit](#where-radios-transmit)), `skip` |
 | `has:` | `location`, `service`, `tag`, `tone`, `power`, `notes`, `shortname`, `radio`, `network`, `org` |
-| `near:` | `LAT,LON,KM`, see below |
+| `near:` | `LAT,LON,KM` or `GRID,KM`, see below |
 | `radio:` | A radio's name, `any`, or `none` |
 | `tunes:` | A radio or model name: channels in its bands and in a mode it has |
 | `created:`, `updated:` | `YYYY-MM-DD`, with comparisons and ranges like `freq:` |
@@ -172,7 +172,7 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 | `system:` | A system's name or ID: its members, or links to them |
 | `allstar:`, `echolink:`, `irlp:`, `wires-x:` | A node number on that network |
 
-**Location.** `near:` matches when a channel's location is within the distance plus the channel's own `--radius-km`, so a repeater whose coverage reaches you counts. Channels without a location never match `near:`. To keep them, say so: `near:34.64,-120.46,40 OR -has:location`.
+**Location.** `near:` matches when a channel's location is within the distance plus the channel's own `--radius-km`, so a repeater whose coverage reaches you counts. A grid square searches from its center: `near:CM94sq,40`. Channels without a location never match `near:`. To keep them, say so: `near:34.64,-120.46,40 OR -has:location`.
 
 **Shorthand flags.** `--tag`, `--service`, and `--lat`/`--lon`/`--radius-km` still work and are added to the query.
 
