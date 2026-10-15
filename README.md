@@ -719,4 +719,4 @@ Resolve a finding by fixing the data, or by recording an accepted difference or 
 
 Copyright (C) 2026 Ryan Geyer.
 
-rflib is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License, version 3 (AGPL-3.0); see [LICENSE](LICENSE). In short: anyone who distributes a modified rflib, or runs one as a service for others (such as a club's instance), must make its source available to those who receive or use it. The built-in channel lists and shared list data aren't covered by a separate data license yet.
+rflib is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version (AGPL-3.0-or-later); see [LICENSE](LICENSE). In short: anyone who distributes a modified rflib, or runs one as a service for others (such as a club's instance), must make its source available to those who receive or use it. The built-in channel lists and shared list data aren't covered by a separate data license yet.
