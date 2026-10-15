@@ -495,6 +495,9 @@ func checkForeignKeys(ctx context.Context, tx *sql.Tx) error {
 }
 
 func (d *DB) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	// As for libraries' transactions (see library.inTx), once begun it
+	// finishes.
+	ctx = context.WithoutCancel(ctx)
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

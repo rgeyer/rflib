@@ -375,3 +375,41 @@ INSERT INTO radio_channels (radio_id, channel_id, position, power, skip) VALUES
 		t.Errorf("wx1 follow = %+v", v.Link)
 	}
 }
+
+// A write transaction finishes even when its request is canceled partway,
+// and leaves the connection usable: cancellation used to interrupt its
+// statements on the one connection, which could leave it inside the
+// transaction and fail every later request.
+func TestTransactionSurvivesCancel(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "cancel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	def, _ := d.GetLibrary(context.Background(), "")
+	lib := d.Library(def.ID)
+	ctx, cancel := context.WithCancel(context.Background())
+	none := domain.Tone{Kind: domain.ToneNone}
+	err = lib.InTx(ctx, func(tx store.Library) error {
+		if _, err := tx.CreateChannel(ctx, domain.Channel{Name: "First", ReceiveHz: 146_520_000, Mode: "FM", ReceiveTone: none, TransmitTone: none}); err != nil {
+			return err
+		}
+		cancel() // the client goes away mid-request
+		_, err := tx.CreateChannel(ctx, domain.Channel{Name: "Second", ReceiveHz: 146_550_000, Mode: "FM", ReceiveTone: none, TransmitTone: none})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("transaction after cancel: %v", err)
+	}
+	all, err := lib.ListChannels(context.Background())
+	if err != nil || len(all) != 2 {
+		t.Fatalf("after: %d channels, %v", len(all), err)
+	}
+	// Later transactions start cleanly.
+	if err := lib.InTx(context.Background(), func(store.Library) error { return nil }); err != nil {
+		t.Fatalf("next transaction: %v", err)
+	}
+}
