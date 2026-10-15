@@ -234,3 +234,21 @@ test("generic CHIRP radio with a name length", async ({ page }) => {
   await expect(page).toHaveURL(/\/radios\/Spare$/);
   await expect(page.getByText("names up to 7")).toBeVisible();
 });
+
+// A channel's radius is drawn under its marker and takes no clicks, so the
+// marker still opens its popup.
+test("map markers stay clickable inside a radius", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/channels", {
+    data: { name: "Radius Test", rx_hz: 145_650_000, mode: "FM", location: { latitude: 34.69, longitude: -120.46, radius_km: 50 } },
+  });
+  await page.goto("/l/default/map");
+  await page.getByLabel("Search").fill("name:\"Radius Test\"");
+  await expect(page.getByText("1 channels with a location")).toBeVisible();
+  // The marker is the smallest shape on the map; click its center.
+  const paths = page.locator(".leaflet-overlay-pane path");
+  await expect(paths).toHaveCount(2);
+  const boxes = await paths.evaluateAll((ps) => ps.map((p) => p.getBoundingClientRect().toJSON()));
+  const marker = boxes.reduce((a, b) => (a.width <= b.width ? a : b));
+  await page.mouse.click(marker.x + marker.width / 2, marker.y + marker.height / 2);
+  await expect(page.locator(".leaflet-popup").getByText("Radius Test")).toBeVisible();
+});
