@@ -26,7 +26,6 @@ export function Shell() {
     { to: "plans", label: "Plans", icon: IconClipboardList },
     { to: "orgs", label: "Organizations", icon: IconUsersGroup },
     { to: "import", label: "Import", icon: IconFileImport },
-    { to: "lists", label: "Built-in lists", icon: IconBroadcast },
   ];
   const pending = changes.data?.changes.length ?? 0;
   return (
@@ -65,6 +64,14 @@ export function Shell() {
               label="Shared list"
               description="Correct shared channels"
               leftSection={<IconWorld size={18} />}
+              onClick={close}
+            />
+            <NavLink
+              component={RouterLink}
+              to={`/l/${enc(shared)}/lists`}
+              label="Built-in lists"
+              description="Fill and update the shared list"
+              leftSection={<IconBroadcast size={18} />}
               onClick={close}
             />
           </>

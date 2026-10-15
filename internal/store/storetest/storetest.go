@@ -40,6 +40,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Organizations", testOrganizations},
 		{"Systems", testSystems},
 		{"Plans", testPlans},
+		{"SeedChannels", testSeedChannels},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
@@ -942,3 +943,37 @@ func testPlans(t *testing.T, s store.Store) {
 	_, err = mine.CreatePlan(ctx(), domain.Plan{Name: "x", Entries: []domain.PlanEntry{{ChannelID: c.ID}}})
 	mustNotFound(t, "another library's channel in a plan", err)
 }
+
+// A seeded shared channel's record keeps its list, name, and the row as
+// applied, replaces on update, stays within its library, and goes with the
+// channel.
+func testSeedChannels(t *testing.T, s store.Store) {
+	sh := sharedLibrary(t, s)
+	c := channel(t, sh, "WX1", 162_550_000)
+	applied := c
+	applied.Tags, applied.Notes = []string{"calling"}, "as shipped"
+	if err := sh.SetSeedChannel(ctx(), domain.SeedChannel{ChannelID: c.ID, List: "us-noaa", Name: "WX1", Applied: applied}); err != nil {
+		t.Fatal(err)
+	}
+	applied.Notes = "shipped again"
+	if err := sh.SetSeedChannel(ctx(), domain.SeedChannel{ChannelID: c.ID, List: "us-noaa", Name: "WX1", Applied: applied}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sh.SeedChannels(ctx())
+	if err != nil || len(got) != 1 || got[0].List != "us-noaa" || got[0].Applied.Notes != "shipped again" || got[0].Applied.ReceiveHz != 162_550_000 || got[0].Applied.Tags[0] != "calling" {
+		t.Fatalf("seed channels = %+v, %v", got, err)
+	}
+	if other, err := newLibrary(t, s, "other").SeedChannels(ctx()); err != nil || len(other) != 0 {
+		t.Errorf("another library sees them: %+v, %v", other, err)
+	}
+	if err := sh.SetSeedChannel(ctx(), domain.SeedChannel{ChannelID: "missing", List: "x", Name: "y"}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("record for a missing channel: %v", err)
+	}
+	if err := sh.DeleteChannel(ctx(), c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sh.SeedChannels(ctx()); err != nil || len(got) != 0 {
+		t.Errorf("record outlived its channel: %+v, %v", got, err)
+	}
+}
+

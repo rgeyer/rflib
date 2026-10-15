@@ -49,7 +49,6 @@ func (s *server) routes() []route {
 		{"POST", L + "/shared/ack", s.lib(s.ack), false},
 		{"POST", L + "/shared/relink", s.lib(s.relink), false},
 		{"GET", L + "/feed", s.lib(s.feed), false},
-		{"POST", L + "/seeds/{seed}/install", s.lib(s.installSeed), false},
 
 		{"POST", L + "/imports/{format}", s.lib(s.importFile), false},
 		{"GET", L + "/exports/{format}", s.lib(s.exportFile), false},
@@ -103,6 +102,7 @@ func (s *server) routes() []route {
 		{"GET", "/profiles", s.listProfiles, false},
 		{"GET", "/seeds", s.listSeeds, false},
 		{"GET", "/seeds/{seed}", s.getSeed, false},
+		{"POST", "/seeds/{seed}/update", s.updateSeed, false},
 		{"GET", "/tags", s.listTags, false},
 	}
 }
@@ -488,31 +488,6 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request, a *app.Service) er
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"channels": newChannels(cs), "cursor": cursor.UTC().Format(time.RFC3339Nano)})
-	return nil
-}
-
-func (s *server) installSeed(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	l, err := seed.Get(r.PathValue("seed"))
-	if err != nil {
-		return apiError{http.StatusNotFound, "not_found", err.Error()}
-	}
-	var in struct {
-		Tags   []string `json:"tags"`
-		DryRun bool     `json:"dry_run"`
-	}
-	if err := readJSON(r, &in); err != nil {
-		return err
-	}
-	res, err := a.InstallSeed(ctx(r), l, in.Tags, in.DryRun)
-	if err != nil {
-		return err
-	}
-	converted := make([]Conversion, len(res.Converted))
-	for i, cv := range res.Converted {
-		converted[i] = Conversion{newChannel(cv.Private), newChannel(cv.Shared), newChannel(cv.Link)}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"linked": newChannels(res.Linked), "converted": converted, "already": newChannels(res.Already),
-		"shared_added": res.SharedAdded, "shared_updated": res.SharedUpdated})
 	return nil
 }
 
@@ -1404,15 +1379,35 @@ type seedOut struct {
 	ID          string    `json:"id"`
 	Description string    `json:"description"`
 	Count       int       `json:"count"`
+	Installed   bool      `json:"installed"`
+	Pending     int       `json:"pending"`
 	Channels    []Channel `json:"channels,omitempty"`
 }
 
-func seedInfo(l seed.List, withChannels bool) (seedOut, error) {
+// seedChange is one change a list's update makes to the shared list.
+type seedChange struct {
+	Kind    string   `json:"kind"`
+	Name    string   `json:"name"`
+	Fields  []string `json:"fields"`
+	Kept    []string `json:"kept"`
+	Channel Channel  `json:"channel"`
+}
+
+// sharedService opens the shared list's operations.
+func (s *server) sharedService(r *http.Request) (*app.Service, error) {
+	return app.Open(ctx(r), s.st, domain.SharedLibrary)
+}
+
+func seedInfo(r *http.Request, sh *app.Service, l seed.List, withChannels bool) (seedOut, error) {
+	st, err := sh.SeedStatus(ctx(r), l)
+	if err != nil {
+		return seedOut{}, err
+	}
 	b, err := l.Batch()
 	if err != nil {
 		return seedOut{}, err
 	}
-	o := seedOut{ID: l.ID, Description: l.Description, Count: len(b.Records)}
+	o := seedOut{ID: l.ID, Description: l.Description, Count: len(b.Records), Installed: st.Installed, Pending: len(st.Changes)}
 	if withChannels {
 		o.Channels = []Channel{}
 		for _, rec := range b.Records {
@@ -1422,10 +1417,14 @@ func seedInfo(l seed.List, withChannels bool) (seedOut, error) {
 	return o, nil
 }
 
-func (s *server) listSeeds(w http.ResponseWriter, _ *http.Request) error {
+func (s *server) listSeeds(w http.ResponseWriter, r *http.Request) error {
+	sh, err := s.sharedService(r)
+	if err != nil {
+		return err
+	}
 	var out []seedOut
 	for _, l := range seed.Lists() {
-		o, err := seedInfo(l, false)
+		o, err := seedInfo(r, sh, l, false)
 		if err != nil {
 			return err
 		}
@@ -1440,11 +1439,44 @@ func (s *server) getSeed(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return apiError{http.StatusNotFound, "not_found", err.Error()}
 	}
-	o, err := seedInfo(l, true)
+	sh, err := s.sharedService(r)
+	if err != nil {
+		return err
+	}
+	o, err := seedInfo(r, sh, l, true)
 	if err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, o)
+	return nil
+}
+
+// updateSeed brings the shared list up to date with a built-in list, or
+// with dry_run reports what that would change.
+func (s *server) updateSeed(w http.ResponseWriter, r *http.Request) error {
+	l, err := seed.Get(r.PathValue("seed"))
+	if err != nil {
+		return apiError{http.StatusNotFound, "not_found", err.Error()}
+	}
+	var in struct {
+		DryRun bool `json:"dry_run"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	sh, err := s.sharedService(r)
+	if err != nil {
+		return err
+	}
+	st, err := sh.UpdateSeed(ctx(r), l, in.DryRun)
+	if err != nil {
+		return err
+	}
+	changes := make([]seedChange, len(st.Changes))
+	for i, ch := range st.Changes {
+		changes[i] = seedChange{ch.Kind, ch.Name, nonNil(ch.Fields), nonNil(ch.Kept), newChannel(ch.Channel)}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"installed": st.Installed, "dry_run": in.DryRun, "changes": changes})
 	return nil
 }
 

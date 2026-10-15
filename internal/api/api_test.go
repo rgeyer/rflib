@@ -17,6 +17,8 @@ import (
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers"
 	"github.com/getkin/kin-openapi/routers/legacy"
+	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/seed"
 	"github.com/ryan/rflib/internal/store/sqlite"
 )
 
@@ -123,6 +125,68 @@ func (c *client) errCode(method, path string, body any, want int) string {
 }
 
 // Every route is in the spec, and every operation in the spec is routed.
+// seedAndLink puts built-in lists in the shared list, then links their
+// channels into the default library, as a user would, and returns the
+// links in list order.
+func (c *client) seedAndLink(lists ...string) []Channel {
+	c.t.Helper()
+	var ids []string
+	for _, id := range lists {
+		c.do("POST", "/seeds/"+id+"/update", map[string]any{}, 200, nil)
+		l, err := seed.Get(id)
+		if err != nil {
+			c.t.Fatal(err)
+		}
+		b, err := l.Batch()
+		if err != nil {
+			c.t.Fatal(err)
+		}
+		for _, r := range b.Records {
+			ids = append(ids, app.SeedID(id, r.Channel.Name))
+		}
+	}
+	var res struct {
+		Linked []Channel `json:"linked"`
+	}
+	c.do("POST", "/libraries/default/channels/link", map[string]any{"select": map[string]any{"ids": ids}}, 200, &res)
+	return res.Linked
+}
+
+// The built-in lists' status, and an update that installs one.
+func TestSeedStatusAndUpdate(t *testing.T) {
+	c := newClient(t, "")
+	var list struct {
+		Seeds []struct {
+			ID        string `json:"id"`
+			Installed bool   `json:"installed"`
+			Pending   int    `json:"pending"`
+		} `json:"seeds"`
+	}
+	c.do("GET", "/seeds", nil, 200, &list)
+	if len(list.Seeds) == 0 || list.Seeds[0].Installed || list.Seeds[0].Pending == 0 {
+		t.Fatalf("seeds = %+v", list.Seeds)
+	}
+	var up struct {
+		Installed bool `json:"installed"`
+		Changes   []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"changes"`
+	}
+	c.do("POST", "/seeds/us-noaa/update", map[string]any{"dry_run": true}, 200, &up)
+	if up.Installed || len(up.Changes) != 7 || up.Changes[0].Kind != "add" || up.Changes[0].Name != "NOAA WX1" {
+		t.Fatalf("dry run = %+v", up)
+	}
+	c.do("POST", "/seeds/us-noaa/update", map[string]any{}, 200, &up)
+	c.do("POST", "/seeds/us-noaa/update", map[string]any{"dry_run": true}, 200, &up)
+	if !up.Installed || len(up.Changes) != 0 {
+		t.Errorf("after the update = %+v", up)
+	}
+	if code := c.errCode("POST", "/seeds/us-nope/update", map[string]any{}, 404); code != "not_found" {
+		t.Errorf("unknown list: %s", code)
+	}
+}
+
 func TestRoutesMatchTheSpec(t *testing.T) {
 	doc, err := openapi3.NewLoader().LoadFromData(Spec)
 	if err != nil {
@@ -201,14 +265,11 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 	}
 
 	// Built-in lists and links.
-	var installed struct {
-		Linked []Channel `json:"linked"`
+	linked := c.seedAndLink("us-noaa")
+	if len(linked) != 7 || linked[0].Link == nil {
+		t.Fatalf("seed and link = %+v", linked)
 	}
-	c.do("POST", L+"/seeds/us-noaa/install", map[string]any{}, 200, &installed)
-	if len(installed.Linked) != 7 || installed.Linked[0].Link == nil {
-		t.Fatalf("install = %+v", installed)
-	}
-	wx := installed.Linked[0]
+	wx := linked[0]
 	if code := c.errCode("PATCH", L+"/channels/"+wx.ID, map[string]any{"rx_hz": 162400000}, 400); code != "invalid" {
 		t.Errorf("edit a shared field: %s", code)
 	}
@@ -352,11 +413,7 @@ func urlQuery(s string) string {
 func TestOrganizationsSystemsAndPlans(t *testing.T) {
 	c := newClient(t, "")
 	L := "/libraries/default"
-	var installed struct {
-		Linked []Channel `json:"linked"`
-	}
-	c.do("POST", L+"/seeds/us-ham-calling/install", map[string]any{}, 200, &installed)
-	link := installed.Linked[0]
+	link := c.seedAndLink("us-ham-calling")[0]
 	shared := link.Link.SharedID
 
 	if code := c.errCode("POST", "/organizations", map[string]any{"name": "SBARC", "reason": ""}, 400); code != "invalid" {
@@ -451,7 +508,7 @@ func TestOrganizationsSystemsAndPlans(t *testing.T) {
 func TestConvertPickedChannels(t *testing.T) {
 	c := newClient(t, "")
 	const L = "/libraries/default"
-	c.do("POST", L+"/seeds/us-noaa/install", map[string]any{}, 200, nil)
+	c.do("POST", "/seeds/us-noaa/update", map[string]any{}, 200, nil)
 	var a, b channelResult
 	c.do("POST", L+"/channels", map[string]any{"name": "Weather 1", "rx_hz": 162_550_000, "mode": "FM", "service": "noaa", "rx_only": true}, 201, &a)
 	c.do("POST", L+"/channels", map[string]any{"name": "Weather 2", "rx_hz": 162_400_000, "mode": "FM", "service": "noaa", "rx_only": true}, 201, &b)
@@ -478,9 +535,7 @@ func TestConvertPickedChannels(t *testing.T) {
 func TestPreviewSource(t *testing.T) {
 	c := newClient(t, "")
 	const L = "/libraries/default"
-	for _, seed := range []string{"us-noaa", "us-gmrs", "us-ham-calling"} {
-		c.do("POST", L+"/seeds/"+seed+"/install", map[string]any{}, 200, nil)
-	}
+	c.seedAndLink("us-noaa", "us-gmrs", "us-ham-calling")
 	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
 	c.do("POST", L+"/radios/HT/sources", map[string]any{"query": "band:noaa"}, 201, nil)
 	var p struct {

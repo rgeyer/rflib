@@ -28,7 +28,12 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 }
 
 func newInitCommand() *cobra.Command {
-	return &cobra.Command{Use: "init", Short: "Create or upgrade a library database", Args: cobra.NoArgs, RunE: initLibrary}
+	cmd := &cobra.Command{Use: "init", Short: "Create or upgrade a library database", Args: cobra.NoArgs, RunE: initLibrary,
+		Long: `Create a database, or upgrade one to this version of rflib. A new database's
+shared list starts with every built-in list (see rflib seed), unless
+--no-seed. Upgrading never changes shared channels.`}
+	cmd.Flags().Bool("no-seed", false, "Start a new database with an empty shared list")
+	return cmd
 }
 
 // formatFlag adds --format to a read command.

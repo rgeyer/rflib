@@ -226,6 +226,9 @@ DELETE FROM channel_tags WHERE tag IN ('linked', 'allstar', 'echolink', 'wires-x
 	// simplex is no longer a shared tag: is:simplex already finds simplex
 	// channels. It comes off shared channels; links' own tags stay.
 	{version: 14, sql: `DELETE FROM channel_tags WHERE tag = 'simplex' AND channel_id IN (SELECT id FROM channels WHERE link_id IS NULL AND library_id IN (SELECT id FROM libraries WHERE kind = 'shared'));`},
+	// Which built-in list each seeded shared channel came from, and the row
+	// as last applied.
+	{version: 15, sql: `CREATE TABLE seed_channels (channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE, list TEXT NOT NULL, name TEXT NOT NULL, applied TEXT NOT NULL);`},
 }
 
 // ungroup finishes migration 9 once new_channels holds the channels: it

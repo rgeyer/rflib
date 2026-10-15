@@ -13,7 +13,6 @@ import (
 	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/importer"
 	"github.com/ryan/rflib/internal/query"
-	"github.com/ryan/rflib/internal/seed"
 	"github.com/ryan/rflib/internal/store"
 )
 
@@ -120,18 +119,6 @@ func (s *Service) LinkChannels(ctx context.Context, sel Selection, tags []string
 	return res, err
 }
 
-// linkedTo returns the shared channels the library links to.
-func (s *Service) linkedTo(ctx context.Context) (map[string]bool, error) {
-	links, err := s.linksTo(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]bool, len(links))
-	for id := range links {
-		out[id] = true
-	}
-	return out, nil
-}
 
 // linksTo maps each shared channel the library links to to its link's ID.
 func (s *Service) linksTo(ctx context.Context) (map[string]string, error) {
@@ -634,119 +621,11 @@ func curateTags(b *importer.Batch) []string {
 
 // --- built-in lists ---
 
-// SeedResult is what installing a built-in list did: shared channels added
-// or updated from the list, private channels converted to links, links
-// made, and channels already linked.
-type SeedResult struct {
-	SharedAdded, SharedUpdated int
-	Converted                  []Conversion
-	Linked, Already            []domain.Channel
-}
 
-// seedID is a built-in channel's ID in the shared library, the same in
-// every database so a list can be installed again, and pulled later.
-func seedID(list, name string) string {
+// SeedID is the shared channel ID a built-in list's row gets: the same in
+// every database, so a list updates the channels it seeded.
+func SeedID(list, name string) string {
 	h := sha1.Sum([]byte("rflib-seed\x00" + list + "\x00" + name))
 	return fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
 
-// InstallSeed puts a built-in list's channels in the shared library (or
-// updates them there), then gives the library a link to each: private
-// channels that match one become links (see ConvertToLinks), and the rest
-// are linked new. Tags not in the curated set are left off the shared
-// channels. Own tags are added to new links. With dryRun nothing changes.
-func (s *Service) InstallSeed(ctx context.Context, l seed.List, tags []string, dryRun bool) (SeedResult, error) {
-	var res SeedResult
-	if err := s.writable(); err != nil {
-		return res, err
-	}
-	b, err := l.Batch()
-	if err != nil {
-		return res, err
-	}
-	curateTags(&b)
-	sh, err := s.sharedLibrary(ctx)
-	if err != nil {
-		return res, err
-	}
-	ids := map[string]bool{}
-	var want []domain.Channel
-	for _, r := range b.Records {
-		c := r.Channel
-		c.ID = seedID(l.ID, c.Name)
-		ids[c.ID] = true
-		want = append(want, c)
-	}
-	// A dry run writes the list too, and rolls back, to count what would
-	// be added and updated.
-	wctx := store.WithChange(ctx, "built-in list "+l.ID, "")
-	err = sh.InTx(wctx, func(tx store.Library) error {
-		for _, c := range want {
-			old, err := tx.GetChannel(wctx, c.ID)
-			switch {
-			case errors.Is(err, store.ErrNotFound):
-				if _, err := tx.CreateChannel(wctx, c); err != nil {
-					return fmt.Errorf("%s: %w", c.Name, err)
-				}
-				res.SharedAdded++
-			case err != nil:
-				return err
-			default:
-				// Keep what the list doesn't say, such as a status.
-				c.Status, c.StatusNote, c.BackOn, c.ReplacedBy, c.CreatedAt = old.Status, old.StatusNote, old.BackOn, old.ReplacedBy, old.CreatedAt
-				saved, err := tx.UpdateChannel(wctx, c)
-				if err != nil {
-					return fmt.Errorf("%s: %w", c.Name, err)
-				}
-				if saved.Revision != old.Revision {
-					res.SharedUpdated++
-				}
-			}
-		}
-		if dryRun {
-			return errDryRun
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, errDryRun) {
-		return res, err
-	}
-	// A dry run matches against the list as the install would leave it.
-	target := want
-	if !dryRun {
-		if target, err = sh.ListChannels(ctx); err != nil {
-			return res, err
-		}
-	}
-	if res.Converted, err = s.convertTo(ctx, target, ids, nil, dryRun); err != nil {
-		return res, err
-	}
-	linked, err := s.linkedTo(ctx)
-	if err != nil {
-		return res, err
-	}
-	for _, cv := range res.Converted {
-		linked[cv.Shared.ID] = true
-	}
-	var toLink []string
-	for _, c := range want {
-		if linked[c.ID] {
-			res.Already = append(res.Already, c)
-		} else {
-			toLink = append(toLink, c.ID)
-		}
-	}
-	res.Already = slices.DeleteFunc(res.Already, func(c domain.Channel) bool {
-		return slices.ContainsFunc(res.Converted, func(cv Conversion) bool { return cv.Shared.ID == c.ID })
-	})
-	if dryRun || len(toLink) == 0 {
-		for _, id := range toLink {
-			i := slices.IndexFunc(want, func(c domain.Channel) bool { return c.ID == id })
-			res.Linked = append(res.Linked, want[i])
-		}
-		return res, nil
-	}
-	lr, err := s.LinkChannels(ctx, Selection{IDs: toLink}, tags)
-	res.Linked = lr.Linked
-	return res, err
-}

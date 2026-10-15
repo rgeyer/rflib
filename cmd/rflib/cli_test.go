@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/seed"
 )
 
 type cli struct {
@@ -15,10 +18,31 @@ type cli struct {
 	db string
 }
 
-func newCLI(t *testing.T) *cli {
+// linkLists links built-in lists' channels, which init put in the shared
+// list, into the library, as a user would from the shared list.
+func (c *cli) linkLists(lists ...string) {
+	c.t.Helper()
+	var ids []string
+	for _, id := range lists {
+		l, err := seed.Get(id)
+		if err != nil {
+			c.t.Fatal(err)
+		}
+		b, err := l.Batch()
+		if err != nil {
+			c.t.Fatal(err)
+		}
+		for _, r := range b.Records {
+			ids = append(ids, app.SeedID(id, r.Channel.Name))
+		}
+	}
+	c.ok("channel", "link", "--id", strings.Join(ids, ","))
+}
+
+func newCLI(t *testing.T, initArgs ...string) *cli {
 	t.Helper()
 	c := &cli{t: t, db: filepath.Join(t.TempDir(), "lib.db")}
-	c.ok("init")
+	c.ok(append([]string{"init"}, initArgs...)...)
 	return c
 }
 
@@ -324,24 +348,37 @@ func TestImportCHIRP(t *testing.T) {
 	}
 }
 
-func TestSeedInstallIsIdempotent(t *testing.T) {
+// A new database's shared list starts with every built-in list; an update
+// has nothing to do until a list changes, and never touches the library.
+func TestSeedListAndUpdate(t *testing.T) {
 	c := newCLI(t)
-	if out := c.ok("seed", "list"); !strings.Contains(out, "us-gmrs\t30\t") {
+	if out := c.ok("seed", "list"); !strings.Contains(out, "us-gmrs\t30\tup to date\t") || strings.Contains(out, "not installed") {
 		t.Fatalf("seed list = %q", out)
 	}
-	out := c.status("seed", "install", "us-gmrs", "us-noaa")
-	if !strings.Contains(out, "us-gmrs: linked 30, converted 0") || !strings.Contains(out, "us-noaa: linked 7") {
-		t.Fatalf("first install = %q", out)
+	if out := c.status("seed", "update", "us-gmrs", "--dry-run"); out != "us-gmrs: up to date" {
+		t.Fatalf("dry run = %q", out)
 	}
-	out = c.status("seed", "install", "us-gmrs", "us-noaa")
-	if !strings.Contains(out, "us-gmrs: linked 0, converted 0 of your channels, 30 already linked") || !strings.Contains(out, "us-noaa: linked 0") {
-		t.Fatalf("second install = %q", out)
+	if out := c.status("seed", "install", "us-noaa"); out != "us-noaa: up to date" {
+		t.Fatalf("install = %q", out)
 	}
-	if out := c.ok("channel", "list", "--service", "noaa"); strings.Count(out, "\n")+1 != 7 {
-		t.Fatalf("noaa channels = %q", out)
+	if out := c.ok("channel", "list"); out != "" {
+		t.Fatalf("seeding put channels in the library: %q", out)
 	}
+	if out := c.ok("channel", "list", "in:shared", "service:noaa", "--fields", "name"); strings.Count(out, "\n")+1 != 7 {
+		t.Fatalf("shared noaa channels = %q", out)
+	}
+	c.fails("unknown list", "seed", "update", "us-pmr446")
+	c.linkLists("us-gmrs", "us-noaa")
 	c.ok("check") // built-in lists fit their own band plans
-	c.fails("unknown list", "seed", "install", "us-pmr446")
+
+	// --no-seed starts with an empty shared list; an update installs.
+	empty := newCLI(t, "--no-seed")
+	if out := empty.ok("seed", "list", "--fields", "name,status"); !strings.Contains(out, "us-noaa\tnot installed") {
+		t.Fatalf("unseeded = %q", out)
+	}
+	if out := empty.status("seed", "update", "us-noaa"); !strings.HasPrefix(out, "us-noaa: updated: 7 to add\n  add NOAA WX1") {
+		t.Fatalf("install = %q", out)
+	}
 }
 
 func TestServiceDefaultsAndWarnings(t *testing.T) {
@@ -469,7 +506,7 @@ func TestNamesAndShortNames(t *testing.T) {
 
 func TestRadioWorkflow(t *testing.T) {
 	c := newCLI(t)
-	c.ok("seed", "install", "us-gmrs", "us-noaa")
+	c.linkLists("us-gmrs", "us-noaa")
 	ids := map[string]string{}
 	for _, line := range strings.Split(c.ok("channel", "list"), "\n") {
 		f := strings.Split(line, "\t")
@@ -584,7 +621,7 @@ func TestRadioMoveBeforeAfter(t *testing.T) {
 
 func TestSearchAndSavedSearches(t *testing.T) {
 	c := newCLI(t)
-	c.ok("seed", "install", "us-gmrs", "us-noaa", "us-ham-calling")
+	c.linkLists("us-gmrs", "us-noaa", "us-ham-calling")
 	count := func(args ...string) int {
 		out := c.ok(append([]string{"channel", "list"}, args...)...)
 		if out == "" {
@@ -647,7 +684,7 @@ func TestSearchAndSavedSearches(t *testing.T) {
 
 func TestRadioSources(t *testing.T) {
 	c := newCLI(t)
-	c.ok("seed", "install", "us-gmrs", "us-noaa")
+	c.linkLists("us-gmrs", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
 	c.fails("no sources", "radio", "sync", "HT")
 	c.ok("radio", "sources", "add", "HT", "band:noaa", "--sort", "freq", "--section-start", "100")
@@ -747,7 +784,7 @@ func TestRadioSources(t *testing.T) {
 
 func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	c := newCLI(t)
-	c.ok("seed", "install", "us-cb", "us-noaa")
+	c.linkLists("us-cb", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g") // 130-176 and 400-520 MHz
 	if n := len(strings.Split(c.ok("channel", "list", "tunes:HT"), "\n")); n != 7 {
 		t.Errorf("tunes:HT = %d channels", n)
@@ -807,7 +844,7 @@ func TestOneLibrary(t *testing.T) {
 
 func TestTablesAndFields(t *testing.T) {
 	c := newCLI(t)
-	c.ok("seed", "install", "us-gmrs")
+	c.linkLists("us-gmrs")
 	id := c.ok("channel", "add", "--name", "A very long repeater name", "--rx", "146.94", "--tx", "146.34", "--tx-tone", "ctcss:100", "--tags", "ham")
 
 	// Piped text: no header, full IDs, the default columns.
@@ -845,7 +882,7 @@ func TestTablesAndFields(t *testing.T) {
 
 func TestPipedIDsAndBulkChanges(t *testing.T) {
 	c := newCLI(t)
-	c.ok("seed", "install", "us-gmrs", "us-noaa")
+	c.linkLists("us-gmrs", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
 
 	// A list pipes straight into --id -, header or not, and --id narrows a
@@ -921,8 +958,8 @@ func TestSharedChannels(t *testing.T) {
 	}
 	// A private copy of GMRS 20 from before, named differently.
 	mine := c.ok("channel", "add", "--name", "Family 20", "--rx", "462.675", "--tx", "462.675", "--service", "gmrs", "--tags", "family")
-	if got := c.status("seed", "install", "us-gmrs", "us-noaa"); !strings.Contains(got, "us-gmrs: linked 29, converted 1 of your channels") {
-		t.Fatalf("install = %q", got)
+	if got := c.ok("shared", "link"); !strings.Contains(got, "\tFamily 20\tGMRS 20\t") {
+		t.Fatalf("shared link = %q", got)
 	}
 	ch := c.channel(mine[:8])
 	if ch.Link == nil || ch.Name != "GMRS 20" || strings.Join(ch.ShortNames, ",") != "Family 20" || strings.Join(ch.Tags, ",") != "family" {
@@ -961,7 +998,7 @@ func TestSharedChannels(t *testing.T) {
 	}
 
 	// Retired and replaced: relink moves the link, and history shows why.
-	next := strings.TrimSpace(c.ok("channel", "list", "in:shared", "freq:462.7", "duplex:simplex", "--fields", "id"))
+	next := strings.TrimSpace(c.ok("channel", "list", "in:shared", "service:gmrs", "freq:462.7", "duplex:simplex", "--fields", "id"))
 	c.ok("shared", "status", "--id", sharedID, "--set", "retired", "--replaced-by", next, "--reason", "moved up a channel")
 	if got := c.ok("shared", "changes", "--fields", "replacement"); !strings.HasPrefix(got, "GMRS 21 (") {
 		t.Errorf("replacement = %q", got)
@@ -979,7 +1016,7 @@ func TestSharedChannels(t *testing.T) {
 	// A backup keeps links; restored where the shared channel is missing,
 	// a link becomes a private copy.
 	backup := c.ok("export", "json")
-	other := newCLI(t)
+	other := newCLI(t, "--no-seed")
 	out, stderr, err := other.execIn(backup, "import", "json")
 	if err != nil || !strings.Contains(stderr, "its shared channel isn't in this database's shared list, so it's a private copy") {
 		t.Fatalf("restore elsewhere: %v\n%s%s", err, out, stderr)
@@ -988,7 +1025,7 @@ func TestSharedChannels(t *testing.T) {
 		t.Errorf("restored copy = %+v", ch)
 	}
 	again := newCLI(t)
-	again.ok("seed", "install", "us-gmrs")
+	again.linkLists("us-gmrs")
 	again.ok("channel", "delete", "-q", "freq:462.7 duplex:simplex", "--yes")
 	if _, stderr, err := again.execIn(backup, "import", "json", "--on-duplicate", "skip"); err != nil {
 		t.Fatalf("restore with the shared list: %v %s", err, stderr)

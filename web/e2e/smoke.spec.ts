@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-// One pass through the main screens against a real rflib serve: install a
-// built-in list, add and edit a channel, set up a radio, sync it, and
-// export its file.
+// One pass through the main screens against a real rflib serve: link
+// channels from the shared list, add and edit a channel, set up a radio,
+// sync it, and export its file.
 test("lists, channels, radios, and export", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/l\/default\/channels$/);
@@ -16,18 +16,27 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.getByRole("link", { name: "Channels", exact: true }).click();
   await expect(page).toHaveURL(/\/l\/default\/channels$/);
 
-  // Install NOAA weather radio: seven links appear.
-  await page.getByRole("link", { name: "Built-in lists" }).click();
+  // A new database's shared list starts with the built-in lists, all up
+  // to date, so there's nothing to install.
+  await page.getByRole("link", { name: /Built-in lists/ }).click();
   const noaa = page.locator(".mantine-Card-root", { hasText: "us-noaa" });
-  await noaa.getByRole("button", { name: "Install" }).click();
-  await expect(page.getByText("The shared list gains 7 channels")).toBeVisible();
-  await expect(page.getByText("My library gains 7 new links")).toBeVisible();
-  await page.getByRole("dialog").getByRole("button", { name: "Install" }).click();
-  await expect(page.getByText("us-noaa: linked 7")).toBeVisible();
+  await expect(noaa.getByText("Up to date")).toBeVisible();
+  await expect(noaa.getByRole("button")).toHaveCount(0);
+
+  // Link NOAA weather radio from the shared list: seven links appear.
+  await page.getByRole("link", { name: "Channels", exact: true }).click();
+  await page.getByRole("switch", { name: "Search the shared list" }).click();
+  await page.getByLabel("Search", { exact: true }).fill("service:noaa");
+  await expect(page.getByText("7 channels")).toBeVisible();
+  await page.getByRole("checkbox", { name: "Select all" }).click();
+  await page.getByRole("button", { name: "Link into my library" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Link 7 channels" }).click();
+  await expect(page.getByText("Linked 7 channels")).toBeVisible();
+  await page.getByRole("switch", { name: "Search the shared list" }).click();
+  await page.getByLabel("Search", { exact: true }).fill("");
 
   // Add a repeater with a tone.
-  await page.getByRole("link", { name: "Channels", exact: true }).click();
-  await expect(page.getByText("7 channels")).toBeVisible();
+  await expect(page.getByText("7 channels", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "New channel" }).click();
   await page.getByRole("textbox", { name: "Name", exact: true }).fill("Marian");
   await page.getByRole("textbox", { name: "Receive MHz" }).fill("147.3");
@@ -124,7 +133,6 @@ test("the map shows located channels", async ({ page }) => {
 // Runs after the first test, on the same server: organizations, a system,
 // and a plan in the shared list, and the plan programmed onto a radio.
 test("organizations, systems, and plans", async ({ page, request }) => {
-  await request.post("/api/v1/libraries/default/seeds/us-ham-calling/install", { data: {} });
   const saveWithReason = async (reason: string) => {
     await page.getByRole("textbox", { name: "Reason" }).fill(reason);
     await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
@@ -271,7 +279,6 @@ test("tags suggest existing ones", async ({ page, request }) => {
 
 // A private channel that matches a shared one is offered for linking.
 test("link my channels to the shared list", async ({ page, request }) => {
-  await request.post("/api/v1/libraries/default/seeds/us-murs/install", { data: {} });
   await request.post("/api/v1/libraries/default/channels", {
     data: { name: "My MURS 1", rx_hz: 151_820_000, tx_hz: 151_820_000, mode: "NFM", service: "murs" },
   });
@@ -288,7 +295,8 @@ test("link my channels to the shared list", async ({ page, request }) => {
 // A search becomes a radio source, with a preview of what it would add,
 // and the Sources tab previews a new source the same way.
 test("add a search as a radio source, with a preview", async ({ page, request }) => {
-  await request.post("/api/v1/libraries/default/seeds/us-gmrs/install", { data: {} });
+  const link = (query: string) => request.post("/api/v1/libraries/default/channels/link", { data: { select: { query } } });
+  await link("service:gmrs");
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Previewer", model: "baofeng-uv5rm" } });
   await page.goto("/l/default/channels");
   await page.getByLabel("Search").first().fill("service:gmrs");
@@ -307,7 +315,7 @@ test("add a search as a radio source, with a preview", async ({ page, request })
   await page.getByLabel("New source query", { exact: true }).fill("service:gmrs");
   await expect(page.getByText("Would add nothing new")).toBeVisible();
   // On the page the list takes the room it needs, not a scrolling box.
-  await request.post("/api/v1/libraries/default/seeds/us-noaa/install", { data: {} });
+  await link("service:noaa");
   await page.getByLabel("New source query", { exact: true }).fill("service:noaa");
   const preview = page.getByLabel("Source preview");
   await expect(preview.getByText(/Sync would add 7 channels to Previewer/)).toBeVisible();

@@ -7,7 +7,7 @@ import (
 
 func TestOrgsSystemsAndPlans(t *testing.T) {
 	c := newCLI(t)
-	c.ok("seed", "install", "us-ham-calling")
+	c.linkLists("us-ham-calling")
 	call := c.ok("channel", "list", "in:shared", "name:\"2m FM Call\"", "--fields", "id")
 	c.ok("org", "add", "SBARC", "--callsign", "w6sba", "--reason", "pilot")
 	c.fails("required flag(s) \"reason\" not set", "org", "add", "GRONK")
@@ -64,17 +64,18 @@ func TestOrgsSystemsAndPlans(t *testing.T) {
 		t.Errorf("remove = %q", got)
 	}
 
-	// A shared backup restores its organizations, systems, and plans; a
+	// A shared backup restores its organizations, systems, and plans into
+	// another database (whose shared list, seeded too, has the channels); a
 	// dry run checks it all and leaves nothing behind.
 	backup := writeFile(t, c.ok("shared", "export", "json"))
 	restored := newCLI(t)
-	if got := restored.status("shared", "import", "json", backup, "--reason", "restore", "--dry-run"); !strings.Contains(got, "created 8") {
+	if got := restored.status("shared", "import", "json", backup, "--reason", "restore", "--dry-run", "--on-duplicate", "update"); !strings.Contains(got, "Dry run, nothing written") {
 		t.Errorf("dry run = %q", got)
 	}
 	if got := restored.ok("org", "list"); got != "" {
 		t.Errorf("the dry run left organizations: %q", got)
 	}
-	restored.ok("shared", "import", "json", backup, "--reason", "restore")
+	restored.ok("shared", "import", "json", backup, "--reason", "restore", "--on-duplicate", "update")
 	if got, want := restored.ok("plan", "channels", "Fair"), c.ok("plan", "channels", "Fair"); got != want {
 		t.Errorf("restored plan:\n%s\nwant:\n%s", got, want)
 	}
