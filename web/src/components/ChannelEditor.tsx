@@ -6,6 +6,7 @@ import { api, call, type Channel, type ChannelInput } from "../api/client";
 import { useLib, useTags } from "../lib/library";
 import { useOrgs } from "../lib/records";
 import { failed, ok, warn } from "../lib/notify";
+import { parseGrid } from "../lib/grid";
 import { formatMHz, MODES, parseMHz, POWERS, SERVICES } from "../lib/radio";
 import { NetworkLinks, ReasonModal, SharedChannelPicker } from "./Records";
 import { ToneInput } from "./ToneInput";
@@ -107,6 +108,13 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
   const curated = useQuery({ queryKey: ["tags"], queryFn: () => call<{ tags: { name: string }[] }>(api.GET("/tags")), staleTime: Infinity });
   useEffect(() => setForm(c ? fromChannel(c) : blank), [c, props.opened]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const [grid, setGrid] = useState("");
+  // A grid square fills in its center, and a radius reaching its corners.
+  const setGridSquare = (v: string) => {
+    setGrid(v);
+    const g = parseGrid(v);
+    if (g) setForm((f) => ({ ...f, lat: String(g.latitude), lon: String(g.longitude), radius: String(g.radius_km) }));
+  };
   const done = (warnings: string[]) => {
     warn(warnings);
     void client.invalidateQueries();
@@ -287,7 +295,16 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
             c &&
             c.organizations.length > 0 && <Text size="sm">Organizations: {c.organizations.map((o) => `${o.name} (${o.role})`).join(", ")}</Text>
           )}
-          <Group grow>
+          <Group grow align="flex-start">
+            <TextInput
+              label="Grid square"
+              placeholder="CM94sq"
+              disabled={shared}
+              value={grid}
+              onChange={(e) => setGridSquare(e.currentTarget.value)}
+              error={gridError(grid)}
+              description="Fills in the location"
+            />
             <TextInput label="Latitude" disabled={shared} value={form.lat} onChange={(e) => set("lat", e.currentTarget.value)} />
             <TextInput label="Longitude" disabled={shared} value={form.lon} onChange={(e) => set("lon", e.currentTarget.value)} />
             <TextInput label="Radius km" disabled={shared} value={form.radius} onChange={(e) => set("radius", e.currentTarget.value)} />
@@ -404,4 +421,11 @@ function StatusEditor(props: { channel: Channel; onSaved: () => void }) {
       <ReasonModal opened={asking} title={`Status of ${c.name}`} loading={save.isPending} onClose={() => setAsking(false)} onConfirm={(r) => save.mutate(r)} />
     </>
   );
+}
+
+/** gridError flags a complete-length grid square that isn't one; shorter
+ * text may still be being typed. */
+function gridError(v: string): string | undefined {
+  const t = v.trim();
+  return [4, 6, 8].includes(t.length) && !parseGrid(t) ? "Not a grid square" : undefined;
 }

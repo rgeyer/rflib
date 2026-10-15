@@ -218,6 +218,8 @@ func TestMatch(t *testing.T) {
 		{"is:simplex", "call"},
 		{"near:34.64,-120.46,1km", "marian"},
 		{"near:34.64,-120.46,10", "marian"},
+		{"near:cm94sq,10km", "marian"}, // a grid square's center, ~5 km away
+		{"near:CM94,40", "marian"},
 		{"near:36.3,-120.46,40", "uhf"},          // ~33 km to Far, which has no radius
 		{"near:34.64,-120.46,170", "marian uhf"}, // never the unlocated group
 		{"near:34.64,-120.46,10 OR -has:location", "call marian sheriff wx gmrs xband"},
@@ -285,6 +287,8 @@ func TestCompileErrors(t *testing.T) {
 		{"has:wings", `unknown value "wings"`},
 		{"near:34,-120", "use LAT,LON,KM"},
 		{"near:95,0,10", "latitude must be"},
+		{"near:CM94s,10", "not a grid square"},
+		{"near:CM94sq", "GRID,KM"},
 		{"near:34,-120,0", "must be positive"},
 		{"squelch:maybe", "use yes or no"},
 		{"created:yesterday", "dates are YYYY-MM-DD"},

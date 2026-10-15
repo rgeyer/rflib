@@ -367,3 +367,27 @@ func TestServiceOverrideAndWarnings(t *testing.T) {
 		t.Fatalf("summary = %+v", sum)
 	}
 }
+
+// A grid column locates a channel at the square's center, reaching its
+// corners unless radius_km is given.
+func TestCSVGrid(t *testing.T) {
+	csv := "name,receive_mhz,grid,latitude,longitude,radius_km\n" +
+		"Square,146.52,CM94sq,,,\n" +
+		"Sized,146.55,cm94,,,2\n" +
+		"Both,146.58,CM94,34,-120,\n" +
+		"Bad,146.61,CM9,,,\n"
+	b, err := ParseGenericCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Records) != 2 || len(b.Errors) != 2 {
+		t.Fatalf("records %d, errors %v", len(b.Records), b.Errors)
+	}
+	sq, sized := b.Records[0].Channel.Location, b.Records[1].Channel.Location
+	if sq == nil || sq.Latitude != 34.6875 || sq.Longitude != -120.458333 || sq.RadiusKM == nil || *sq.RadiusKM < 4 || *sq.RadiusKM > 5 {
+		t.Errorf("CM94sq = %+v", sq)
+	}
+	if sized == nil || sized.Latitude != 34.5 || sized.Longitude != -121 || *sized.RadiusKM != 2 {
+		t.Errorf("CM94 with a radius = %+v", sized)
+	}
+}

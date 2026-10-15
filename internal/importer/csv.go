@@ -13,7 +13,8 @@ import (
 
 // ParseGenericCSV reads the format written by export.GenericCSV. Columns are
 // matched by header name, so order doesn't matter and unknown columns are
-// ignored; only name and receive_mhz are required. Row numbers are file line
+// ignored; only name and receive_mhz are required. A grid column may give
+// a Maidenhead grid square in place of latitude and longitude. Row numbers are file line
 // numbers.
 func ParseGenericCSV(r io.Reader) (Batch, error) {
 	var b Batch
@@ -112,6 +113,21 @@ func channelFromCSV(get func(string) string) (domain.Channel, error) {
 	for i, name := range []string{"latitude", "longitude", "radius_km"} {
 		if loc[i], err = parseOptionalFloat(get(name)); err != nil {
 			return c, fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	if v := get("grid"); v != "" {
+		// A grid square instead of latitude and longitude: its center,
+		// reaching its corners unless radius_km says otherwise.
+		if loc[0] != nil || loc[1] != nil {
+			return c, domain.Invalidf("give grid or latitude and longitude, not both")
+		}
+		g, err := domain.ParseGrid(v)
+		if err != nil {
+			return c, err
+		}
+		loc[0], loc[1] = &g.Latitude, &g.Longitude
+		if loc[2] == nil {
+			loc[2] = &g.RadiusKM
 		}
 	}
 	if c.Location, err = domain.NewLocation(loc[0], loc[1], loc[2]); err != nil {
