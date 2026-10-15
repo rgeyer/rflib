@@ -1,0 +1,29 @@
+name: Data check
+
+# Weekly: compare rflib's shipped data (built-in lists, radio models, and the
+# rules behind band plans) with its sources, and open or update one issue
+# per dataset with findings. See tools/datacheck.
+on:
+  schedule:
+    - cron: "17 14 * * 1" # Mondays, 14:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: astral-sh/setup-uv@v6
+      - name: Describe CHIRP's radios
+        run: uv run tools/chirp_model.py --json > "$RUNNER_TEMP/chirp.json"
+      - name: Check data and update issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: go run ./tools/datacheck -chirp "$RUNNER_TEMP/chirp.json" -issues -summary "$GITHUB_STEP_SUMMARY"

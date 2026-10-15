@@ -6,6 +6,7 @@
 
     uv run tools/chirp_model.py --list uv-5r      # find the CHIRP radio
     uv run tools/chirp_model.py "Baofeng UV-5R"   # print a model file
+    uv run tools/chirp_model.py --json            # every radio, for tools/datacheck
 
 The draft holds what CHIRP's driver declares: memories, name limits, power
 levels, bands, and modes. Check it against the radio's manual or a CHIRP
@@ -68,8 +69,8 @@ def mhz(hz):
     return float(f"{hz / 1e6:.6f}")
 
 
-def draft(cls):
-    import chirp
+def features(cls):
+    """What the driver declares, in rflib's terms."""
     from chirp import chirp_common
 
     rf = cls(None).get_features()
@@ -77,47 +78,80 @@ def draft(cls):
     names = {"max_length": rf.valid_name_length, "charset": base}
     if extra:
         names["extra"] = extra
-    # CHIRP keeps power in dBm; rflib lists levels from lowest to highest.
+    # CHIRP keeps power in dBm (float(p); int(p) truncates); rflib lists
+    # levels from lowest to highest.
     power = []
     for p in rf.valid_power_levels:
-        watts = round(chirp_common.dBm_to_watts(int(p)), 2)
+        watts = chirp_common.dBm_to_watts(float(p))
         power.append({"label": str(p).strip() or f"{watts:g}W", "watts": watts})
     power.sort(key=lambda level: level["watts"])
-    # Some drivers declare placeholder bands, such as (0, 0).
-    bands = [[mhz(lo), mhz(hi)] for lo, hi in rf.valid_bands if 0 < lo <= hi]
-    modes = [m for m in RFLIB_MODES if m in rf.valid_modes]
-    dropped = sorted(set(rf.valid_modes) - set(RFLIB_MODES) - {""})
+    return {
+        "driver": f"{cls.__module__}.{cls.__name__}",
+        "memories": {"first": rf.memory_bounds[0], "last": rf.memory_bounds[1]},
+        "names": names,
+        "power": power,
+        # Some drivers declare placeholder bands, such as (0, 0).
+        "bands_mhz": [[mhz(lo), mhz(hi)] for lo, hi in rf.valid_bands if 0 < lo <= hi],
+        "modes": [m for m in RFLIB_MODES if m in rf.valid_modes],
+        "other_modes": sorted(set(rf.valid_modes) - set(RFLIB_MODES) - {""}),
+    }
+
+
+def version():
+    import chirp
+
+    return getattr(chirp, "CHIRP_VERSION", "unknown")
+
+
+def draft(cls):
+    f = features(cls)
     lines = [
         f"name: {slug(label(cls))}",
         f"description: {json.dumps(label(cls))}",
         "format: chirp",
         f"chirp_model: {json.dumps(label(cls))}",
-        f"memories: {{first: {rf.memory_bounds[0]}, last: {rf.memory_bounds[1]}}}",
-        f"names: {json.dumps(names)}",
-        f"power: {json.dumps(power)}",
-        f"bands_mhz: {json.dumps(bands)}",
-        f"modes: {json.dumps(modes)}",
+        f"memories: {{first: {f['memories']['first']}, last: {f['memories']['last']}}}",
+        f"names: {json.dumps(f['names'])}",
+        f"power: {json.dumps(f['power'])}",
+        f"bands_mhz: {json.dumps(f['bands_mhz'])}",
+        f"modes: {json.dumps(f['modes'])}",
     ]
     notes = "Drafted from CHIRP's driver; check against the radio's manual or a CHIRP export."
-    if dropped:
-        notes += f" CHIRP modes rflib doesn't have: {', '.join(dropped)}."
-    if not power:
+    if f["other_modes"]:
+        notes += f" CHIRP modes rflib doesn't have: {', '.join(f['other_modes'])}."
+    if not f["power"]:
         notes += " The driver lists no per-memory power levels."
-    if not bands:
+    if not f["bands_mhz"]:
         notes += " The driver lists no bands, so they aren't checked; add them from the manual."
     lines.append(f"notes: {json.dumps(notes)}")
-    version = getattr(chirp, "CHIRP_VERSION", "unknown")
     today = datetime.date.today().isoformat()
-    lines.append(f"source: {json.dumps(f'CHIRP driver {cls.__module__}.{cls.__name__} (chirp {version}), drafted by tools/chirp_model.py on {today}')}")
+    source = f"CHIRP driver {f['driver']} (chirp {version()}), drafted by tools/chirp_model.py on {today}"
+    lines.append(f"source: {json.dumps(source)}")
     return "\n".join(lines) + "\n"
+
+
+def dump(radios):
+    """Every radio's features, for tools/datacheck."""
+    out, failed = {}, {}
+    for name, cls in sorted(radios.items()):
+        try:
+            out[name] = features(cls)
+        except Exception as e:  # a driver that can't describe itself offline
+            failed[name] = f"{type(e).__name__}: {e}"
+    return {"chirp_version": version(), "radios": out, "failed": failed}
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("radio", nargs="?", help='the CHIRP radio, as --list shows it (such as "Baofeng UV-5R")')
     ap.add_argument("--list", metavar="TEXT", nargs="?", const="", help="list CHIRP radios, optionally only those containing TEXT")
+    ap.add_argument("--json", action="store_true", help="print every radio's features as JSON, for tools/datacheck")
     args = ap.parse_args()
     radios = {label(cls): cls for cls in drivers().values()}
+    if args.json:
+        json.dump(dump(radios), sys.stdout, indent=1, sort_keys=True)
+        print()
+        return 0
     if args.list is not None:
         for name in sorted(radios):
             if args.list.lower() in name.lower():

@@ -1,0 +1,154 @@
+# Where rflib's shipped data comes from, and how tools/datacheck checks it.
+# Every built-in list and model must be covered by a dataset here
+# (TestEveryListAndModelIsCovered).
+#
+# check:
+#   extract  fetch the source, parse it, and compare it with the data.
+#   watch    fetch the source and compare it with what was last reviewed
+#            (recorded); a difference means a person reviews the data.
+#   review   no source to fetch; reminds once verified is older than every.
+#
+# When you resolve a finding, update the data or this file (ignore,
+# recorded, verified) so the next run is clean.
+
+datasets:
+  # --- digital mode dial frequencies ---
+  - id: us-ft8
+    covers: [us-ft8]
+    check: extract
+    kind: wsjtx
+    mode: FT8
+    source: https://sourceforge.net/p/wsjt/wsjtx/ci/master/tree/models/FrequencyList.cpp?format=raw
+    ignore: ["50.323"] # the 6 m DX alternative, noted on FT8 6m
+  - id: us-ft4
+    covers: [us-ft4]
+    check: extract
+    kind: wsjtx
+    mode: FT4
+    source: https://sourceforge.net/p/wsjt/wsjtx/ci/master/tree/models/FrequencyList.cpp?format=raw
+  - id: us-wspr
+    covers: [us-wspr]
+    check: extract
+    kind: wsjtx
+    mode: WSPR
+    source: https://sourceforge.net/p/wsjt/wsjtx/ci/master/tree/models/FrequencyList.cpp?format=raw
+    ignore: ["0.136", "0.4742"] # 2200 m and 630 m aren't in rflib's band table
+  - id: us-js8
+    covers: [us-js8]
+    check: extract
+    kind: js8
+    source: https://raw.githubusercontent.com/js8call/js8call/master/FrequencyList.cpp
+    ignore: ["18.104", "50.318"] # shared with FT4, kept in us-ft4
+  - id: us-psk31
+    covers: [us-psk31]
+    check: review
+    source: amateur frequency compilations; there is no single authority
+    verified: 2026-10-14
+    every: 365d
+  - id: us-sstv
+    covers: [us-sstv]
+    check: review
+    source: amateur frequency compilations (W9FE, K3ASI); there is no single authority
+    verified: 2026-10-14
+    every: 365d
+
+  # --- satellites, beacons, and broadcasts ---
+  - id: us-fm-sats
+    covers: [us-fm-sats]
+    check: extract
+    kind: amsat-fm
+    source: https://www.amsat.org/fm-satellite-frequency-summary/
+    # The ISS is in us-iss; IO-86 is APRS in a low-inclination orbit;
+    # RS95S is on only during testing; TEVEL2 is a digipeater.
+    ignore: [ISS, IO-86, RS95S, TEVEL2]
+  - id: us-iss
+    covers: [us-iss, us-aprs]
+    check: review
+    source: https://www.ariss.org/contact-the-iss.html
+    verified: 2026-10-14
+    every: 365d
+  - id: us-beacons
+    covers: [us-beacons]
+    check: review
+    source: https://www.ncdxf.org/beacon/
+    verified: 2026-10-14
+    every: 730d
+  - id: us-radiofax
+    covers: [us-radiofax]
+    check: extract
+    kind: nws-radiofax
+    # NWS PNS 26-48 (2026-06-09) proposes ending these broadcasts at the end
+    # of 2026; a schedule that disappears is reported.
+    sources:
+      - https://tgftp.nws.noaa.gov/fax/hfreyes.txt
+      - https://tgftp.nws.noaa.gov/fax/hfgulf.txt
+      - https://tgftp.nws.noaa.gov/fax/hfmarsh.txt
+      - https://tgftp.nws.noaa.gov/fax/hfak.txt
+      - https://tgftp.nws.noaa.gov/fax/hfhi.txt
+  - id: us-time
+    covers: [us-time]
+    check: review
+    source: https://www.nist.gov/pml/time-and-frequency-division/time-distribution/radio-station-wwv
+    verified: 2026-10-14
+    every: 730d
+  - id: us-noaa
+    covers: [us-noaa]
+    check: review
+    source: https://www.weather.gov/nwr/
+    verified: 2026-10-12
+    every: 730d
+  - id: us-interop
+    covers: [us-interop]
+    check: review
+    # CISA's site refuses automated fetches, so the NIFOG is checked by hand.
+    # Entered from the RadioReference wiki's national interoperability table.
+    source: https://www.cisa.gov/safecom/field-operations-guides (the NIFOG)
+    verified: 2026-10-14
+    every: 365d
+
+  # --- rules behind the band plans ---
+  - id: fcc-part-97
+    covers: [us-60m, us-ham-calling, band-plan]
+    check: watch
+    kind: ecfr
+    title: 47
+    part: 97
+    source: https://www.ecfr.gov/current/title-47/part-97
+    # Section: the amendment date the data was last reviewed against. Empty
+    # means not yet reviewed.
+    recorded:
+      "97.301": ""
+      "97.303": ""
+      "97.305": ""
+  - id: fcc-part-95
+    covers: [us-frs, us-gmrs, us-murs, us-cb]
+    check: watch
+    kind: ecfr
+    title: 47
+    part: 95
+    source: https://www.ecfr.gov/current/title-47/part-95
+    recorded:
+      "95.563": "2017-09-28"  # FRS channels
+      "95.1763": "2021-09-28" # GMRS channels
+      "95.2763": "2017-09-28" # MURS channels
+      "95.963": "2017-09-28"  # CB channels
+
+  # --- radio models ---
+  - id: chirp-models
+    covers: [baofeng-uv5rm, explorer-qrz1, radioddity-uv5g, tidradio-tdh3-gmrs, tyt-th9800, yaesu-ft857]
+    check: extract
+    kind: chirp-models
+    source: CHIRP drivers (uv run tools/chirp_model.py --json)
+  - id: chirp-new-radios
+    covers: [chirp-generic]
+    check: extract
+    kind: chirp-radios
+    source: CHIRP drivers (uv run tools/chirp_model.py --json)
+    # The CHIRP radios last reviewed, one per line.
+    baseline: chirp-radios.txt
+  - id: yaesu-adms
+    covers: [yaesu-ftm150, yaesu-ftm6000]
+    check: review
+    source: the user's ADMS-17 and ADMS-13 exports
+    verified: 2026-10-13
+    every: 365d
