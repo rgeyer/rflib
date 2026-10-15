@@ -39,6 +39,18 @@ export function MapPage() {
       {channels.error && <Alert color="red">{channels.error.message}</Alert>}
       <MapContainer key={`${lib}-${located.length > 0}`} center={center} zoom={located.length ? 8 : 4} style={{ flex: 1, minHeight: 300 }}>
         <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        {/* Radii go first and take no clicks, so the markers above them stay clickable. */}
+        {located
+          .filter((c) => c.location!.radius_km != null)
+          .map((c) => (
+            <Circle
+              key={`r-${c.id}`}
+              center={[c.location!.latitude, c.location!.longitude]}
+              radius={c.location!.radius_km! * 1000}
+              interactive={false}
+              pathOptions={{ weight: 1, fillOpacity: 0.05 }}
+            />
+          ))}
         {located.map((c) => (
           <CircleMarker key={c.id} center={[c.location!.latitude, c.location!.longitude]} radius={6}>
             <Popup>
@@ -55,11 +67,6 @@ export function MapPage() {
           </CircleMarker>
         ))}
         <SystemLines systems={systems.data?.systems ?? []} where={(id) => where.get(id) ?? null} />
-        {located
-          .filter((c) => c.location!.radius_km != null)
-          .map((c) => (
-            <Circle key={`r-${c.id}`} center={[c.location!.latitude, c.location!.longitude]} radius={c.location!.radius_km! * 1000} pathOptions={{ weight: 1, fillOpacity: 0.05 }} />
-          ))}
       </MapContainer>
     </Stack>
   );

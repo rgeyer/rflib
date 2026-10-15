@@ -940,7 +940,9 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 	if c.ok("channel", "list", "tag:wx") != "" {
 		t.Error("dry run changed channels")
 	}
-	if got := c.status("channel", "update", "-q", "band:noaa", "--tags", "+wx,+weather", "--skip"); got != "Updated 7 channels" {
+	// The tags repeat the band, so the update warns, once per tag.
+	if got := c.status("channel", "update", "-q", "band:noaa", "--tags", "+wx,+weather", "--skip"); !strings.HasSuffix(got, "\nUpdated 7 channels") ||
+		!strings.Contains(got, `warning: tag "wx" repeats one of the channel's fields: band:wx finds it without the tag (on 7 channels)`) {
 		t.Errorf("bulk update = %q", got)
 	}
 	if got := c.ok("channel", "list", "tag:wx tag:weather skip:yes", "--fields", "name"); strings.Count(got, "\n") != 6 {
@@ -1076,6 +1078,8 @@ func TestSharedChannels(t *testing.T) {
 	if got := c.status("shared", "import", "csv", file, "--reason", "club list"); !strings.Contains(got, "Left off tags that aren't shared tags: mine") || !strings.Contains(got, "created 1") {
 		t.Errorf("shared import = %q", got)
 	}
+	// --tags adds to every channel, so it must name shared tags too.
+	c.fails(`tag "mine" isn't one of the shared tags`, "shared", "import", "csv", file, "--reason", "x", "--tags", "mine", "--on-duplicate", "update")
 	if got := c.ok("channel", "list", "in:shared", "name:Marian", "--fields", "name,tags"); got != "Marian\tnet" {
 		t.Errorf("imported shared channel = %q", got)
 	}

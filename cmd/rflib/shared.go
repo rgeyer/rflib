@@ -124,7 +124,7 @@ from the shared one is kept as a short name. Lists the changes on stdout.`}
 		}
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		return withApp(cmd, func(a *app.Service) error {
-			cvs, err := a.ConvertToLinks(ctx(cmd), nil, dryRun)
+			cvs, err := a.ConvertToLinks(ctx(cmd), nil, nil, dryRun)
 			if err != nil {
 				return err
 			}

@@ -165,8 +165,9 @@ func (e ChannelEdit) Apply(c *domain.Channel) {
 }
 
 // UpdateChannels applies an edit to every selected channel in one
-// transaction, and returns the channels as saved and their band-plan
-// warnings, each prefixed with the channel's name.
+// transaction, and returns the channels as saved and their warnings:
+// band-plan warnings prefixed with the channel's name, and one line per
+// added tag that repeats a field, with how many channels it does so on.
 func (s *Service) UpdateChannels(ctx context.Context, sel Selection, e ChannelEdit) ([]domain.Channel, []string, error) {
 	if err := s.writable(); err != nil {
 		return nil, nil, err
@@ -175,7 +176,8 @@ func (s *Service) UpdateChannels(ctx context.Context, sel Selection, e ChannelEd
 	if err != nil {
 		return nil, nil, err
 	}
-	var warnings []string
+	var warnings, repeats []string
+	repeated := map[string]int{}
 	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		for i := range cs {
 			before := cs[i]
@@ -191,11 +193,22 @@ func (s *Service) UpdateChannels(ctx context.Context, sel Selection, e ChannelEd
 			for _, w := range domain.CheckBandPlan(saved) {
 				warnings = append(warnings, saved.Name+": "+w)
 			}
+			for _, w := range addedTagRepeats(before, saved) {
+				if repeated[w]++; repeated[w] == 1 {
+					repeats = append(repeats, w)
+				}
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, nil, err
+	}
+	for _, w := range repeats {
+		if n := repeated[w]; n > 1 {
+			w = fmt.Sprintf("%s (on %d channels)", w, n)
+		}
+		warnings = append(warnings, w)
 	}
 	return cs, warnings, nil
 }

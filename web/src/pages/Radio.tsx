@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, call, download, type Memory, type Radio, type Source } from "../api/client";
 import { FilterMenu, QueryBar } from "../components/QueryBar";
+import { SourcePreview } from "../components/SourcePreview";
 import { useLib, useTags } from "../lib/library";
 import { failed, ok, warn } from "../lib/notify";
 import { usePlans } from "../lib/records";
@@ -441,6 +442,7 @@ function Sources() {
           Add source
         </Button>
       </Group>
+      <SourcePreview lib={lib} radio={radio} query={query} plan={plan} sort={sort} />
     </Stack>
   );
 }

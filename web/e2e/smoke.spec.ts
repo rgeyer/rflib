@@ -234,3 +234,82 @@ test("generic CHIRP radio with a name length", async ({ page }) => {
   await expect(page).toHaveURL(/\/radios\/Spare$/);
   await expect(page.getByText("names up to 7")).toBeVisible();
 });
+
+// A channel's radius is drawn under its marker and takes no clicks, so the
+// marker still opens its popup.
+test("map markers stay clickable inside a radius", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/channels", {
+    data: { name: "Radius Test", rx_hz: 145_650_000, mode: "FM", location: { latitude: 34.69, longitude: -120.46, radius_km: 50 } },
+  });
+  await page.goto("/l/default/map");
+  await page.getByLabel("Search").fill("name:\"Radius Test\"");
+  await expect(page.getByText("1 channels with a location")).toBeVisible();
+  // The marker is the smallest shape on the map; click its center.
+  const paths = page.locator(".leaflet-overlay-pane path");
+  await expect(paths).toHaveCount(2);
+  const boxes = await paths.evaluateAll((ps) => ps.map((p) => p.getBoundingClientRect().toJSON()));
+  const marker = boxes.reduce((a, b) => (a.width <= b.width ? a : b));
+  await page.mouse.click(marker.x + marker.width / 2, marker.y + marker.height / 2);
+  await expect(page.locator(".leaflet-popup").getByText("Radius Test")).toBeVisible();
+});
+
+// The channel editor suggests tags already in use, and still takes new ones.
+test("tags suggest existing ones", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/channels", { data: { name: "Tagged", rx_hz: 146_550_000, mode: "FM", tags: ["fieldday"] } });
+  await page.goto("/l/default/channels");
+  await page.getByRole("button", { name: "New channel" }).click();
+  const tags = page.getByRole("combobox", { name: "Tags" });
+  await tags.click();
+  await tags.fill("field");
+  await page.getByRole("option", { name: "fieldday" }).click();
+  await tags.fill("brandnew");
+  await tags.press("Enter");
+  await expect(page.getByRole("dialog").getByText("fieldday", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("brandnew", { exact: true })).toBeVisible();
+});
+
+// A private channel that matches a shared one is offered for linking.
+test("link my channels to the shared list", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/seeds/us-murs/install", { data: {} });
+  await request.post("/api/v1/libraries/default/channels", {
+    data: { name: "My MURS 1", rx_hz: 151_820_000, tx_hz: 151_820_000, mode: "NFM", service: "murs" },
+  });
+  await page.goto("/l/default/channels");
+  await page.getByRole("button", { name: "Link to shared list" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("row", { name: /My MURS 1/ })).toBeVisible();
+  await dialog.getByRole("button", { name: /^Link \d+ channels$/ }).click();
+  await expect(page.getByText(/Linked \d+ channels to the shared list/)).toBeVisible();
+  await page.getByRole("button", { name: "Link to shared list" }).click();
+  await expect(page.getByRole("dialog").getByText("None of your channels match a shared channel.")).toBeVisible();
+});
+
+// A search becomes a radio source, with a preview of what it would add,
+// and the Sources tab previews a new source the same way.
+test("add a search as a radio source, with a preview", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/seeds/us-gmrs/install", { data: {} });
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Previewer", model: "baofeng-uv5rm" } });
+  await page.goto("/l/default/channels");
+  await page.getByLabel("Search").first().fill("service:gmrs");
+  await page.getByRole("button", { name: "Add search as source" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("combobox", { name: "Radio" }).click();
+  await page.getByRole("option", { name: "Previewer" }).click();
+  await expect(dialog.getByText(/Sync would add \d+ channels to Previewer/)).toBeVisible();
+  // In the dialog the list scrolls within a set height.
+  await expect(dialog.locator(".mantine-ScrollArea-root")).toHaveCount(1);
+  await dialog.getByRole("button", { name: "Add source and sync" }).click();
+  await expect(page.getByText(/Added the search to Previewer as a source and synced: \d+ channels added/)).toBeVisible();
+
+  await page.goto("/l/default/radios/Previewer");
+  await page.getByRole("tab", { name: "Sources" }).click();
+  await page.getByLabel("New source query", { exact: true }).fill("service:gmrs");
+  await expect(page.getByText("Would add nothing new")).toBeVisible();
+  // On the page the list takes the room it needs, not a scrolling box.
+  await request.post("/api/v1/libraries/default/seeds/us-noaa/install", { data: {} });
+  await page.getByLabel("New source query", { exact: true }).fill("service:noaa");
+  const preview = page.getByLabel("Source preview");
+  await expect(preview.getByText(/Sync would add 7 channels to Previewer/)).toBeVisible();
+  await expect(preview.getByRole("row")).toHaveCount(7);
+  await expect(preview.locator(".mantine-ScrollArea-root")).toHaveCount(0);
+});

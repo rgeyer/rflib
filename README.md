@@ -58,8 +58,8 @@ The `shared` library holds channels shared with everyone: the built-in lists now
 
 - **What's yours on a link:** tags, notes, skip, power, and short names. Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which keeps the channel's ID (so radios keep it) and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
 - **Names:** a link shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
-- **Converting:** `shared link` and `seed install` turn a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart.
-- **Shared tags** come from a short list with agreed meanings: `rflib tag list`. Your own tags are free-form, and one with a shared tag's name means the same thing.
+- **Converting:** `shared link` and `seed install` turn a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart. In the web interface, **Link to shared list** on the Channels page lists your matching channels and links the ones you pick.
+- **Shared tags** come from a short list with agreed meanings: `rflib tag list`. None repeats a channel's fields (service, band, mode, or duplex), which search finds without a tag. Your own tags are free-form, and one with a shared tag's name means the same thing. Adding one of your own that repeats the channel's fields, such as `cb` on a CB channel, `ham` on an amateur one, or `repeater` on a repeater, is allowed but warns you that `service:cb` (and so on) already finds it.
 - **The shared library is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`.
 
 ### Status and changes
@@ -84,7 +84,7 @@ Channels record a receive frequency plus an optional transmit frequency. Use mat
 
 ```sh
 ./rflib channel add --name "National Calling" \
-  --rx 146.520 --tx 146.520 --mode FM --tags "ham,simplex"
+  --rx 146.520 --tx 146.520 --mode FM --service amateur --tags "calling,mobile"
 
 ./rflib channel add --name "Local Repeater" \
   --rx 146.940 --tx 146.340 --mode FM --lat 45.5152 --lon -122.6784 --radius-km 40 \
@@ -391,7 +391,7 @@ A channel can carry its nodes on linking networks: AllStar, EchoLink, IRLP, and 
 ./rflib shared update --id <id> --networks allstar:43761 --reason "node numbers"
 ```
 
-The shared tags `linked`, `allstar`, `echolink`, and `wires-x` are gone: network nodes and systems say it better. Upgrading (`rflib init`) takes them off shared channels; your own tags stay.
+The shared tags `linked`, `allstar`, `echolink`, and `wires-x` are gone: network nodes and systems say it better. So is `simplex`, which `is:simplex` finds. Upgrading (`rflib init`) takes them off shared channels; your own tags stay.
 
 ### Organizations
 
@@ -661,7 +661,7 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 - **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
 - **Shared list:** select channels to link them into your library, optionally onto a radio in the same step. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who links the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
-- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources; sync with a preview; and the programming file to download.
+- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources, with a preview of what a new source would add before you add it; sync with a preview; and the programming file to download. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
 - **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
 - **Import:** a file, its options, a dry-run preview, then the import.
 - **Built-in lists** and **shared changes**, as `rflib seed install` and `rflib shared changes` do. An install's preview shows what the shared list gains and names your channels that will become links.

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/ryan/rflib/internal/domain"
@@ -74,7 +75,8 @@ func (s *Service) ChangedSince(ctx context.Context, since time.Time) ([]domain.C
 // --- channels ---
 
 // CreateChannel stores a channel and returns its band-plan warnings (see
-// domain.CheckBandPlan), which don't stop it being saved.
+// domain.CheckBandPlan) and warnings for tags that repeat its fields (see
+// addedTagRepeats), which don't stop it being saved.
 func (s *Service) CreateChannel(ctx context.Context, c domain.Channel) (domain.Channel, []string, error) {
 	if err := s.writable(); err != nil {
 		return c, nil, err
@@ -83,11 +85,20 @@ func (s *Service) CreateChannel(ctx context.Context, c domain.Channel) (domain.C
 	if err != nil {
 		return c, nil, err
 	}
-	return c, domain.CheckBandPlan(c), nil
+	return c, append(domain.CheckBandPlan(c), addedTagRepeats(domain.Channel{}, c)...), nil
 }
 
-// UpdateChannel saves a channel and returns its band-plan warnings. A link
-// can change only what's its own (see LinkedEdit).
+// addedTagRepeats warns about the tags after has and before didn't that
+// repeat one of the channel's fields (see query.TagRepeats). Only added
+// tags warn, so a tag kept from before doesn't warn on every save.
+func addedTagRepeats(before, after domain.Channel) []string {
+	added := after
+	added.Tags = slices.DeleteFunc(slices.Clone(after.Tags), func(t string) bool { return slices.Contains(before.Tags, t) })
+	return query.TagRepeats(added)
+}
+
+// UpdateChannel saves a channel and returns its band-plan and added-tag
+// warnings. A link can change only what's its own (see LinkedEdit).
 func (s *Service) UpdateChannel(ctx context.Context, c domain.Channel) (domain.Channel, []string, error) {
 	if err := s.writable(); err != nil {
 		return c, nil, err
@@ -103,7 +114,7 @@ func (s *Service) UpdateChannel(ctx context.Context, c domain.Channel) (domain.C
 	if err != nil {
 		return c, nil, err
 	}
-	return c, domain.CheckBandPlan(c), nil
+	return c, append(domain.CheckBandPlan(c), addedTagRepeats(old, c)...), nil
 }
 
 // GetChannel looks a channel up by ID or unique ID prefix (see ChannelID).

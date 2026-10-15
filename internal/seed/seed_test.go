@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/query"
 )
 
 func TestEveryListIsDescribed(t *testing.T) {
@@ -66,6 +67,25 @@ func TestListsDontOverlap(t *testing.T) {
 			case other == "us-frs" && l.ID == "us-gmrs":
 			default:
 				t.Errorf("%s: %s is also in %s", l.ID, r.Channel.Name, other)
+			}
+		}
+	}
+}
+
+// Lists carry only shared tags, which never repeat a channel's fields, so
+// nothing is dropped on install and the shared list has no duplication.
+func TestListTagsAreSharedTags(t *testing.T) {
+	for _, l := range Lists() {
+		b, err := l.Batch()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range b.Records {
+			if err := domain.ValidateSharedTags(r.Channel.Tags); err != nil {
+				t.Errorf("%s: %s: %v", l.ID, r.Channel.Name, err)
+			}
+			if w := query.TagRepeats(r.Channel); len(w) > 0 {
+				t.Errorf("%s: %s: %v", l.ID, r.Channel.Name, w)
 			}
 		}
 	}

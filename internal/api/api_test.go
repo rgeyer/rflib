@@ -452,3 +452,65 @@ func TestOrganizationsSystemsAndPlans(t *testing.T) {
 	}
 	c.do("DELETE", "/systems/SBARC%20Hub", nil, 204, nil)
 }
+
+// Private channels that match shared ones are found with a dry run, and
+// only the ones picked become links.
+func TestConvertPickedChannels(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	c.do("POST", L+"/seeds/us-noaa/install", map[string]any{}, 200, nil)
+	var a, b channelResult
+	c.do("POST", L+"/channels", map[string]any{"name": "Weather 1", "rx_hz": 162_550_000, "mode": "FM", "service": "noaa", "rx_only": true}, 201, &a)
+	c.do("POST", L+"/channels", map[string]any{"name": "Weather 2", "rx_hz": 162_400_000, "mode": "FM", "service": "noaa", "rx_only": true}, 201, &b)
+	var found struct {
+		Conversions []Conversion `json:"conversions"`
+	}
+	c.do("POST", L+"/shared/convert", map[string]any{"dry_run": true}, 200, &found)
+	if len(found.Conversions) != 2 {
+		t.Fatalf("dry run = %+v", found.Conversions)
+	}
+	c.do("POST", L+"/shared/convert", map[string]any{"ids": []string{a.Channel.ID}}, 200, &found)
+	if len(found.Conversions) != 1 || found.Conversions[0].Channel.ID != a.Channel.ID || found.Conversions[0].Link.Link == nil {
+		t.Fatalf("converted = %+v", found.Conversions)
+	}
+	var left Channel
+	c.do("GET", L+"/channels/"+b.Channel.ID, nil, 200, &left)
+	if left.Link != nil {
+		t.Errorf("Weather 2 was linked without being picked: %+v", left.Link)
+	}
+}
+
+// A source preview lists what the source would add after the radio's
+// sources claim theirs, without adding it.
+func TestPreviewSource(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	for _, seed := range []string{"us-noaa", "us-gmrs", "us-ham-calling"} {
+		c.do("POST", L+"/seeds/"+seed+"/install", map[string]any{}, 200, nil)
+	}
+	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/sources", map[string]any{"query": "band:noaa"}, 201, nil)
+	var p struct {
+		Added     int       `json:"added"`
+		Channels  []Channel `json:"channels"`
+		Skipped   []Channel `json:"skipped"`
+		WrongMode []Channel `json:"wrong_mode"`
+	}
+	c.do("POST", L+"/radios/HT/sources/preview", map[string]any{"query": `band:noaa OR service:murs OR name:"6m FM Call" OR name:"2m FM Call"`}, 200, &p)
+	if p.Added != 1 || len(p.Channels) != 1 || p.Channels[0].Name != "2m FM Call" {
+		t.Errorf("would add %d: %+v (NOAA belongs to source 1)", p.Added, p.Channels)
+	}
+	if len(p.Skipped) != 1 || p.Skipped[0].Name != "6m FM Call" {
+		t.Errorf("skipped = %+v", p.Skipped)
+	}
+	var srcs struct {
+		Sources []Source `json:"sources"`
+	}
+	c.do("GET", L+"/radios/HT/sources", nil, 200, &srcs)
+	if len(srcs.Sources) != 1 {
+		t.Errorf("the preview added a source: %+v", srcs.Sources)
+	}
+	if code := c.errCode("POST", L+"/radios/HT/sources/preview", map[string]any{"query": "band:nowhere"}, 400); code != "invalid" {
+		t.Errorf("bad query: %s", code)
+	}
+}

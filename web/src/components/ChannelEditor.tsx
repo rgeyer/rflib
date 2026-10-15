@@ -3,7 +3,7 @@ import { IconLink } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, call, type Channel, type ChannelInput } from "../api/client";
-import { useLib } from "../lib/library";
+import { useLib, useTags } from "../lib/library";
 import { useOrgs } from "../lib/records";
 import { failed, ok, warn } from "../lib/notify";
 import { formatMHz, MODES, parseMHz, POWERS, SERVICES } from "../lib/radio";
@@ -104,6 +104,7 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
   const maintainer = props.maintainer === true && c !== null && !linked;
   const [asking, setAsking] = useState(false);
   const orgs = useOrgs();
+  const tags = useTags(lib);
   const curated = useQuery({ queryKey: ["tags"], queryFn: () => call<{ tags: { name: string }[] }>(api.GET("/tags")), staleTime: Infinity });
   useEffect(() => setForm(c ? fromChannel(c) : blank), [c, props.opened]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -241,7 +242,14 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
               onChange={(v) => set("tags", v)}
             />
           ) : (
-            <TagsInput label="Tags" disabled={ownFixed} value={form.tags} onChange={(v) => set("tags", v)} />
+            <TagsInput
+              label="Tags"
+              description="Pick a tag in use, or type a new one"
+              disabled={ownFixed}
+              data={tags}
+              value={form.tags}
+              onChange={(v) => set("tags", v)}
+            />
           )}
           {linked && c?.link && c.link.tags.length > 0 && (
             <Text size="xs" c="dimmed">

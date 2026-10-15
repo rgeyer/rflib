@@ -1,13 +1,14 @@
 import { Alert, Badge, Button, Checkbox, Group, Modal, Select, Stack, Switch, Table, TagsInput, Text, Title, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconLink, IconPlus } from "@tabler/icons-react";
+import { IconLink, IconPlus, IconSearch } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, call, type Channel, type Library, type Radio } from "../api/client";
+import { api, call, type Channel, type Conversion, type Library, type Radio } from "../api/client";
 import { ChannelEditor } from "../components/ChannelEditor";
 import { QueryBar } from "../components/QueryBar";
+import { SourcePreview } from "../components/SourcePreview";
 import { useLib, usePrivateLibraries, useTags } from "../lib/library";
 import { failed, ok, warn } from "../lib/notify";
 import { duplex, formatMHz, offsetMHz, SERVICES, toneSummary } from "../lib/radio";
@@ -27,6 +28,8 @@ export function Channels() {
   const [radioAction, setRadioAction] = useState(false);
   const [linking, setLinking] = useState(false);
   const [serviceAction, setServiceAction] = useState(false);
+  const [matching, setMatching] = useState(false);
+  const [sourcing, setSourcing] = useState(false);
   const tags = useTags(lib);
 
   const library = useQuery({
@@ -69,21 +72,31 @@ export function Channels() {
       <Group justify="space-between">
         <Title order={2}>Channels</Title>
         {!readOnly && (
-          <Button
-            leftSection={<IconPlus size={16} />}
-            onClick={() => {
-              setEditing(null);
-              setEditorOpen(true);
-            }}
-          >
-            New channel
-          </Button>
+          <Group>
+            <Button variant="light" leftSection={<IconLink size={16} />} onClick={() => setMatching(true)}>
+              Link to shared list
+            </Button>
+            <Button
+              leftSection={<IconPlus size={16} />}
+              onClick={() => {
+                setEditing(null);
+                setEditorOpen(true);
+              }}
+            >
+              New channel
+            </Button>
+          </Group>
         )}
       </Group>
       <Group align="start">
         <QueryBar value={text} onChange={setText} tags={tags} />
         {!library.data?.shared && (
           <Switch label="Search the shared list" checked={shared} onChange={(e) => setShared(e.currentTarget.checked)} />
+        )}
+        {!readOnly && text.trim() !== "" && (
+          <Button variant="light" leftSection={<IconSearch size={16} />} onClick={() => setSourcing(true)}>
+            Add search as source
+          </Button>
         )}
       </Group>
       {channels.error && <Alert color="red">{channels.error.message}</Alert>}
@@ -211,6 +224,8 @@ export function Channels() {
         </Table>
       </Table.ScrollContainer>
       <ChannelEditor channel={editing} opened={editorOpen} onClose={() => setEditorOpen(false)} readOnly={readOnly} maintainer={maintainer} />
+      <MatchModal opened={matching} onClose={() => setMatching(false)} onDone={after} />
+      <SourceModal opened={sourcing} query={text} onClose={() => setSourcing(false)} onDone={after} />
       <LinkModal opened={linking} ids={ids} current={maintainer ? null : lib} onClose={() => setLinking(false)} onDone={after} />
       <TagModal action={tagAction} ids={ids} onClose={() => setTagAction(null)} onDone={after} />
       <ServiceModal
@@ -228,6 +243,7 @@ export function Channels() {
 function TagModal(props: { action: "add" | "remove" | null; ids: string[]; onClose: () => void; onDone: (msg: string) => void }) {
   const lib = useLib();
   const [tags, setTags] = useState<string[]>([]);
+  const known = useTags(lib);
   const save = useMutation({
     mutationFn: () =>
       call(
@@ -239,6 +255,7 @@ function TagModal(props: { action: "add" | "remove" | null; ids: string[]; onClo
     onSuccess: (r) => {
       props.onClose();
       setTags([]);
+      warn(r.warnings);
       props.onDone(`Updated ${r.channels.length} channels`);
     },
     onError: failed,
@@ -246,7 +263,14 @@ function TagModal(props: { action: "add" | "remove" | null; ids: string[]; onClo
   return (
     <Modal opened={props.action !== null} onClose={props.onClose} title={props.action === "add" ? "Add tags" : "Remove tags"}>
       <Stack>
-        <TagsInput label="Tags" value={tags} onChange={setTags} data-autofocus />
+        <TagsInput
+          label="Tags"
+          description={props.action === "add" ? "Pick a tag in use, or type a new one" : undefined}
+          data={known}
+          value={tags}
+          onChange={setTags}
+          data-autofocus
+        />
         <Button onClick={() => save.mutate()} loading={save.isPending} disabled={tags.length === 0}>
           {props.action === "add" ? "Add" : "Remove"} on {props.ids.length} channels
         </Button>
@@ -385,6 +409,149 @@ function LinkModal(props: { opened: boolean; ids: string[]; current: string | nu
         <Button onClick={() => link.mutate()} loading={link.isPending} disabled={target === null}>
           Link {props.ids.length} channels
         </Button>
+      </Stack>
+    </Modal>
+  );
+}
+
+/** MatchModal finds the library's private channels that match a shared
+ * channel on the air, and turns the ones picked into links to it. */
+function MatchModal(props: { opened: boolean; onClose: () => void; onDone: (msg: string) => void }) {
+  const lib = useLib();
+  const matches = useQuery({
+    queryKey: ["matches", lib],
+    queryFn: () =>
+      call<{ conversions: Conversion[] }>(api.POST("/libraries/{lib}/shared/convert", { params: { path: { lib } }, body: { dry_run: true } })),
+    enabled: props.opened,
+    gcTime: 0,
+  });
+  const found = matches.data?.conversions ?? [];
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  useEffect(() => setPicked(new Set(found.map((m) => m.channel.id))), [matches.data]);
+  const link = useMutation({
+    mutationFn: () =>
+      call(api.POST("/libraries/{lib}/shared/convert", { params: { path: { lib } }, body: { ids: [...picked] } })),
+    onSuccess: (r) => {
+      props.onClose();
+      props.onDone(`Linked ${r.conversions.length} channels to the shared list`);
+    },
+    onError: failed,
+  });
+  const toggle = (id: string) =>
+    setPicked((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  return (
+    <Modal opened={props.opened} onClose={props.onClose} title="Link to shared list" size="xl">
+      <Stack>
+        <Text size="sm">
+          These channels match a shared channel on the air: the same frequencies, tones, and tone squelch, and the same service or none. A
+          link follows the shared channel's corrections. It stays on your radios, keeps your tags and notes, and keeps a different name as
+          a short name.
+        </Text>
+        {matches.error && <Alert color="red">{matches.error.message}</Alert>}
+        {matches.isLoading ? (
+          <Text size="sm">Looking for matches…</Text>
+        ) : found.length === 0 ? (
+          <Text size="sm">None of your channels match a shared channel.</Text>
+        ) : (
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>
+                  <Checkbox
+                    aria-label="Pick all"
+                    checked={picked.size === found.length}
+                    indeterminate={picked.size > 0 && picked.size < found.length}
+                    onChange={() => setPicked(picked.size === found.length ? new Set() : new Set(found.map((m) => m.channel.id)))}
+                  />
+                </Table.Th>
+                <Table.Th>Your channel</Table.Th>
+                <Table.Th>Shared channel</Table.Th>
+                <Table.Th>Frequency</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {found.map((m) => (
+                <Table.Tr key={m.channel.id}>
+                  <Table.Td>
+                    <Checkbox aria-label={`Link ${m.channel.name}`} checked={picked.has(m.channel.id)} onChange={() => toggle(m.channel.id)} />
+                  </Table.Td>
+                  <Table.Td>{m.channel.name}</Table.Td>
+                  <Table.Td>
+                    {m.shared.name}
+                    {m.shared.status && m.shared.status !== "active" && (
+                      <Badge ml="xs" size="sm" color="orange" variant="light">
+                        {m.shared.status}
+                      </Badge>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {formatMHz(m.channel.rx_hz)} {toneSummary(m.channel)}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        )}
+        <Button onClick={() => link.mutate()} loading={link.isPending} disabled={picked.size === 0}>
+          Link {picked.size} channels
+        </Button>
+      </Stack>
+    </Modal>
+  );
+}
+
+/** SourceModal adds the current search to a radio as a source, showing
+ * first what it would add, and optionally syncs it. */
+function SourceModal(props: { opened: boolean; query: string; onClose: () => void; onDone: (msg: string) => void }) {
+  const lib = useLib();
+  const [radio, setRadio] = useState<string | null>(null);
+  const [sort, setSort] = useState("name");
+  const radios = useQuery({
+    queryKey: ["radios", lib],
+    queryFn: () => call<{ radios: Radio[] }>(api.GET("/libraries/{lib}/radios", { params: { path: { lib } } })),
+    enabled: props.opened,
+  });
+  const add = useMutation({
+    mutationFn: async (andSync: boolean) => {
+      const path = { lib, radio: radio! };
+      await call(api.POST("/libraries/{lib}/radios/{radio}/sources", { params: { path }, body: { query: props.query.trim(), sort } }));
+      if (!andSync) return `Added the search to ${radio} as a source; sync to add its channels`;
+      const r = await call(api.POST("/libraries/{lib}/radios/{radio}/sync", { params: { path }, body: {} }));
+      return `Added the search to ${radio} as a source and synced: ${r.added} channels added`;
+    },
+    onSuccess: (msg) => {
+      props.onClose();
+      props.onDone(msg);
+    },
+    onError: failed,
+  });
+  return (
+    <Modal opened={props.opened} onClose={props.onClose} title="Add search as source" size="lg">
+      <Stack>
+        <Text size="sm">
+          A source is a saved search on a radio: each sync adds its new matches to the radio, in its own part of the list. Search:{" "}
+          <Text span ff="monospace">
+            {props.query.trim()}
+          </Text>
+        </Text>
+        <Group grow>
+          <Select label="Radio" placeholder="Pick a radio" data={(radios.data?.radios ?? []).map((r) => r.name)} value={radio} onChange={setRadio} />
+          <Select label="Sort" data={["name", "freq"]} value={sort} allowDeselect={false} onChange={(v) => v && setSort(v)} />
+        </Group>
+        <SourcePreview lib={lib} radio={radio} query={props.query} sort={sort} maxHeight={320} />
+        <Group>
+          <Button onClick={() => add.mutate(true)} loading={add.isPending} disabled={radio === null}>
+            Add source and sync
+          </Button>
+          <Button variant="light" onClick={() => add.mutate(false)} loading={add.isPending} disabled={radio === null}>
+            Add source only
+          </Button>
+        </Group>
       </Stack>
     </Modal>
   );

@@ -390,21 +390,30 @@ func (s *Service) AddSource(ctx context.Context, radio string, src domain.RadioS
 	if err != nil {
 		return r, src, err
 	}
-	if src.PlanID != "" {
-		if src.Query != "" {
-			return r, src, domain.Invalidf("a source is a query or a plan, not both")
-		}
-		p, err := s.GetPlan(ctx, src.PlanID)
-		if err != nil {
-			return r, src, err
-		}
-		src.PlanID, src.PlanName = p.ID, p.Name
-	} else if _, err := s.CheckQuery(ctx, src.Query, nil); err != nil {
+	if err := s.checkSource(ctx, &src); err != nil {
 		return r, src, err
 	}
 	src.RadioID, src.Sort = r.ID, orDefault(src.Sort, "name")
 	src, err = s.lib.AddRadioSource(ctx, src)
 	return r, src, err
+}
+
+// checkSource checks a new source's query, or resolves its plan, whose
+// PlanID may be the plan's name.
+func (s *Service) checkSource(ctx context.Context, src *domain.RadioSource) error {
+	if src.PlanID == "" {
+		_, err := s.CheckQuery(ctx, src.Query, nil)
+		return err
+	}
+	if src.Query != "" {
+		return domain.Invalidf("a source is a query or a plan, not both")
+	}
+	p, err := s.GetPlan(ctx, src.PlanID)
+	if err != nil {
+		return err
+	}
+	src.PlanID, src.PlanName = p.ID, p.Name
+	return nil
 }
 
 // UpdateSource saves a changed source after checking its query, and
@@ -502,7 +511,6 @@ type SyncOptions struct {
 // places in the list they hold; channels added or moved by hand keep
 // theirs, and section starts stay where they are.
 func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (SyncResult, error) {
-	dryRun, anyBand := opts.DryRun, opts.AnyBand
 	r, m, err := s.RadioModel(ctx, radio)
 	res := SyncResult{Radio: r}
 	if err != nil {
@@ -515,9 +523,51 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 	if len(sources) == 0 {
 		return res, domain.Invalidf("%s has no sources; add one with: rflib radio sources add %s QUERY", r.Name, r.Name)
 	}
+	if res.Sources, err = s.syncSources(ctx, r, m, sources, opts); err != nil {
+		return res, err
+	}
+	if err := s.resort(ctx, r, &res, opts); err != nil {
+		return res, err
+	}
+	if !opts.DryRun {
+		if _, _, err := s.Layout(ctx, r.ID); err != nil {
+			res.LayoutErr = err
+		}
+	}
+	return res, nil
+}
+
+// PreviewSource reports what a new source would add to a radio, after its
+// existing sources claim their channels, without adding the source.
+func (s *Service) PreviewSource(ctx context.Context, radio string, src domain.RadioSource, opts SyncOptions) (SourceSync, error) {
+	r, m, err := s.RadioModel(ctx, radio)
+	if err != nil {
+		return SourceSync{}, err
+	}
+	if err := s.checkSource(ctx, &src); err != nil {
+		return SourceSync{}, err
+	}
+	sources, err := s.lib.RadioSources(ctx, r.ID)
+	if err != nil {
+		return SourceSync{}, err
+	}
+	src.RadioID, src.Position, src.Sort = r.ID, len(sources), orDefault(src.Sort, "name")
+	opts.DryRun = true
+	synced, err := s.syncSources(ctx, r, m, append(sources, src), opts)
+	if err != nil {
+		return SourceSync{}, err
+	}
+	return synced[len(synced)-1], nil
+}
+
+// syncSources works out each source's additions in order (see Sync), and
+// adds them unless opts.DryRun.
+func (s *Service) syncSources(ctx context.Context, r domain.Radio, m model.Model, sources []domain.RadioSource, opts SyncOptions) ([]SourceSync, error) {
+	dryRun, anyBand := opts.DryRun, opts.AnyBand
+	var out []SourceSync
 	claimed, err := s.lib.RadioChannelIDs(ctx, r.ID)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 	// Plans claim their channels first: each is a curated list, so its
 	// channels belong in its part of the radio whatever else matches them.
@@ -526,14 +576,14 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 		if src.PlanID != "" {
 			ss, err := s.syncPlan(ctx, r, m, src, claimed, opts)
 			if err != nil {
-				return res, fmt.Errorf("source %d: %w", src.Position+1, err)
+				return nil, fmt.Errorf("source %d: %w", src.Position+1, err)
 			}
 			plans[src.ID] = ss
 		}
 	}
 	for _, src := range sources {
 		if src.PlanID != "" {
-			res.Sources = append(res.Sources, plans[src.ID])
+			out = append(out, plans[src.ID])
 			continue
 		}
 		n, err := query.Parse(src.Query)
@@ -541,14 +591,14 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 			err = localQuery(n)
 		}
 		if err != nil {
-			return res, fmt.Errorf("source %d: %w", src.Position+1, err)
+			return nil, fmt.Errorf("source %d: %w", src.Position+1, err)
 		}
 		cs, err := s.FindChannels(ctx, n)
 		if err != nil {
-			return res, fmt.Errorf("source %d: %w", src.Position+1, err)
+			return nil, fmt.Errorf("source %d: %w", src.Position+1, err)
 		}
 		if err := domain.SortChannels(cs, src.Sort); err != nil {
-			return res, err
+			return nil, err
 		}
 		var unclaimed []domain.Channel
 		for _, c := range cs {
@@ -565,20 +615,12 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 		}
 		if !dryRun && len(ids) > 0 {
 			if ss.Added, err = s.lib.AddSourceChannels(ctx, src, ids); err != nil {
-				return res, err
+				return nil, err
 			}
 		}
-		res.Sources = append(res.Sources, ss)
+		out = append(out, ss)
 	}
-	if err := s.resort(ctx, r, &res, opts); err != nil {
-		return res, err
-	}
-	if !dryRun {
-		if _, _, err := s.Layout(ctx, r.ID); err != nil {
-			res.LayoutErr = err
-		}
-	}
-	return res, nil
+	return out, nil
 }
 
 // resort re-sorts the sources that ask for it, or all of them with

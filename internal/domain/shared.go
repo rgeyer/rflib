@@ -164,7 +164,7 @@ var CuratedTags = []struct{ Name, Meaning string }{
 	{"net", "hosts a regular scheduled net"},
 	{"emergency", "set aside for emergency traffic"},
 	{"travel", "useful to travelers, such as a highway or travel net"},
-	{"simplex", "a simplex frequency in common use"},
+	{"winlink", "a Winlink RMS gateway, for radio email"},
 }
 
 // ValidateSharedTags checks a shared channel's tags are all curated.

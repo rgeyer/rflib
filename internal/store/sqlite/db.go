@@ -223,6 +223,9 @@ DELETE FROM channel_tags WHERE tag IN ('linked', 'allstar', 'echolink', 'wires-x
 	// A radio's own name length, for models that don't know the radio's
 	// (such as chirp-generic); 0 uses the model's.
 	{version: 13, sql: `ALTER TABLE radios ADD COLUMN name_length INTEGER NOT NULL DEFAULT 0;`},
+	// simplex is no longer a shared tag: is:simplex already finds simplex
+	// channels. It comes off shared channels; links' own tags stay.
+	{version: 14, sql: `DELETE FROM channel_tags WHERE tag = 'simplex' AND channel_id IN (SELECT id FROM channels WHERE link_id IS NULL AND library_id IN (SELECT id FROM libraries WHERE kind = 'shared'));`},
 }
 
 // ungroup finishes migration 9 once new_channels holds the channels: it
