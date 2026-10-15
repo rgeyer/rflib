@@ -21,7 +21,7 @@ a saved search.
   freq: rx: tx:             MHz: 146.52, 144..148, >=420, ..30
   band:2m|70cm|gmrs|noaa|…  duplex:+|-|split|simplex|off
   tone: txtone: rxtone:     131.8, dcs:023, ctcss, dcs, or none (as programmed)
-  mode:FM|NFM|AM|USB|LSB    power:low|medium|high|max|none
+  mode:FM|NFM|AM|USB|LSB|CW power:low|medium|high|max|none
   squelch:yes|no            skip:yes|no
   is:repeater|simplex|rxonly|transmit|skip
   has:location|service|tag|tone|power|notes|shortname|radio|network|org

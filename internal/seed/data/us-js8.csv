@@ -1,0 +1,10 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+JS8 160m,1.842,1.842,USB,amateur,false,,JS8Call dial frequency
+JS8 80m,3.578,3.578,USB,amateur,false,,JS8Call dial frequency
+JS8 40m,7.078,7.078,USB,amateur,false,,JS8Call dial frequency
+JS8 30m,10.130,10.130,USB,amateur,false,,JS8Call dial frequency
+JS8 20m,14.078,14.078,USB,amateur,false,,JS8Call dial frequency
+JS8 15m,21.078,21.078,USB,amateur,false,,JS8Call dial frequency
+JS8 12m,24.922,24.922,USB,amateur,false,,JS8Call dial frequency
+JS8 10m,28.078,28.078,USB,amateur,false,,JS8Call dial frequency
+JS8 2m,144.178,144.178,USB,amateur,false,,JS8Call dial frequency

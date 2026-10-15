@@ -1,0 +1,6 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+SSTV 80m,3.845,3.845,LSB,amateur,false,calling,Analog SSTV calling frequency (US and Canada)
+SSTV 40m,7.171,7.171,LSB,amateur,false,calling,Analog SSTV calling frequency (US and Canada); in the Extra and Advanced phone segment
+SSTV 20m,14.230,14.230,USB,amateur,false,calling,Analog SSTV calling frequency; 14.227 and 14.233 are also used
+SSTV 15m,21.340,21.340,USB,amateur,false,calling,Analog SSTV calling frequency
+SSTV 10m,28.680,28.680,USB,amateur,false,calling,Analog SSTV calling frequency

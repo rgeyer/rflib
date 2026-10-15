@@ -96,6 +96,6 @@ export const DCS = [
   "703", "712", "723", "731", "732", "734", "743", "754",
 ];
 
-export const MODES = ["FM", "NFM", "AM", "USB", "LSB"];
+export const MODES = ["FM", "NFM", "AM", "USB", "LSB", "CW"];
 export const SERVICES = ["", "amateur", "gmrs", "frs", "cb", "murs", "marine", "noaa", "public_safety", "other"];
 export const POWERS = ["", "low", "medium", "high", "max"];

@@ -125,7 +125,7 @@ func TestValidate(t *testing.T) {
 		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\npower: [{label: H, watts: 5}, {label: L, watts: 1}]", "lowest to highest"},
 		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\npower: [{label: A, intent: low}, {label: B, intent: low}]", "more than one level"},
 		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\nnames: {charset: klingon}", "names.charset"},
-		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\nmodes: [FM, CW]", `mode "CW" must be one of`},
+		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\nmodes: [FM, DMR]", `mode "DMR" must be one of`},
 		{"name: x\nformat: chirp\nmemories: {first: 1, last: 2}\nmodes: [FM, FM]", "listed twice"},
 	} {
 		if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.want) {

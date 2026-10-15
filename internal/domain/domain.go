@@ -10,7 +10,7 @@ import (
 )
 
 // Modes are the analog modulation modes the library stores.
-var Modes = []string{"FM", "NFM", "AM", "USB", "LSB"}
+var Modes = []string{"FM", "NFM", "AM", "USB", "LSB", "CW"}
 
 type ToneKind string
 

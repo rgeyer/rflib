@@ -96,7 +96,7 @@ Channels record a receive frequency plus an optional transmit frequency. Use mat
 
 See [Search](#search) for the query language.
 
-Supported modes are `FM`, `NFM`, `AM`, `USB`, and `LSB`. Channel frequencies are entered in MHz and stored exactly as integer Hz. CTCSS tones are entered in Hz and stored exactly as integer millihertz, preserving standard values such as `69.3 Hz` without floating-point math or rounding.
+Supported modes are `FM`, `NFM`, `AM`, `USB`, `LSB`, and `CW`. Channel frequencies are entered in MHz and stored exactly as integer Hz. CTCSS tones are entered in Hz and stored exactly as integer millihertz, preserving standard values such as `69.3 Hz` without floating-point math or rounding.
 
 Tone syntax is normalized and exporter-neutral:
 
@@ -173,7 +173,7 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 | `band:` | `160m` through `23cm`, `air`, `marine`, `cb`, `frs`, `gmrs`, `murs`, `noaa` (by receive frequency) |
 | `duplex:` | `+`, `-`, `split`, `simplex`, or `off` (no transmit frequency) |
 | `tone:`, `txtone:`, `rxtone:` | `131.8`, `dcs:023`, `ctcss`, `dcs`, or `none`, as programmed: the receive tone counts only with tone squelch. `tone:` matches either direction; `tone:none` means neither has one. |
-| `mode:` | `FM`, `NFM`, `AM`, `USB`, or `LSB` |
+| `mode:` | `FM`, `NFM`, `AM`, `USB`, `LSB`, or `CW` |
 | `power:` | `low`, `medium`, `high`, `max`, or `none` |
 | `squelch:`, `skip:` | `yes` or `no` |
 | `is:` | `repeater` (transmit differs from receive), `simplex`, `rxonly`, `transmit` (a radio export would let it transmit; see [Where radios transmit](#where-radios-transmit)), `skip` |
@@ -243,9 +243,17 @@ Saving or importing a channel warns, without failing, when it doesn't fit its se
 | `us-aprs` | APRS on 144.390, and the ISS and satellite digipeater on 145.825 |
 | `us-iss` | ISS voice (145.800 down, 144.490 up) and its cross-band repeater |
 | `us-ft8` | FT8 dial frequencies, 160 m through 2 m, USB (60 m FT8 is channel 3 in `us-60m`) |
+| `us-ft4` | FT4 dial frequencies, 80 m through 2 m, USB |
+| `us-js8` | JS8Call dial frequencies, 160 m through 2 m, USB (17 m and 6 m share FT4's dials, in `us-ft4`) |
+| `us-wspr` | WSPR dial frequencies, 160 m through 23 cm, USB |
+| `us-psk31` | PSK31 activity frequencies, 160 m through 10 m, USB (17 m shares FT8's dial, in `us-ft8`) |
+| `us-sstv` | Analog SSTV calling frequencies, 80 m through 10 m |
 | `us-60m` | Amateur 60 m channels 1-5, USB dial frequencies |
+| `us-beacons` | NCDXF/IARU HF beacons, 20 m through 10 m, CW, receive only |
+| `us-fm-sats` | FM amateur satellites (SO-50, AO-123, AO-91, PO-101, CAS-3H) with uplink tones; expect Doppler shift |
 | `us-time` | WWV and CHU time signals, receive only |
-| `us-interop` | National public-safety interoperability calling and tactical channels, receive only |
+| `us-radiofax` | NWS HF radiofax (weather fax) stations, USB dial frequencies, receive only |
+| `us-interop` | National public-safety interoperability calling and tactical channels (VHF, UHF, and 800 MHz), receive only |
 
 Installing a list puts its channels in the shared library and links them into yours (see [Shared channels](#shared-channels)). Channels you already have that match one become links. Installing again changes nothing. `--tags` adds tags of your own to the new links, and `--dry-run` reports what would change. On shared channels the lists carry only shared tags, such as `calling`; the old `gmrs`, `noaa`, and similar tags repeated the service and band.
 
@@ -268,7 +276,7 @@ A radio is one of your own radios: a model, the channels programmed into it in y
 |---|---|---|---|---|---|
 | `yaesu-ftm150` | ADMS-17 (`yaesu-ftm150` profile) | 1-999 | 16 | LOW 5 W, MID 25 W, HIGH 50 W | FM, NFM, AM |
 | `yaesu-ftm6000` | ADMS-13 (`yaesu-ftm6000` profile) | 1-999 | 6 | LOW 5 W, MID 25 W, HIGH 50 W | FM, NFM, AM |
-| `yaesu-ft857` | CHIRP: Yaesu FT-857/897 (US) | 1-200 | 8 | set from the radio's menu | FM, NFM, AM, USB, LSB |
+| `yaesu-ft857` | CHIRP: Yaesu FT-857/897 (US) | 1-200 | 8 | set from the radio's menu | FM, NFM, AM, USB, LSB, CW |
 | `tidradio-tdh3-gmrs` | CHIRP: TIDRADIO TD-H3-GMRS | 1-199 | 8 | Low 2 W, High 5 W | FM, NFM, AM |
 | `baofeng-uv5rm` | CHIRP: Baofeng 5RM | 1-1000 | 12 | Low 1 W, Medium 5 W, High 8 W | FM, NFM, AM |
 | `explorer-qrz1` | CHIRP: Explorer QRZ-1 | 1-200 | 10 | Low 0.5 W, Mid 2.5 W, High 5 W | FM, NFM |
@@ -575,7 +583,7 @@ columns:
 | `name`, `notes`, `service`, `tags` | Channel fields (notes on one line, tags joined with `;`) |
 | `rx_mhz`, `tx_mhz`, `offset_mhz` | Frequencies in MHz. `tx_mhz` is the receive frequency for receive-only channels. |
 | `duplex` | `none`, `plus`, `minus`, `split`, or `off` |
-| `mode`, `narrow` | `FM`/`NFM`/`AM`/`USB`/`LSB`; `true` for NFM |
+| `mode`, `narrow` | `FM`/`NFM`/`AM`/`USB`/`LSB`/`CW`; `true` for NFM |
 | `tone_mode` | `none`, `tone`, `tsql`, `dcs`, `dcs_enc`, `tone_dcs`, `dcs_tone`, `tone_tone`, `dcs_dcs`, `rx_tone`, or `rx_dcs` |
 | `ctcss_hz`, `tx_ctcss_hz`, `rx_ctcss_hz` | CTCSS tones in Hz |
 | `dcs_code`, `tx_dcs_code`, `rx_dcs_code`, `dcs_polarity` | DCS codes, and polarity as `NN`/`NR`/`RN`/`RR`. Without a polarity column, inverted DCS can't be exported. |

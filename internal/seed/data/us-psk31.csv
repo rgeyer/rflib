@@ -1,0 +1,9 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+PSK31 160m,1.838,1.838,USB,amateur,false,,PSK31 activity frequency (USB dial)
+PSK31 80m,3.580,3.580,USB,amateur,false,,PSK31 activity frequency (USB dial)
+PSK31 40m,7.070,7.070,USB,amateur,false,,PSK31 activity frequency (USB dial)
+PSK31 30m,10.142,10.142,USB,amateur,false,,PSK31 activity frequency (USB dial); some lists give 10.140
+PSK31 20m,14.070,14.070,USB,amateur,false,,PSK31 activity frequency (USB dial)
+PSK31 15m,21.080,21.080,USB,amateur,false,,PSK31 activity frequency (USB dial)
+PSK31 12m,24.920,24.920,USB,amateur,false,,PSK31 activity frequency (USB dial)
+PSK31 10m,28.120,28.120,USB,amateur,false,,PSK31 activity frequency (USB dial)

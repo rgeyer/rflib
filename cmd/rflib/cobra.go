@@ -83,7 +83,7 @@ func channelFields(cmd *cobra.Command) {
 	cmd.Flags().String("radius-km", "", "How far the location reaches, in km: its uncertainty or the coverage (empty clears on update)")
 	cmd.Flags().String("rx", "", "Receive frequency in MHz")
 	cmd.Flags().String("tx", "", "Transmit frequency in MHz; omit for receive-only (empty clears on update)")
-	cmd.Flags().String("mode", "FM", "FM, NFM, AM, USB, or LSB")
+	cmd.Flags().String("mode", "FM", "FM, NFM, AM, USB, LSB, or CW")
 	cmd.Flags().String("service", "", "Radio service: amateur, gmrs, frs, cb, murs, marine, noaa, public_safety, other (empty clears on update)")
 	cmd.Flags().Bool("rx-only", false, "Never transmit; exports program the channel receive only (default on for noaa and public_safety)")
 	cmd.Flags().String("rx-tone", "none", "none, ctcss:<Hz>, or dcs:<code>[:inverted]")
