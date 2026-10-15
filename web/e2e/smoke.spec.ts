@@ -8,11 +8,12 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await expect(page).toHaveURL(/\/l\/default\/channels$/);
   await expect(page.getByText("0 channels")).toBeVisible();
 
-  // With one private library, the picker is a switch between it and the
-  // shared list.
-  await page.getByText("Shared list", { exact: true }).click();
+  // The Shared list item opens the shared list, marked in the header; the
+  // other items always lead back to the user's own library.
+  await page.getByRole("link", { name: /Shared list/ }).click();
   await expect(page).toHaveURL(/\/l\/shared\/channels$/);
-  await page.getByText("My library", { exact: true }).click();
+  await expect(page.getByRole("banner").getByText("Shared list")).toBeVisible();
+  await page.getByRole("link", { name: "Channels", exact: true }).click();
   await expect(page).toHaveURL(/\/l\/default\/channels$/);
 
   // Install NOAA weather radio: seven links appear.
@@ -25,7 +26,7 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await expect(page.getByText("us-noaa: linked 7")).toBeVisible();
 
   // Add a repeater with a tone.
-  await page.getByRole("link", { name: "Channels" }).click();
+  await page.getByRole("link", { name: "Channels", exact: true }).click();
   await expect(page.getByText("7 channels")).toBeVisible();
   await page.getByRole("button", { name: "New channel" }).click();
   await page.getByRole("textbox", { name: "Name", exact: true }).fill("Marian");

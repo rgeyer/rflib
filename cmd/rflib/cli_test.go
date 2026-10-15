@@ -798,79 +798,11 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	}
 }
 
-func TestLibraries(t *testing.T) {
+// There is one private library; the shared list has its own commands.
+func TestOneLibrary(t *testing.T) {
 	c := newCLI(t)
-	if out := c.ok("library", "list"); !strings.HasPrefix(out, "*\tdefault\tdefault\t0\t0") {
-		t.Fatalf("library list = %q", out)
-	}
-	c.ok("library", "add", "club", "--description", "Club radios")
-	c.fails("already exists", "library", "add", "club")
-	c.fails(`no library named "nope"`, "--library", "nope", "channel", "list")
-
-	// Each library has its own channels, radios, and searches, so the same
-	// names can be used in both.
-	for _, lib := range []string{"default", "club"} {
-		c.ok("--library", lib, "radio", "add", "HT", "--model", "baofeng-uv5rm")
-		c.ok("--library", lib, "search", "add", "wx", "band:noaa")
-	}
-	c.ok("seed", "install", "us-noaa")
-	clubCh := c.ok("--library", "club", "channel", "add", "--name", "Club Net", "--rx", "147.000", "--tags", "home")
-	if out := c.ok("--library", "club", "channel", "list"); !strings.Contains(out, "Club Net") || strings.Contains(out, "NOAA") {
-		t.Errorf("club channels = %q", out)
-	}
-	if out := c.ok("channel", "list"); strings.Contains(out, "Club Net") {
-		t.Errorf("default sees club's channel: %q", out)
-	}
-	c.fails("not found", "channel", "show", "--id", clubCh)
-	c.fails("not found", "radio", "channels", "add", "HT", "--id", clubCh)
-
-	// $RFLIB_LIBRARY chooses the library when --library doesn't.
-	t.Setenv("RFLIB_LIBRARY", "club")
-	if out := c.ok("channel", "list"); !strings.Contains(out, "Club Net") {
-		t.Errorf("RFLIB_LIBRARY ignored: %q", out)
-	}
-	if out := c.ok("library", "list"); !strings.Contains(out, "*\tclub\t\t1\t1\t") {
-		t.Errorf("library list marks the wrong one: %q", out)
-	}
-	t.Setenv("RFLIB_LIBRARY", "")
-
-	// Copy the default library's channels into the club's: the copies get
-	// new IDs.
-	backup := filepath.Join(t.TempDir(), "backup.json")
-	c.ok("export", "json", "--output", backup)
-	if out := c.status("--library", "club", "import", "json", backup); !strings.Contains(out, "created 7") {
-		t.Fatalf("import into club = %q", out)
-	}
-	defaultIDs := c.ok("channel", "list", "band:noaa")
-	clubIDs := c.ok("--library", "club", "channel", "list", "band:noaa")
-	if len(strings.Split(clubIDs, "\n")) != 7 || strings.Split(clubIDs, "\t")[0] == strings.Split(defaultIDs, "\t")[0] {
-		t.Errorf("copies share IDs:\n%s\n%s", defaultIDs, clubIDs)
-	}
-
-	// The default library can be renamed, and another made the default;
-	// the default can't be deleted or unmarked.
-	c.ok("library", "update", "default", "--name", "Mine")
-	if out := c.ok("channel", "list", "band:noaa"); len(strings.Split(out, "\n")) != 7 {
-		t.Errorf("renamed default library = %q", out)
-	}
-	c.fails("can't be deleted", "library", "delete", "Mine", "--yes")
-	c.fails("always a default library", "library", "update", "Mine", "--default=false")
-	c.fails("can't be the default", "library", "update", "shared", "--default")
-	c.ok("library", "update", "club", "--default")
-	if out := c.ok("channel", "list"); !strings.Contains(out, "Club Net") {
-		t.Errorf("club isn't the default: %q", out)
-	}
-	c.ok("library", "update", "Mine", "--default")
-
-	c.ok("library", "update", "club", "--name", "Club Radios")
-	c.fails("requires --yes", "library", "delete", "Club Radios")
-	c.ok("library", "delete", "Club Radios", "--yes")
-	if out := c.ok("library", "list"); strings.Contains(out, "Club") {
-		t.Errorf("deleted library listed: %q", out)
-	}
-	if out := c.ok("channel", "list", "band:noaa"); len(strings.Split(out, "\n")) != 7 {
-		t.Errorf("deleting club touched default: %q", out)
-	}
+	c.fails("unknown command", "library", "list")
+	c.fails("unknown flag: --library", "--library", "shared", "channel", "list")
 }
 
 func TestTablesAndFields(t *testing.T) {
@@ -1005,8 +937,6 @@ func TestSharedChannels(t *testing.T) {
 	if got := c.channel(sharedID); got.Name != "GMRS 20" || got.Link != nil || got.Revision != 1 {
 		t.Errorf("show a shared channel = %+v", got)
 	}
-	c.fails("changes only through rflib shared", "--library", "shared", "channel", "add", "--name", "x", "--rx", "146.52")
-	c.fails("can't be deleted", "library", "delete", "shared", "--yes")
 	c.fails("its rx can't change here", "channel", "update", "--id", mine, "--rx", "462.7")
 	c.ok("channel", "update", "--id", mine, "--power", "low", "--notes", "kids use this")
 

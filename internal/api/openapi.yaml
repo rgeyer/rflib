@@ -50,7 +50,7 @@ paths:
 
   /libraries:
     get:
-      summary: List libraries
+      summary: "List libraries: the user's own and the shared list"
       responses:
         "200":
           description: Libraries
@@ -62,20 +62,6 @@ paths:
                 properties:
                   libraries: {type: array, items: {$ref: "#/components/schemas/Library"}}
         default: {$ref: "#/components/responses/Error"}
-    post:
-      summary: Create a library
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: "#/components/schemas/LibraryInput"}
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Library"}
-        default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}:
     parameters: [{$ref: "#/components/parameters/lib"}]
     get:
@@ -86,25 +72,6 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Library"}
-        default: {$ref: "#/components/responses/Error"}
-    patch:
-      summary: Rename, describe, or make a library the default
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: "#/components/schemas/LibraryInput"}
-      responses:
-        "200":
-          description: Updated
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Library"}
-        default: {$ref: "#/components/responses/Error"}
-    delete:
-      summary: Delete a library and everything in it (not the shared or default library)
-      responses:
-        "204": {description: Deleted}
         default: {$ref: "#/components/responses/Error"}
 
   /libraries/{lib}/channels:
@@ -1189,16 +1156,9 @@ components:
         name: {type: string}
         description: {type: string}
         shared: {type: boolean, description: The one library of shared channels}
-        default: {type: boolean, description: "The library used when none is chosen; exactly one, never the shared library"}
+        default: {type: boolean, description: "The user's own library, as opposed to the shared list"}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
-    LibraryInput:
-      type: object
-      additionalProperties: false
-      properties:
-        name: {type: string}
-        description: {type: string}
-        default: {type: boolean, description: "true makes this the default library in place of the old one; false is refused on the default library"}
 
     Location:
       type: object

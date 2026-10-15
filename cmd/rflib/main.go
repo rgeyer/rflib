@@ -74,22 +74,11 @@ func withDB(cmd *cobra.Command, fn func(store.Store) error) error {
 	return fn(d)
 }
 
-// libraryName resolves the library: --library, then $RFLIB_LIBRARY, then
-// "" for the default library.
-func libraryName(cmd *cobra.Command) string {
-	if v, _ := cmd.Flags().GetString("library"); v != "" {
-		return v
-	}
-	if v := os.Getenv("RFLIB_LIBRARY"); v != "" {
-		return v
-	}
-	return ""
-}
-
-// withApp opens the database and the chosen library's services.
+// withApp opens the database and the user's library's services. The shared
+// list has its own commands (see withShared).
 func withApp(cmd *cobra.Command, fn func(*app.Service) error) error {
 	return withDB(cmd, func(d store.Store) error {
-		a, err := app.Open(cmd.Context(), d, libraryName(cmd))
+		a, err := app.Open(cmd.Context(), d, "")
 		if err != nil {
 			return err
 		}

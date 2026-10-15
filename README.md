@@ -21,28 +21,9 @@ export RFLIB_DB=./radio-library.db
 
 Back up the database by copying it while the CLI is not running.
 
-## Libraries
+## Your library and the shared list
 
-One database can hold several **libraries**, each a separate collection of channels, radios, and saved searches. Names only have to be unique within a library, so two libraries can each have a radio called "HT".
-
-Every command works on one library: `--library NAME`, else `$RFLIB_LIBRARY`, else the **default library**. Every database starts with a default library called `default`, and upgrading an existing database moves everything already in it there. You can rename it, or make another library the default; the default library can't be deleted. Every database also has a library called `shared`, which holds channels shared with everyone; see [Shared channels](#shared-channels).
-
-```sh
-./rflib library add club --description "Club radios"
-./rflib library list                      # * marks the library in use
-./rflib library update default --name home   # rename the default library
-./rflib library update club --default        # or make another the default
-./rflib --library club seed install us-gmrs
-RFLIB_LIBRARY=club ./rflib radio list
-./rflib library update club --name "Club Radios"
-./rflib library delete "Club Radios" --yes   # deletes everything in it
-```
-
-To copy channels from one library to another, export a backup from one and import it into the other. The copies get new IDs:
-
-```sh
-./rflib export json --library default | ./rflib import json --library club
-```
+A database holds **your library**, your own channels, radios, and saved searches, and the **shared list**, channels shared with everyone (see [Shared channels](#shared-channels)). Commands work on your library; the `rflib shared` commands work on the shared list. For a separate collection, such as a scratch space to try an import or someone else's radios, use a separate database file with `--db` or `$RFLIB_DB`.
 
 ## Shared channels
 
@@ -479,7 +460,7 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 - **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and location. New columns are only ever added at the end; the group columns were removed when groups were.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
 - **`export profile NAME`** writes a radio programming tool's own CSV format, such as Yaesu ADMS. See [Export profiles](#export-profiles) below.
-- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out. Links are kept as links, with the shared channel as it was. A backup of the shared library (`--library shared`) also holds its organizations, systems, and plans, which `rflib shared import json` restores. The CSV writes a link's shared and own tags and notes together.
+- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out. Links are kept as links, with the shared channel as it was. `rflib shared export json` backs up the shared list, with its organizations, systems, and plans, and `rflib shared import json` restores it. The CSV writes a link's shared and own tags and notes together.
 
 ## Import
 
@@ -659,7 +640,7 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 `rflib serve` also serves a web interface at `http://127.0.0.1:8080/`, built into the binary:
 
 - **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
-- **Shared list:** select channels to link them into your library, optionally onto a radio in the same step. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who links the channel. Corrections are made one channel at a time.
+- **Shared list:** opened from its own item in the navigation. Select channels to link them into your library, optionally onto a radio in the same step. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who links the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
 - **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources, with a preview of what a new source would add before you add it; sync with a preview; and the programming file to download. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
 - **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.

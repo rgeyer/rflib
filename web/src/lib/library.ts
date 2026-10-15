@@ -28,12 +28,13 @@ export function useTags(lib: string): string[] {
   return [...all].sort((a, b) => a.localeCompare(b));
 }
 
-/** usePrivateLibraries lists the libraries a user's own channels live in,
- * the default first: where shared channels get linked. */
-export function usePrivateLibraries(): Library[] {
+/** useLibraries names the user's own library and the shared list, or null
+ * until they've loaded. */
+export function useLibraries(): { mine: string | null; shared: string | null } {
   const libraries = useQuery({
     queryKey: ["libraries"],
     queryFn: () => call<{ libraries: Library[] }>(api.GET("/libraries")),
   });
-  return (libraries.data?.libraries ?? []).filter((l) => !l.shared).sort((a, b) => Number(b.default) - Number(a.default));
+  const all = libraries.data?.libraries ?? [];
+  return { mine: all.find((l) => l.default)?.name ?? null, shared: all.find((l) => l.shared)?.name ?? null };
 }

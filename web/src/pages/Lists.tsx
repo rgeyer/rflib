@@ -2,19 +2,17 @@ import { Button, Card, Group, List, Modal, ScrollArea, SimpleGrid, Stack, Text, 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, call, type Channel, type Conversion, type Seed } from "../api/client";
-import { useLib, usePrivateLibraries } from "../lib/library";
+import { useLib, useLibraries } from "../lib/library";
 import { failed, ok } from "../lib/notify";
 
 type Install = { linked: Channel[]; converted: Conversion[]; already: Channel[]; shared_added: number; shared_updated: number };
 
 /** Lists installs the built-in channel lists: they go in the shared library,
- * and the library links to them (the default library, from the shared
- * list). */
+ * and the user's library links to them. */
 export function Lists() {
   const open = useLib();
-  const libraries = usePrivateLibraries();
-  const lib = libraries.some((l) => l.name === open) ? open : (libraries[0]?.name ?? open);
-  const label = libraries.length === 1 ? "My library" : lib;
+  const lib = useLibraries().mine ?? open;
+  const label = "My library";
   const client = useQueryClient();
   const [preview, setPreview] = useState<{ seed: string; result: Install } | null>(null);
   const seeds = useQuery({ queryKey: ["seeds"], queryFn: () => call<{ seeds: Seed[] }>(api.GET("/seeds")) });
@@ -36,7 +34,7 @@ export function Lists() {
     <Stack>
       <Title order={2}>Built-in lists</Title>
       <Text size="sm" c="dimmed">
-        Installing a list puts it in the shared library and links its channels into {lib}. Your matching channels become links, keeping your tags
+        Installing a list puts it in the shared library and links its channels into {label}. Your matching channels become links, keeping your tags
         and notes.
       </Text>
       <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>

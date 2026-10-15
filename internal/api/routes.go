@@ -30,10 +30,7 @@ func (s *server) routes() []route {
 		{"GET", "/openapi.yaml", s.spec, true},
 
 		{"GET", "/libraries", s.listLibraries, false},
-		{"POST", "/libraries", s.createLibrary, false},
 		{"GET", L, s.lib(s.getLibrary), false},
-		{"PATCH", L, s.lib(s.updateLibrary), false},
-		{"DELETE", L, s.lib(s.deleteLibrary), false},
 
 		{"GET", L + "/channels", s.lib(s.listChannels), false},
 		{"POST", L + "/channels", s.lib(s.createChannel), false},
@@ -141,74 +138,8 @@ func (s *server) listLibraries(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-type libraryInput struct {
-	Name        *string `json:"name"`
-	Description *string `json:"description"`
-	Default     *bool   `json:"default"`
-}
-
-func (s *server) createLibrary(w http.ResponseWriter, r *http.Request) error {
-	var in libraryInput
-	if err := readJSON(r, &in); err != nil {
-		return err
-	}
-	var lib domain.Library
-	if in.Name != nil {
-		lib.Name = *in.Name
-	}
-	if in.Description != nil {
-		lib.Description = *in.Description
-	}
-	if in.Default != nil {
-		lib.Default = *in.Default
-	}
-	lib, err := s.st.CreateLibrary(ctx(r), lib)
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusCreated, newLibrary(lib))
-	return nil
-}
-
 func (s *server) getLibrary(w http.ResponseWriter, _ *http.Request, a *app.Service) error {
 	writeJSON(w, http.StatusOK, newLibrary(a.Library()))
-	return nil
-}
-
-func (s *server) updateLibrary(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	var in libraryInput
-	if err := readJSON(r, &in); err != nil {
-		return err
-	}
-	lib := a.Library()
-	if in.Name != nil {
-		if lib.Shared && *in.Name != lib.Name {
-			return badRequest("the shared library keeps its name")
-		}
-		lib.Name = *in.Name
-	}
-	if in.Description != nil {
-		lib.Description = *in.Description
-	}
-	if in.Default != nil {
-		lib.Default = *in.Default
-	}
-	lib, err := s.st.UpdateLibrary(ctx(r), lib)
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, newLibrary(lib))
-	return nil
-}
-
-func (s *server) deleteLibrary(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	if a.Library().Shared {
-		return badRequest("the shared library can't be deleted; other libraries link to it")
-	}
-	if err := s.st.DeleteLibrary(ctx(r), a.LibraryID()); err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

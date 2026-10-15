@@ -40,7 +40,7 @@ func withShared(cmd *cobra.Command, fn func(*app.Service) error) error {
 func newSharedCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "shared", Short: "Link to shared channels and follow their changes", Long: sharedHelp}
 	cmd.AddCommand(newSharedLinkCommand(), newSharedChangesCommand(), newSharedAckCommand(), newSharedRelinkCommand(), newSharedHistoryCommand(),
-		newSharedImportCommand(), newSharedUpdateCommand(), newSharedStatusCommand())
+		newSharedImportCommand(), newSharedExportCommand(), newSharedUpdateCommand(), newSharedStatusCommand())
 	return cmd
 }
 
@@ -304,6 +304,20 @@ var revisionListing = listing[revisionRow]{
 func reasonFlag(cmd *cobra.Command) {
 	cmd.Flags().String("reason", "", "Why, recorded in each changed channel's history (required)")
 	_ = cmd.MarkFlagRequired("reason")
+}
+
+func newSharedExportCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "export json", Short: "Back up the shared list, with its organizations, systems, and plans", Args: cobra.ExactArgs(1),
+		Long: `Write a full-fidelity JSON backup of the shared list: its channels,
+organizations, systems, and plans. Restore it with rflib shared import json.`}
+	cmd.Flags().String("output", "-", "Output path, or - for stdout")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if args[0] != "json" {
+			return fmt.Errorf("unknown format %q; the shared list exports as json", args[0])
+		}
+		return runExportFrom(cmd, withShared, app.ExportRequest{Format: "json"})
+	}
+	return cmd
 }
 
 func newSharedImportCommand() *cobra.Command {

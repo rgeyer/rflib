@@ -66,7 +66,7 @@ func TestOrgsSystemsAndPlans(t *testing.T) {
 
 	// A shared backup restores its organizations, systems, and plans; a
 	// dry run checks it all and leaves nothing behind.
-	backup := writeFile(t, c.ok("--library", "shared", "export", "json"))
+	backup := writeFile(t, c.ok("shared", "export", "json"))
 	restored := newCLI(t)
 	if got := restored.status("shared", "import", "json", backup, "--reason", "restore", "--dry-run"); !strings.Contains(got, "created 8") {
 		t.Errorf("dry run = %q", got)

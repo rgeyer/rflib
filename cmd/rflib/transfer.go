@@ -96,7 +96,11 @@ func dedupeFlag(cmd *cobra.Command) {
 
 // runExport fills in the export's query and numbering flags, runs it, and
 // reports what it left out on stderr.
-func runExport(cmd *cobra.Command, req app.ExportRequest) error {
+// runExport writes an export of the user's library.
+func runExport(cmd *cobra.Command, req app.ExportRequest) error { return runExportFrom(cmd, withApp, req) }
+
+// runExportFrom writes an export of the library open opens.
+func runExportFrom(cmd *cobra.Command, open func(*cobra.Command, func(*app.Service) error) error, req app.ExportRequest) error {
 	n, err := channelQuery(cmd, nil)
 	if err != nil {
 		return err
@@ -106,7 +110,7 @@ func runExport(cmd *cobra.Command, req app.ExportRequest) error {
 	}
 	req.Sort, req.Dedupe = getString(cmd, "sort"), getString(cmd, "dedupe")
 	req.SkipInvalid, _ = cmd.Flags().GetBool("skip-invalid")
-	return withApp(cmd, func(a *app.Service) error {
+	return open(cmd, func(a *app.Service) error {
 		return writeOutput(cmd, func(w io.Writer) (int, error) {
 			res, err := a.Export(ctx(cmd), w, req)
 			for _, s := range res.Skipped {
