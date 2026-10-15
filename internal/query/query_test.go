@@ -208,6 +208,7 @@ func TestMatch(t *testing.T) {
 		{"txtone:ctcss -squelch:yes", "marian"},
 		{"has:tone", "marian uhf sheriff"},
 		{"mode:nfm", "sheriff"},
+		{"mode:cw", ""}, // a known mode, though no channel uses it
 		{"power:low", "wx"},
 		{"power:none -service:none", "call gmrs"},
 		{"skip:yes", "wx"},

@@ -26,7 +26,8 @@ func TestEveryListIsDescribed(t *testing.T) {
 // Every built-in channel must parse and fit its own service's band plan.
 func TestListsAreValidAndFitTheirBandPlans(t *testing.T) {
 	want := map[string]int{"us-cb": 40, "us-frs": 22, "us-gmrs": 30, "us-ham-calling": 8, "us-murs": 5, "us-noaa": 7,
-		"us-60m": 5, "us-aprs": 2, "us-ft8": 11, "us-interop": 9, "us-iss": 2, "us-time": 9}
+		"us-60m": 5, "us-aprs": 2, "us-ft8": 11, "us-interop": 15, "us-iss": 2, "us-time": 9,
+		"us-beacons": 5, "us-fm-sats": 5, "us-ft4": 10, "us-js8": 9, "us-psk31": 8, "us-radiofax": 20, "us-sstv": 5, "us-wspr": 13}
 	for _, l := range Lists() {
 		b, err := l.Batch()
 		if err != nil {

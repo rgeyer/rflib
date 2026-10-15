@@ -1,0 +1,14 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+WSPR 160m,1.8366,1.8366,USB,amateur,false,,WSPR dial frequency
+WSPR 80m,3.5686,3.5686,USB,amateur,false,,WSPR dial frequency
+WSPR 40m,7.0386,7.0386,USB,amateur,false,,WSPR dial frequency
+WSPR 30m,10.1387,10.1387,USB,amateur,false,,WSPR dial frequency
+WSPR 20m,14.0956,14.0956,USB,amateur,false,,WSPR dial frequency
+WSPR 17m,18.1046,18.1046,USB,amateur,false,,WSPR dial frequency
+WSPR 15m,21.0946,21.0946,USB,amateur,false,,WSPR dial frequency
+WSPR 12m,24.9246,24.9246,USB,amateur,false,,WSPR dial frequency
+WSPR 10m,28.1246,28.1246,USB,amateur,false,,WSPR dial frequency
+WSPR 6m,50.293,50.293,USB,amateur,false,,WSPR dial frequency (Region 2)
+WSPR 2m,144.489,144.489,USB,amateur,false,,WSPR dial frequency
+WSPR 70cm,432.300,432.300,USB,amateur,false,,WSPR dial frequency
+WSPR 23cm,1296.500,1296.500,USB,amateur,false,,WSPR dial frequency

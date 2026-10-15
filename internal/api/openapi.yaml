@@ -1205,7 +1205,7 @@ components:
         name: {type: string}
         rx_hz: {type: integer, format: int64}
         tx_hz: {type: integer, format: int64, nullable: true, description: Null for receive-only records}
-        mode: {type: string, enum: [FM, NFM, AM, USB, LSB]}
+        mode: {type: string, enum: [FM, NFM, AM, USB, LSB, CW]}
         service: {type: string, description: Empty when unspecified}
         rx_only: {type: boolean}
         rx_tone: {type: string}

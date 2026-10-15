@@ -219,6 +219,21 @@ func TestTransmitOnlyWhereAllowed(t *testing.T) {
 	}
 }
 
+// CW is left out on an FM-only mobile and kept on the all-mode FT-857.
+func TestCWNeedsARadioWithCW(t *testing.T) {
+	cw := ch("NCDXF 20m", 14_100_000, 0, domain.ServiceAmateur)
+	cw.RXOnly, cw.Mode = true, "CW"
+	for name, leftOut := range map[string]bool{"yaesu-ftm150": true, "yaesu-ft857": false} {
+		p, err := Build(domain.Radio{Name: name}, mustModel(t, name), entries(cw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Memories[0].LeftOut != leftOut {
+			t.Errorf("%s: left out = %v, want %v (warnings %q)", name, p.Memories[0].LeftOut, leftOut, p.Warnings)
+		}
+	}
+}
+
 // A memory in a mode the radio lacks keeps its number but isn't exported.
 func TestLeavesOutModesTheRadioLacks(t *testing.T) {
 	ssb := ch("2m SSB Call", 144_200_000, 144_200_000, domain.ServiceAmateur)

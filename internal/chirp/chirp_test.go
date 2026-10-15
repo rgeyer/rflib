@@ -162,3 +162,16 @@ func TestChirpPowerIsWatts(t *testing.T) {
 		}
 	}
 }
+
+// CHIRP names CW the same way, so a CW channel round-trips.
+func TestCWRoundTrips(t *testing.T) {
+	c := domain.Channel{Name: "NCDXF 20m", ReceiveHz: 14100000, RXOnly: true, Mode: "CW"}
+	m, err := FromChannel(c, 1, 0)
+	if err != nil || m.Mode != "CW" {
+		t.Fatalf("FromChannel: mode %q, %v", m.Mode, err)
+	}
+	back, err := ToChannel(m)
+	if err != nil || back.Mode != "CW" {
+		t.Fatalf("ToChannel: mode %q, %v", back.Mode, err)
+	}
+}

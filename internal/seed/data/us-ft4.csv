@@ -1,0 +1,11 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+FT4 80m,3.575,3.575,USB,amateur,false,,FT4 dial frequency
+FT4 40m,7.0475,7.0475,USB,amateur,false,,FT4 dial frequency
+FT4 30m,10.140,10.140,USB,amateur,false,,FT4 dial frequency
+FT4 20m,14.080,14.080,USB,amateur,false,,FT4 dial frequency
+FT4 17m,18.104,18.104,USB,amateur,false,,FT4 dial frequency; also the JS8Call dial frequency
+FT4 15m,21.140,21.140,USB,amateur,false,,FT4 dial frequency
+FT4 12m,24.919,24.919,USB,amateur,false,,FT4 dial frequency
+FT4 10m,28.180,28.180,USB,amateur,false,,FT4 dial frequency
+FT4 6m,50.318,50.318,USB,amateur,false,,FT4 dial frequency; also the JS8Call dial frequency
+FT4 2m,144.170,144.170,USB,amateur,false,,FT4 dial frequency

@@ -1,0 +1,6 @@
+name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
+NCDXF 20m,14.100,,CW,amateur,true,,NCDXF/IARU beacon: 18 beacons worldwide take turns (10 s each in a 3-minute cycle) and step 100 W down to 0.1 W; keep 14.0995-14.1005 clear
+NCDXF 17m,18.110,,CW,amateur,true,,NCDXF/IARU beacon: 18 beacons worldwide take turns (10 s each in a 3-minute cycle) and step 100 W down to 0.1 W
+NCDXF 15m,21.150,,CW,amateur,true,,NCDXF/IARU beacon: 18 beacons worldwide take turns (10 s each in a 3-minute cycle) and step 100 W down to 0.1 W
+NCDXF 12m,24.930,,CW,amateur,true,,NCDXF/IARU beacon: 18 beacons worldwide take turns (10 s each in a 3-minute cycle) and step 100 W down to 0.1 W
+NCDXF 10m,28.200,,CW,amateur,true,,NCDXF/IARU beacon: 18 beacons worldwide take turns (10 s each in a 3-minute cycle) and step 100 W down to 0.1 W

@@ -84,7 +84,7 @@ var Sources = map[string]string{
 	"tx_mhz":      "transmit frequency in MHz (receive frequency when the channel has none or is receive only)",
 	"offset_mhz":  "repeater offset in MHz; 0 for simplex, split, and receive only",
 	"duplex":      "none, plus, minus, split, or off (receive only)",
-	"mode":        "FM, NFM, AM, USB, or LSB",
+	"mode":        "FM, NFM, AM, USB, LSB, or CW",
 	"narrow":      "true for NFM, false otherwise",
 	"tone_mode":   "none, tone, tsql, dcs, dcs_enc, tone_dcs, dcs_tone, tone_tone, dcs_dcs, rx_tone, or rx_dcs",
 	"ctcss_hz":    "the channel's CTCSS tone in Hz (transmit tone if any, else receive)",

@@ -22,19 +22,42 @@ type List struct {
 
 // lists describes every file in data/; TestEveryListIsDescribed keeps them in
 // step.
+//
+// The lists are hand-entered. Sources, checked 2026-10-14:
+//   - us-ft4, us-ft8, us-wspr: WSJT-X's default frequency list
+//     (models/FrequencyList.cpp).
+//   - us-js8: JS8Call's default frequency list (FrequencyList.cpp).
+//   - us-psk31, us-sstv: common US activity frequencies from amateur
+//     compilations; there is no single authority.
+//   - us-beacons: NCDXF/IARU International Beacon Project.
+//   - us-fm-sats: AMSAT's live FM satellite summary (updated 2026-07-10);
+//     satellites come and go, so check AMSAT's status page.
+//   - us-radiofax: NWS Public Information Statement 26-48 (2026-06-09), which
+//     proposes ending these broadcasts at the end of 2026. Dial frequencies
+//     are 1.9 kHz below the assigned ones it lists.
+//   - us-interop: the NIFOG, via the RadioReference wiki's national
+//     interoperability table.
 var lists = []List{
 	{"us-60m", "US amateur 60m channels 1-5 (USB dial frequencies)"},
 	{"us-aprs", "APRS: the national frequency and the space digipeaters"},
+	{"us-beacons", "NCDXF/IARU HF beacons, 20m to 10m (CW, receive only)"},
 	{"us-cb", "Citizens Band channels 1-40 (AM)"},
+	{"us-fm-sats", "FM amateur satellites, with uplink tones (the ISS is in us-iss)"},
+	{"us-ft4", "FT4 dial frequencies, 80m to 2m (USB)"},
 	{"us-ft8", "FT8 dial frequencies, 160m to 2m (USB; 60m is in us-60m)"},
 	{"us-frs", "FRS channels 1-22, with power limits"},
 	{"us-gmrs", "GMRS channels 1-22 and repeater pairs 15R-22R (license required)"},
 	{"us-ham-calling", "US amateur FM and SSB simplex calling frequencies"},
 	{"us-interop", "National public-safety interoperability channels (receive only)"},
 	{"us-iss", "International Space Station voice and cross-band repeater"},
+	{"us-js8", "JS8Call dial frequencies, 160m to 2m (USB; 17m and 6m share FT4's, in us-ft4)"},
 	{"us-murs", "MURS channels 1-5"},
 	{"us-noaa", "NOAA Weather Radio WX1-WX7 (receive only)"},
+	{"us-psk31", "PSK31 activity frequencies, 160m to 10m (USB; 17m shares FT8's, in us-ft8)"},
+	{"us-radiofax", "NWS HF radiofax (weather fax) stations (USB, receive only)"},
+	{"us-sstv", "Analog SSTV calling frequencies, 80m to 10m"},
 	{"us-time", "WWV and CHU time signals (receive only)"},
+	{"us-wspr", "WSPR dial frequencies, 160m to 23cm (USB)"},
 }
 
 func Lists() []List {
