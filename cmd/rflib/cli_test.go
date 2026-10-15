@@ -984,7 +984,7 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 
 func TestSharedChannels(t *testing.T) {
 	c := newCLI(t)
-	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 6 {
+	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 7 {
 		t.Errorf("tag list = %q", got)
 	}
 	// A private copy of GMRS 20 from before, named differently.
@@ -1078,6 +1078,8 @@ func TestSharedChannels(t *testing.T) {
 	if got := c.status("shared", "import", "csv", file, "--reason", "club list"); !strings.Contains(got, "Left off tags that aren't shared tags: mine") || !strings.Contains(got, "created 1") {
 		t.Errorf("shared import = %q", got)
 	}
+	// --tags adds to every channel, so it must name shared tags too.
+	c.fails(`tag "mine" isn't one of the shared tags`, "shared", "import", "csv", file, "--reason", "x", "--tags", "mine", "--on-duplicate", "update")
 	if got := c.ok("channel", "list", "in:shared", "name:Marian", "--fields", "name,tags"); got != "Marian\tnet" {
 		t.Errorf("imported shared channel = %q", got)
 	}

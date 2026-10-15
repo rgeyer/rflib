@@ -505,10 +505,14 @@ func (s *Service) SetStatus(ctx context.Context, ref string, ch StatusChange, re
 }
 
 // ImportShared writes a batch into the shared library, recording reason in
-// each revision. Tags that aren't curated are dropped and returned.
+// each revision. Tags in the batch that aren't curated are dropped and
+// returned; the tags opts adds to every channel must all be curated.
 func (s *Service) ImportShared(ctx context.Context, b importer.Batch, opts importer.Options, reason string) (importer.Summary, []string, error) {
 	if !s.info.Shared {
 		return importer.Summary{}, nil, errNotShared
+	}
+	if err := domain.ValidateSharedTags(domain.NormalizeTags(opts.Tags)); err != nil {
+		return importer.Summary{}, nil, err
 	}
 	dropped := curateTags(&b)
 	ctx = store.WithChange(ctx, reason, "")
