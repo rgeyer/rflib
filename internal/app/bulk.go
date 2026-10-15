@@ -41,7 +41,7 @@ func (s *Service) ChannelIDs(ctx context.Context, refs []string) ([]string, erro
 			return nil, fmt.Errorf("channel %q: %w", ref, store.ErrNotFound)
 		}
 		if all == nil {
-			cs, err := s.radioScope(ctx, false)
+			cs, err := s.scoped(ctx, "all", false)
 			if err != nil {
 				return nil, err
 			}
@@ -113,7 +113,8 @@ func (s *Service) selectIn(ctx context.Context, sel Selection, scope map[string]
 		}
 		slices.SortStableFunc(cs, domain.CompareChannels)
 	default:
-		if cs, err = s.lib.ListChannels(ctx); err != nil {
+		// All: every channel the list shows (in use).
+		if cs, err = s.scoped(ctx, "use", false); err != nil {
 			return nil, err
 		}
 	}

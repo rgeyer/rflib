@@ -63,57 +63,84 @@ func LinkedEdit(old, c domain.Channel) error {
 	return nil
 }
 
-// radioScope returns the channels a radio can take: the library's own and
-// every shared channel, seen through the library's annotations, less those
-// the library has copied (a copy stands in for its shared channel). With
-// sharedOnly, only the shared ones.
-func (s *Service) radioScope(ctx context.Context, sharedOnly bool) ([]domain.Channel, error) {
+// scoped returns the channels an in: scope covers, as the library sees
+// them (shared channels with its annotations), in name order:
+//
+//   - use (the default for lists): the library's own channels, and the
+//     shared channels it annotates or has on a radio
+//   - mine: only the library's own channels
+//   - shared: the whole shared list
+//   - all: the library's own channels and the whole shared list
+//
+// forRadios leaves out shared channels the library has copied, since a copy
+// stands in for its shared channel. In the shared library, every scope is
+// its channels.
+func (s *Service) scoped(ctx context.Context, scope string, forRadios bool) ([]domain.Channel, error) {
 	mine, err := s.lib.ListChannels(ctx)
-	if err != nil {
-		return nil, err
+	if err != nil || s.info.Shared {
+		return mine, err
 	}
-	if s.info.Shared {
-		return mine, nil
-	}
-	sh, err := s.sharedLibrary(ctx)
-	if err != nil {
-		return nil, err
-	}
-	shared, err := sh.ListChannels(ctx)
-	if err != nil {
-		return nil, err
-	}
-	views := map[string]domain.Channel{}
+	var own []domain.Channel
+	inUse := map[string]bool{}
 	copied := map[string]bool{}
-	var out []domain.Channel
 	for _, c := range mine {
-		switch {
-		case c.Link != nil:
-			views[c.ID] = c
-		case !sharedOnly:
-			out = append(out, c)
+		if c.Link != nil {
+			inUse[c.ID] = true
+			continue
 		}
+		own = append(own, c)
 		if c.CopiedFrom != "" {
 			copied[c.CopiedFrom] = true
 		}
 	}
-	for _, c := range shared {
-		if copied[c.ID] {
-			continue
+	var ids []string
+	switch scope {
+	case "mine":
+		return own, nil
+	case "", "use":
+		onRadios, err := s.radioNames(ctx)
+		if err != nil {
+			return nil, err
 		}
-		if v, ok := views[c.ID]; ok {
-			out = append(out, v)
-		} else {
-			out = append(out, domain.Linked(domain.Channel{}, c, c.Revision))
+		for id := range onRadios {
+			inUse[id] = true
 		}
+		for id := range inUse {
+			ids = append(ids, id)
+		}
+	default:
+		sh, err := s.sharedLibrary(ctx)
+		if err != nil {
+			return nil, err
+		}
+		shared, err := sh.ListChannels(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range shared {
+			if !forRadios || !copied[c.ID] {
+				ids = append(ids, c.ID)
+			}
+		}
+	}
+	views, err := s.lib.SharedViews(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	var out []domain.Channel
+	if scope != "shared" {
+		out = own
+	}
+	for _, v := range views {
+		out = append(out, v)
 	}
 	slices.SortStableFunc(out, domain.CompareChannels)
 	return out, nil
 }
 
 // FindForRadios returns the channels matching a query among those a radio
-// can take (see radioScope), in name order; with in:shared, among the
-// shared channels.
+// can take, in name order: by default the library's own channels and the
+// whole shared list, or the query's in: scope (see scoped).
 func (s *Service) FindForRadios(ctx context.Context, n query.Node) ([]domain.Channel, error) {
 	scope, n, err := query.SplitScope(n)
 	if err != nil {
@@ -123,7 +150,10 @@ func (s *Service) FindForRadios(ctx context.Context, n query.Node) ([]domain.Cha
 	if err != nil {
 		return nil, err
 	}
-	all, err := s.radioScope(ctx, scope == "shared")
+	if scope == "" {
+		scope = "all"
+	}
+	all, err := s.scoped(ctx, scope, true)
 	if err != nil {
 		return nil, err
 	}

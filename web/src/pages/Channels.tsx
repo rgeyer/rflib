@@ -1,7 +1,7 @@
-import { Alert, Badge, Button, Checkbox, Group, Modal, Select, Stack, Switch, Table, TagsInput, Text, Title, Tooltip } from "@mantine/core";
+import { Alert, Badge, Button, Checkbox, Group, Modal, Select, Stack, Table, TagsInput, Text, Title, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconLink, IconPlus, IconSearch } from "@tabler/icons-react";
+import { IconLink, IconNote, IconPlus, IconSearch, IconWorld } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -19,8 +19,7 @@ export function Channels() {
   // A link can open the page with a search, such as a system's channels.
   const [params] = useSearchParams();
   const [text, setText] = useState(params.get("q") ?? "");
-  const [shared, setShared] = useState(false);
-  const [q] = useDebouncedValue((shared ? "in:shared " : "") + text, 300);
+  const [q] = useDebouncedValue(text, 300);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<Channel | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -41,8 +40,8 @@ export function Channels() {
     placeholderData: keepPreviousData,
   });
   const maintainer = library.data?.shared === true;
-  // The rows are shared channels, which change only as corrections.
-  const readOnly = maintainer || shared;
+  // In the shared list itself, channels change only as corrections.
+  const readOnly = maintainer;
   const rows = channels.data?.channels ?? [];
   const ids = [...selected];
   const select = { ids };
@@ -88,10 +87,7 @@ export function Channels() {
         )}
       </Group>
       <Group align="start">
-        <QueryBar value={text} onChange={setText} tags={tags} />
-        {!library.data?.shared && (
-          <Switch label="Search the shared list" checked={shared} onChange={(e) => setShared(e.currentTarget.checked)} />
-        )}
+        <QueryBar value={text} onChange={setText} tags={tags} source={!maintainer} />
         {!readOnly && text.trim() !== "" && (
           <Button variant="light" leftSection={<IconSearch size={16} />} onClick={() => setSourcing(true)}>
             Add search as source
@@ -104,58 +100,48 @@ export function Channels() {
           Open a channel to correct it; every correction asks for a reason, is kept in its history, and reaches everyone who uses it.
         </Alert>
       )}
-      {shared && !maintainer && (
-        <Alert>
-          Shared channels go on your radios as they are; select some to add them to a radio, or tag them. Your tags and notes on a shared
-          channel are yours, and put it in your library.
-        </Alert>
+      {!maintainer && (
+        <Text size="xs" c="dimmed">
+          Showing the channels you use: your own, and shared channels you've tagged or put on a radio. Source widens it to the whole shared list.
+          <IconWorld size={12} style={{ margin: "0 2px 0 6px", verticalAlign: "middle" }} />
+          marks a shared channel, and
+          <IconNote size={12} style={{ margin: "0 2px 0 4px", verticalAlign: "middle" }} />
+          your notes or tags on one.
+        </Text>
       )}
       {selected.size > 0 && !maintainer && (
         <Group>
           <Text size="sm">{selected.size} selected</Text>
-          {readOnly ? (
-            <>
-              <Button size="xs" variant="light" onClick={() => setTagAction("add")}>
-                Add tags
-              </Button>
-              <Button size="xs" variant="light" onClick={() => setRadioAction(true)}>
-                Add to radio
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button size="xs" variant="light" onClick={() => setTagAction("add")}>
-                Add tags
-              </Button>
-              <Button size="xs" variant="light" onClick={() => setTagAction("remove")}>
-                Remove tags
-              </Button>
-              <Button size="xs" variant="light" onClick={() => setServiceAction(true)}>
-                Set service
-              </Button>
-              <Button size="xs" variant="light" onClick={() => setRadioAction(true)}>
-                Add to radio
-              </Button>
-              <Button
-                size="xs"
-                color="red"
-                variant="light"
-                onClick={() =>
-                  modals.openConfirmModal({
-                    title: `Delete ${selected.size} channels?`,
-                    children: (
-                      <Text size="sm">Your own channels come off every radio too. For shared channels, only your tags and notes go.</Text>
-                    ),
-                    labels: { confirm: "Delete", cancel: "Cancel" },
-                    confirmProps: { color: "red" },
-                    onConfirm: () => remove.mutate(),
-                  })
-                }
-              >
-                Delete
-              </Button>
-            </>
-          )}
+          <Button size="xs" variant="light" onClick={() => setTagAction("add")}>
+            Add tags
+          </Button>
+          <Button size="xs" variant="light" onClick={() => setTagAction("remove")}>
+            Remove tags
+          </Button>
+          <Button size="xs" variant="light" onClick={() => setServiceAction(true)}>
+            Set service
+          </Button>
+          <Button size="xs" variant="light" onClick={() => setRadioAction(true)}>
+            Add to radio
+          </Button>
+          <Button
+            size="xs"
+            color="red"
+            variant="light"
+            onClick={() =>
+              modals.openConfirmModal({
+                title: `Delete ${selected.size} channels?`,
+                children: (
+                  <Text size="sm">Your own channels come off every radio too. For shared channels, only your tags and notes go.</Text>
+                ),
+                labels: { confirm: "Delete", cancel: "Cancel" },
+                confirmProps: { color: "red" },
+                onConfirm: () => remove.mutate(),
+              })
+            }
+          >
+            Delete
+          </Button>
           <Button size="xs" variant="subtle" onClick={() => setSelected(new Set())}>
             Clear
           </Button>
@@ -203,8 +189,13 @@ export function Channels() {
                   <Group gap={6} wrap="nowrap">
                     {c.name}
                     {c.link && (
-                      <Tooltip label={c.link.changed ? "Linked; the shared channel changed" : "Linked to a shared channel"}>
-                        <IconLink size={14} color={c.link.changed ? "orange" : "gray"} />
+                      <Tooltip label={c.link.changed ? "Shared; changed since you last looked" : "Shared channel"}>
+                        <IconWorld size={14} color={c.link.changed ? "orange" : "gray"} aria-label="Shared channel" />
+                      </Tooltip>
+                    )}
+                    {c.link && (c.tags.length > 0 || c.notes !== "" || c.short_names.length > 0) && (
+                      <Tooltip label="Your notes or tags">
+                        <IconNote size={14} color="gray" aria-label="Your notes or tags" />
                       </Tooltip>
                     )}
                     {c.status !== "active" && (

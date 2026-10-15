@@ -26,8 +26,10 @@ test("lists, channels, radios, and export", async ({ page }) => {
   // Tag NOAA weather radio in the shared list: the tags are the user's own,
   // and put the seven channels in My library.
   await page.getByRole("link", { name: "Channels", exact: true }).click();
-  await page.getByRole("switch", { name: "Search the shared list" }).click();
   await page.getByLabel("Search", { exact: true }).fill("service:noaa");
+  await page.getByRole("button", { name: "Source filter" }).click();
+  await page.getByRole("menuitem", { name: "the shared list", exact: true }).click();
+  await expect(page.getByLabel("Search", { exact: true })).toHaveValue(/in:shared/);
   await expect(page.getByText("7 channels")).toBeVisible();
   await page.getByRole("checkbox", { name: "Select all" }).click();
   await page.getByRole("button", { name: "Add tags" }).click();
@@ -36,7 +38,8 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.getByRole("combobox", { name: "Tags" }).press("Tab");
   await page.getByRole("dialog").getByRole("button", { name: "Add on 7 channels" }).click();
   await expect(page.getByText("Updated 7 channels")).toBeVisible();
-  await page.getByRole("switch", { name: "Search the shared list" }).click();
+  await page.getByRole("button", { name: "Source filter" }).click();
+  await page.getByRole("menuitem", { name: "in use (default)" }).click();
   await page.getByLabel("Search", { exact: true }).fill("");
 
   // Add a repeater with a tone.
@@ -209,8 +212,10 @@ test("the shared list: add to a radio, correct, and take off the air", async ({ 
   };
   // A shared channel goes straight onto a radio, with nothing to link.
   await page.goto("/l/default/channels");
-  await page.getByRole("switch", { name: "Search the shared list" }).click();
   await page.getByLabel("Search", { exact: true }).fill("name:wx7");
+  await page.getByRole("button", { name: "Source filter" }).click();
+  await page.getByRole("menuitem", { name: "the shared list", exact: true }).click();
+  await expect(page.getByLabel("Search", { exact: true })).toHaveValue(/in:shared/);
   await expect(page.getByText("1 channels", { exact: true })).toBeVisible();
   await page.getByRole("checkbox", { name: "Select NOAA WX7" }).click();
   await page.getByRole("button", { name: "Add to radio" }).click();
@@ -319,6 +324,11 @@ test("add a search as a radio source, with a preview", async ({ page, request })
   await expect(dialog.locator(".mantine-ScrollArea-root")).toHaveCount(1);
   await dialog.getByRole("button", { name: "Add source and sync" }).click();
   await expect(page.getByText(/Added the search to Previewer as a source and synced: \d+ channels added/)).toBeVisible();
+  // On a radio, they're in use, so the channel list shows them, marked shared.
+  await page.getByLabel("Search", { exact: true }).fill('name:"GMRS 15R"');
+  const row = page.getByRole("row", { name: /GMRS 15R/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByLabel("Shared channel")).toBeVisible();
 
   await page.goto("/l/default/radios/Previewer");
   await page.getByRole("tab", { name: "Sources" }).click();
