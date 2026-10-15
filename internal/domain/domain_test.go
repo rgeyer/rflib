@@ -1,6 +1,10 @@
 package domain
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestFrequencyRoundTrip(t *testing.T) {
 	hz, err := ParseFrequencyMHz("146.520")
@@ -54,6 +58,23 @@ func TestStandardToneLists(t *testing.T) {
 		}
 		if got := IsStandardTone(tone); got != tc.want {
 			t.Errorf("IsStandardTone(%s) = %v", tc.tone, got)
+		}
+	}
+}
+
+func TestRecordChanges(t *testing.T) {
+	a := json.RawMessage(`{"name":"Hub","members":[{"id":"a"},{"id":"b"}],"notes":""}`)
+	for _, tc := range []struct {
+		b    string
+		want string
+	}{
+		{`{"name":"Hub","members":[{"id":"a"},{"id":"b"},{"id":"c"}],"notes":""}`, "members: 2 → 3 (1 added)"},
+		{`{"name":"Hub","members":[{"id":"b"},{"id":"a"}],"notes":""}`, "members: 2 → 2 (reordered)"},
+		{`{"name":"Hub","members":[{"id":"a"},{"id":"x"}],"notes":"x"}`, "members: 2 → 2 (1 changed); notes: (none) → x"},
+		{`{"name":"Hub 2","notes":""}`, "members: 2 → 0 (2 removed); name: Hub → Hub 2"},
+	} {
+		if got := strings.Join(RecordChanges(a, json.RawMessage(tc.b)), "; "); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.b, got, tc.want)
 		}
 	}
 }

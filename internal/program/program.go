@@ -33,19 +33,20 @@ type Memory struct {
 	LeftOut bool
 }
 
-type Plan struct {
+// Layout is a radio's computed memories: what an export writes.
+type Layout struct {
 	Radio    domain.Radio
 	Model    model.Model
 	Memories []Memory
 	Warnings []string
 }
 
-// Build plans a radio's memories. It fails when the list doesn't fit the
+// Build lays out a radio's memories. It fails when the list doesn't fit the
 // model's memories; everything else that can't be honored is a warning.
 // Memories transmit only where domain.PersonalTransmitAllowed; any other
 // channel is programmed receive-only, whatever its service.
-func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Plan, error) {
-	p := Plan{Radio: r, Model: m}
+func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, error) {
+	p := Layout{Radio: r, Model: m}
 	locs, err := domain.MemoryNumbers(entries, m.Memories.First)
 	if err != nil {
 		return p, err
@@ -162,15 +163,15 @@ func choosePower(m model.Model, c domain.Channel, intent domain.PowerIntent, war
 
 func fmtWatts(w float64) string { return strconv.FormatFloat(w, 'f', -1, 64) }
 
-// Exporter is what writes a plan: CHIRP or the model's profile.
+// Exporter is what writes a layout: CHIRP or the model's profile.
 type Exporter interface {
 	export.Exporter
 	export.Validator
 }
 
-// ExporterFor returns the writer for a plan's model, placing each memory at
+// ExporterFor returns the writer for a layout's model, placing each memory at
 // its location.
-func ExporterFor(p Plan) (Exporter, error) {
+func ExporterFor(p Layout) (Exporter, error) {
 	locs := make([]int, len(p.Memories))
 	for i, mem := range p.Memories {
 		locs[i] = mem.Location
@@ -185,11 +186,11 @@ func ExporterFor(p Plan) (Exporter, error) {
 	return export.CHIRP{Locations: locs}, nil
 }
 
-// Write exports a plan. Memories marked LeftOut are not written (Build
+// Write exports a layout. Memories marked LeftOut are not written (Build
 // warned about them). With skipInvalid, memories the format can't
 // represent are left out too and described on warn; otherwise any of them
 // fails the export. Left-out memories' numbers stay empty.
-func Write(w io.Writer, p Plan, skipInvalid bool, warn io.Writer) (int, error) {
+func Write(w io.Writer, p Layout, skipInvalid bool, warn io.Writer) (int, error) {
 	p.Memories = slices.DeleteFunc(slices.Clone(p.Memories), func(mem Memory) bool { return mem.LeftOut })
 	if skipInvalid {
 		var kept []Memory

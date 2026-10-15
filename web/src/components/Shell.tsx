@@ -1,6 +1,6 @@
 import { AppShell, Badge, Burger, Group, NavLink, SegmentedControl, Select, Text, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconAntenna, IconBroadcast, IconFileImport, IconList, IconMap, IconRefresh } from "@tabler/icons-react";
+import { IconAntenna, IconBroadcast, IconClipboardList, IconFileImport, IconList, IconMap, IconRefresh, IconTopologyStar, IconUsersGroup } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink as RouterLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api, call, type Change, type Library } from "../api/client";
@@ -25,6 +25,9 @@ export function Shell() {
     { to: "channels", label: "Channels", icon: IconList },
     { to: "map", label: "Map", icon: IconMap },
     { to: "radios", label: "Radios", icon: IconAntenna },
+    { to: "systems", label: "Systems", icon: IconTopologyStar },
+    { to: "plans", label: "Plans", icon: IconClipboardList },
+    { to: "orgs", label: "Organizations", icon: IconUsersGroup },
     { to: "import", label: "Import", icon: IconFileImport },
     { to: "lists", label: "Built-in lists", icon: IconBroadcast },
   ];

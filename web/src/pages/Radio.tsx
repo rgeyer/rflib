@@ -9,13 +9,24 @@ import { api, call, download, type Memory, type Radio, type Source } from "../ap
 import { FilterMenu, QueryBar } from "../components/QueryBar";
 import { useLib, useTags } from "../lib/library";
 import { failed, ok, warn } from "../lib/notify";
+import { usePlans } from "../lib/records";
 import { duplex, formatMHz, offsetMHz, toneSummary } from "../lib/radio";
 
 type SyncResult = {
-  sources: { source: Source; added: number; channels: { id: string }[]; skipped: unknown[]; wrong_mode: unknown[]; resorted: number }[];
+  sources: {
+    source: Source;
+    added: number;
+    channels: { id: string }[];
+    skipped: unknown[];
+    wrong_mode: unknown[];
+    resorted: number;
+    removed: unknown[];
+    linked: number;
+    note: string;
+  }[];
   added: number;
   resorted: number;
-  plan_error: string | null;
+  layout_error: string | null;
 };
 
 export function RadioPage() {
@@ -88,7 +99,7 @@ export function RadioPage() {
       }
       setPreview(null);
       ok(`Added ${r.added} channels${r.resorted ? `, re-sorted ${r.resorted}; program the radio again` : ""}`);
-      if (r.plan_error) warn([r.plan_error]);
+      if (r.layout_error) warn([r.layout_error]);
       refresh();
     },
     onError: failed,
@@ -302,7 +313,10 @@ export function RadioPage() {
           <Stack>
             {preview.sources.map((s) => (
               <Text key={s.source.id} size="sm">
-                Source {s.source.number} ({s.source.query}): {s.channels.length} to add
+                Source {s.source.number} ({s.source.plan ? `plan ${s.source.plan}` : s.source.query}):{" "}
+                {s.note || `${s.channels.length} to add`}
+                {s.linked > 0 && `, ${s.linked} to link from the shared list`}
+                {s.removed.length > 0 && `, ${s.removed.length} to take off`}
                 {s.skipped.length + s.wrong_mode.length > 0 && `, ${s.skipped.length + s.wrong_mode.length} skipped`}
                 {s.resorted > 0 && `, ${s.resorted} to re-sort`}
               </Text>
@@ -324,6 +338,8 @@ function Sources() {
   const client = useQueryClient();
   const path = { lib, radio };
   const [query, setQuery] = useState("");
+  const [plan, setPlan] = useState<string | null>(null);
+  const plans = usePlans();
   const [sort, setSort] = useState<string>("name");
   const [section, setSection] = useState<number | string>("");
   const sources = useQuery({
@@ -335,11 +351,12 @@ function Sources() {
       call(
         api.POST("/libraries/{lib}/radios/{radio}/sources", {
           params: { path },
-          body: { query, sort, section_start: section === "" ? null : Number(section) },
+          body: { ...(plan ? { plan } : { query, sort }), section_start: section === "" ? null : Number(section) },
         }),
       ),
     onSuccess: () => {
       setQuery("");
+      setPlan(null);
       setSection("");
       ok("Source added; sync to add its channels");
       void client.invalidateQueries();
@@ -354,13 +371,14 @@ function Sources() {
   return (
     <Stack>
       <Text size="sm" c="dimmed">
-        Sync adds each source's new matches to its part of the list, in its sort order. Earlier sources claim a channel first.
+        Sync adds each query source's new matches to its part of the list, in its sort order; earlier sources claim a channel first. A plan
+        source follows its plan: its channels, order, and names, numbered from the section start as the plan numbers them.
       </Text>
       <Table>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>#</Table.Th>
-            <Table.Th>Query</Table.Th>
+            <Table.Th>Query or plan</Table.Th>
             <Table.Th>Sort</Table.Th>
             <Table.Th>Section</Table.Th>
             <Table.Th>Channels</Table.Th>
@@ -371,7 +389,7 @@ function Sources() {
           {(sources.data?.sources ?? []).map((s) => (
             <Table.Tr key={s.id}>
               <Table.Td>{s.number}</Table.Td>
-              <Table.Td ff="monospace">{s.query}</Table.Td>
+              <Table.Td ff={s.plan ? undefined : "monospace"}>{s.plan ? `Plan: ${s.plan}` : s.query}</Table.Td>
               <Table.Td>
                 {s.sort}
                 {s.keep_sorted && " (kept sorted)"}
@@ -386,7 +404,7 @@ function Sources() {
                   onClick={() =>
                     modals.openConfirmModal({
                       title: `Remove source ${s.number}?`,
-                      children: <Text size="sm">Its channels stay on the radio.</Text>,
+                      children: <Text size="sm">{s.plan ? "Its channels come off the radio." : "Its channels stay on the radio."}</Text>,
                       labels: { confirm: "Remove", cancel: "Cancel" },
                       onConfirm: () => remove.mutate(s.number),
                     })
@@ -400,10 +418,25 @@ function Sources() {
         </Table.Tbody>
       </Table>
       <Group align="end">
-        <TextInput flex={1} label="New source query" placeholder="band:gmrs -is:repeater" value={query} onChange={(e) => setQuery(e.currentTarget.value)} />
-        <Select label="Sort" w={100} data={["name", "freq"]} value={sort} allowDeselect={false} onChange={(v) => v && setSort(v)} />
+        <TextInput
+          flex={1}
+          label="New source query"
+          placeholder="band:gmrs -is:repeater"
+          disabled={plan !== null}
+          value={query}
+          onChange={(e) => setQuery(e.currentTarget.value)}
+        />
+        <Select
+          label="or a plan"
+          w={180}
+          clearable
+          data={(plans.data?.plans ?? []).filter((p) => p.status !== "archived").map((p) => p.name)}
+          value={plan}
+          onChange={setPlan}
+        />
+        <Select label="Sort" w={100} data={["name", "freq"]} value={sort} allowDeselect={false} disabled={plan !== null} onChange={(v) => v && setSort(v)} />
         <NumberInput label="Section start" w={120} min={0} value={section} onChange={setSection} />
-        <Button onClick={() => add.mutate()} loading={add.isPending} disabled={!query.trim()}>
+        <Button onClick={() => add.mutate()} loading={add.isPending} disabled={!query.trim() && !plan}>
           Add source
         </Button>
       </Group>

@@ -249,7 +249,7 @@ func TestExportJSONRestoresExactly(t *testing.T) {
 	c.ok("channel", "add", "--name", "Other", "--rx", "146.550")
 
 	all := c.ok("export", "json")
-	if !strings.Contains(all, `"version": 3`) || !strings.Contains(all, `"radius_km": 30`) || strings.Contains(all, "groups") {
+	if !strings.Contains(all, `"version": 4`) || !strings.Contains(all, `"radius_km": 30`) || strings.Contains(all, "groups") {
 		t.Fatalf("backup = %s", all)
 	}
 	if filtered := c.ok("export", "json", "--tag", "ham"); strings.Contains(filtered, "Other") {
@@ -982,7 +982,7 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 
 func TestSharedChannels(t *testing.T) {
 	c := newCLI(t)
-	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 11 {
+	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 7 {
 		t.Errorf("tag list = %q", got)
 	}
 	// A private copy of GMRS 20 from before, named differently.
@@ -1072,11 +1072,11 @@ func TestSharedChannels(t *testing.T) {
 	c.ok("channel", "update", "--id", mine, "--rx", "462.7125")
 
 	// The maintainer adds a channel from a file; tags must be shared ones.
-	file := writeFile(t, "name,receive_mhz,transmit_mhz,tags\nMarian,147.300,147.900,linked;mine\n")
+	file := writeFile(t, "name,receive_mhz,transmit_mhz,tags\nMarian,147.300,147.900,net;mine\n")
 	if got := c.status("shared", "import", "csv", file, "--reason", "club list"); !strings.Contains(got, "Left off tags that aren't shared tags: mine") || !strings.Contains(got, "created 1") {
 		t.Errorf("shared import = %q", got)
 	}
-	if got := c.ok("channel", "list", "in:shared", "name:Marian", "--fields", "name,tags"); got != "Marian\tlinked" {
+	if got := c.ok("channel", "list", "in:shared", "name:Marian", "--fields", "name,tags"); got != "Marian\tnet" {
 		t.Errorf("imported shared channel = %q", got)
 	}
 	if got := c.ok("channel", "link", "-q", "name:Marian"); len(got) != 36 {

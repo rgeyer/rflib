@@ -59,6 +59,12 @@ type Channel struct {
 	ShortNames []string
 	// Location is where the channel is used, if known (see query near:).
 	Location *Location
+	// Networks are the channel's nodes on linking networks, such as its
+	// AllStar node.
+	Networks []NetworkID
+	// Orgs are the organizations that operate or support a shared
+	// channel; private channels have none.
+	Orgs []OrgRef
 	// Status says whether the channel is on the air. Only shared channels
 	// change it; empty means active.
 	Status Status
@@ -286,6 +292,11 @@ func ValidateChannel(c Channel) error {
 	}
 	if _, err := ParseStatus(string(c.Status)); err != nil {
 		return err
+	}
+	for _, n := range c.Networks {
+		if _, err := ParseNetworkID(n.String()); err != nil {
+			return err
+		}
 	}
 	if c.Location != nil {
 		return ValidateLocation(*c.Location)

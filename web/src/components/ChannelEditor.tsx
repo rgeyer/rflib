@@ -1,11 +1,13 @@
-import { Alert, Button, Drawer, Group, Select, Stack, Switch, TagsInput, Text, Textarea, TextInput } from "@mantine/core";
+import { Alert, Button, Divider, Drawer, Group, MultiSelect, Select, Stack, Switch, TagsInput, Text, Textarea, TextInput } from "@mantine/core";
 import { IconLink } from "@tabler/icons-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, call, type Channel, type ChannelInput } from "../api/client";
 import { useLib } from "../lib/library";
+import { useOrgs } from "../lib/records";
 import { failed, ok, warn } from "../lib/notify";
 import { formatMHz, MODES, parseMHz, POWERS, SERVICES } from "../lib/radio";
+import { NetworkLinks, ReasonModal } from "./Records";
 import { ToneInput } from "./ToneInput";
 
 type Form = {
@@ -27,11 +29,12 @@ type Form = {
   lat: string;
   lon: string;
   radius: string;
+  networks: string[];
 };
 
 const blank: Form = {
   name: "", rx: "", tx: "", mode: "FM", service: "", rx_only: false, tx_tone: "none", rx_tone: "none", tone_squelch: false,
-  power: "", bandwidth: "", skip: false, tags: [], short_names: [], notes: "", lat: "", lon: "", radius: "",
+  power: "", bandwidth: "", skip: false, tags: [], short_names: [], notes: "", lat: "", lon: "", radius: "", networks: [],
 };
 
 function fromChannel(c: Channel): Form {
@@ -41,6 +44,7 @@ function fromChannel(c: Channel): Form {
     tags: c.tags, short_names: c.short_names, notes: c.notes,
     lat: c.location ? String(c.location.latitude) : "", lon: c.location ? String(c.location.longitude) : "",
     radius: c.location?.radius_km != null ? String(c.location.radius_km) : "",
+    networks: c.networks,
   };
 }
 
@@ -64,7 +68,7 @@ function toInput(f: Form, linked: boolean): ChannelInput | string {
   }
   return {
     ...own, name: f.name, rx_hz: rx, tx_hz: tx, mode: f.mode, service: f.service, rx_only: f.rx_only,
-    tx_tone: f.tx_tone, rx_tone: f.rx_tone, tone_squelch: f.tone_squelch, bandwidth: f.bandwidth, location,
+    tx_tone: f.tx_tone, rx_tone: f.rx_tone, tone_squelch: f.tone_squelch, bandwidth: f.bandwidth, location, networks: f.networks,
   };
 }
 
@@ -196,11 +200,23 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
               Shared notes: {c.link.notes}
             </Text>
           )}
+          <TagsInput
+            label="Linking-network nodes"
+            description="Such as allstar:43761 or echolink:12345"
+            disabled={shared}
+            value={form.networks}
+            onChange={(v) => set("networks", v)}
+          />
+          {c && <NetworkLinks networks={c.networks} />}
+          {c && c.organizations.length > 0 && (
+            <Text size="sm">Organizations: {c.organizations.map((o) => `${o.name} (${o.role})`).join(", ")}</Text>
+          )}
           <Group grow>
             <TextInput label="Latitude" disabled={shared} value={form.lat} onChange={(e) => set("lat", e.currentTarget.value)} />
             <TextInput label="Longitude" disabled={shared} value={form.lon} onChange={(e) => set("lon", e.currentTarget.value)} />
             <TextInput label="Radius km" disabled={shared} value={form.radius} onChange={(e) => set("radius", e.currentTarget.value)} />
           </Group>
+          {props.readOnly && c && !linked && c.revision > 0 && <SharedCorrection channel={c} onSaved={() => done([])} />}
           {!props.readOnly && (
             <Group justify="space-between" mt="md">
               {c ? (
@@ -218,5 +234,52 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
         </Stack>
       </form>
     </Drawer>
+  );
+}
+
+/** SharedCorrection lets a maintainer set a shared channel's organizations
+ * and network nodes; the change is recorded with a reason, and links
+ * follow it. */
+function SharedCorrection(props: { channel: Channel; onSaved: () => void }) {
+  const c = props.channel;
+  const orgs = useOrgs();
+  const ids = (role: string) => c.organizations.filter((o) => o.role === role).map((o) => o.org_id);
+  const [operators, setOperators] = useState(ids("operator"));
+  const [partners, setPartners] = useState(ids("partner"));
+  const [networks, setNetworks] = useState(c.networks);
+  const [asking, setAsking] = useState(false);
+  const data = (orgs.data?.organizations ?? []).map((o) => ({ value: o.id, label: o.name }));
+  const save = useMutation({
+    mutationFn: (reason: string) =>
+      call(
+        api.PATCH("/libraries/{lib}/channels/{id}", {
+          params: { path: { lib: "shared", id: c.id } },
+          body: {
+            networks,
+            organizations: [...operators.map((org_id) => ({ org_id, role: "operator" as const })), ...partners.map((org_id) => ({ org_id, role: "partner" as const }))],
+            reason,
+          } as ChannelInput,
+        }),
+      ),
+    onSuccess: () => {
+      ok("Corrected; links follow");
+      setAsking(false);
+      props.onSaved();
+    },
+    onError: failed,
+  });
+  return (
+    <>
+      <Divider label="Maintainer: who runs it, and its nodes" mt="sm" />
+      <MultiSelect label="Operators" data={data} searchable value={operators} onChange={setOperators} />
+      <MultiSelect label="Partners" data={data} searchable value={partners} onChange={setPartners} />
+      <TagsInput label="Nodes" description="Such as allstar:43761" value={networks} onChange={setNetworks} />
+      <Group justify="flex-end">
+        <Button variant="light" onClick={() => setAsking(true)}>
+          Save correction
+        </Button>
+      </Group>
+      <ReasonModal opened={asking} title={`Correct ${c.name}`} loading={save.isPending} onClose={() => setAsking(false)} onConfirm={(r) => save.mutate(r)} />
+    </>
   );
 }

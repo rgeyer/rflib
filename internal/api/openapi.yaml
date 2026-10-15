@@ -803,6 +803,180 @@ paths:
               schema: {type: string}
         default: {$ref: "#/components/responses/Error"}
 
+  /organizations:
+    get:
+      summary: The shared list's organizations
+      responses:
+        "200":
+          description: Organizations by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [organizations]
+                properties:
+                  organizations: {type: array, items: {$ref: "#/components/schemas/Organization"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Add an organization (maintainer)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OrganizationInput"}
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Organization"}
+        default: {$ref: "#/components/responses/Error"}
+  /organizations/{org}:
+    parameters: [{$ref: "#/components/parameters/org"}]
+    get:
+      summary: An organization and the shared channels and systems it's part of
+      responses:
+        "200":
+          description: The organization
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [organization, channels, systems]
+                properties:
+                  organization: {$ref: "#/components/schemas/Organization"}
+                  channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                  systems: {type: array, items: {$ref: "#/components/schemas/System"}}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      summary: Change an organization (maintainer)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OrganizationInput"}
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Organization"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      summary: Delete an organization attached to nothing (maintainer)
+      responses:
+        "204": {description: Deleted}
+        default: {$ref: "#/components/responses/Error"}
+  /organizations/{org}/history:
+    parameters: [{$ref: "#/components/parameters/org"}]
+    get:
+      summary: An organization's revisions
+      responses:
+        "200": {$ref: "#/components/responses/RecordRevisions"}
+        default: {$ref: "#/components/responses/Error"}
+  /systems:
+    get:
+      summary: The shared list's systems of linked channels
+      responses:
+        "200":
+          description: Systems by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [systems]
+                properties:
+                  systems: {type: array, items: {$ref: "#/components/schemas/System"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Add a system (maintainer)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SystemInput"}
+      responses:
+        "201": {$ref: "#/components/responses/SystemDetail"}
+        default: {$ref: "#/components/responses/Error"}
+  /systems/{system}:
+    parameters: [{$ref: "#/components/parameters/system"}]
+    get:
+      summary: A system and its members' channels
+      responses:
+        "200": {$ref: "#/components/responses/SystemDetail"}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      summary: Change a system (maintainer)
+      description: Lists given replace the system's own.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SystemInput"}
+      responses:
+        "200": {$ref: "#/components/responses/SystemDetail"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      summary: Delete a system; its channels stay (maintainer)
+      responses:
+        "204": {description: Deleted}
+        default: {$ref: "#/components/responses/Error"}
+  /systems/{system}/history:
+    parameters: [{$ref: "#/components/parameters/system"}]
+    get:
+      summary: A system's revisions
+      responses:
+        "200": {$ref: "#/components/responses/RecordRevisions"}
+        default: {$ref: "#/components/responses/Error"}
+  /plans:
+    get:
+      summary: The shared list's communications plans
+      responses:
+        "200":
+          description: Plans by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [plans]
+                properties:
+                  plans: {type: array, items: {$ref: "#/components/schemas/Plan"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Start a plan (maintainer)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PlanInput"}
+      responses:
+        "201": {$ref: "#/components/responses/PlanDetail"}
+        default: {$ref: "#/components/responses/Error"}
+  /plans/{plan}:
+    parameters: [{$ref: "#/components/parameters/plan"}]
+    get:
+      summary: A plan and its channels as ICS 205 lists them
+      responses:
+        "200": {$ref: "#/components/responses/PlanDetail"}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      summary: Change a plan (maintainer); plans are archived, never deleted
+      description: Entries given replace the plan's.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PlanInput"}
+      responses:
+        "200": {$ref: "#/components/responses/PlanDetail"}
+        default: {$ref: "#/components/responses/Error"}
+  /plans/{plan}/history:
+    parameters: [{$ref: "#/components/parameters/plan"}]
+    get:
+      summary: A plan's revisions
+      responses:
+        "200": {$ref: "#/components/responses/RecordRevisions"}
+        default: {$ref: "#/components/responses/Error"}
   /models:
     get:
       summary: Radio models
@@ -911,6 +1085,9 @@ components:
     name: {name: name, in: path, required: true, schema: {type: string}}
     seed: {name: seed, in: path, required: true, description: "A built-in list, such as us-gmrs", schema: {type: string}}
     n: {name: n, in: path, required: true, description: "A source's number, from 1", schema: {type: integer, minimum: 1}}
+    org: {name: org, in: path, required: true, description: "An organization's name or ID", schema: {type: string}}
+    system: {name: system, in: path, required: true, description: "A system's name or ID", schema: {type: string}}
+    plan: {name: plan, in: path, required: true, description: "A plan's name or ID", schema: {type: string}}
 
   responses:
     Error:
@@ -937,6 +1114,36 @@ components:
             required: [sources]
             properties:
               sources: {type: array, items: {$ref: "#/components/schemas/Source"}}
+
+    SystemDetail:
+      description: A system and its members' channels, in member order
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [system, channels]
+            properties:
+              system: {$ref: "#/components/schemas/System"}
+              channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+    PlanDetail:
+      description: A plan and its rows as ICS 205 lists them
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [plan, rows]
+            properties:
+              plan: {$ref: "#/components/schemas/Plan"}
+              rows: {type: array, items: {$ref: "#/components/schemas/PlanRow"}}
+    RecordRevisions:
+      description: Revisions, oldest first
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [revisions]
+            properties:
+              revisions: {type: array, items: {$ref: "#/components/schemas/RecordRevision"}}
 
   schemas:
     Error:
@@ -989,7 +1196,7 @@ components:
     Channel:
       type: object
       required: [id, name, rx_hz, tx_hz, mode, service, rx_only, rx_tone, tx_tone, tone_squelch, power, bandwidth, skip, tags, short_names, notes,
-        location, status, status_note, back_on, replaced_by, revision, copied_from, link, created_at, updated_at]
+        location, status, status_note, back_on, replaced_by, revision, copied_from, link, networks, organizations, created_at, updated_at]
       properties:
         id: {type: string}
         name: {type: string}
@@ -1015,6 +1222,8 @@ components:
         revision: {type: integer, description: A shared channel's revision; zero for private channels}
         copied_from: {type: string, nullable: true}
         link: {allOf: [{$ref: "#/components/schemas/Link"}], nullable: true}
+        networks: {type: array, items: {type: string}, description: "Nodes on linking networks, NETWORK:NODE, such as allstar:43763"}
+        organizations: {type: array, items: {$ref: "#/components/schemas/OrgRef"}, description: "A shared channel's organizations"}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     ChannelInput:
@@ -1036,6 +1245,8 @@ components:
         tags: {type: array, items: {type: string}}
         short_names: {type: array, items: {type: string}}
         notes: {type: string}
+        networks: {type: array, items: {type: string}, description: "NETWORK:NODE values; networks are allstar, echolink, irlp, and wires-x"}
+        organizations: {type: array, items: {$ref: "#/components/schemas/OrgRefInput"}, description: Shared channels only}
         location:
           type: object
           nullable: true
@@ -1220,11 +1431,13 @@ components:
         wrong_mode: {type: array, items: {$ref: "#/components/schemas/Channel"}}
     Source:
       type: object
-      required: [number, id, query, sort, section_start, keep_sorted, channels]
+      required: [number, id, query, plan, plan_id, sort, section_start, keep_sorted, channels]
       properties:
         number: {type: integer}
         id: {type: string}
-        query: {type: string}
+        query: {type: string, description: Empty for a plan source}
+        plan: {type: string, nullable: true, description: A plan source's plan name}
+        plan_id: {type: string, nullable: true}
         sort: {type: string, enum: [name, freq]}
         section_start: {type: integer, nullable: true}
         keep_sorted: {type: boolean}
@@ -1234,12 +1447,13 @@ components:
       additionalProperties: false
       properties:
         query: {type: string}
+        plan: {type: string, description: "A plan's name or ID, for a source that follows the plan; it can't change later"}
         sort: {type: string}
         section_start: {type: integer, nullable: true}
         keep_sorted: {type: boolean}
     SyncResult:
       type: object
-      required: [sources, added, resorted, dry_run, plan_error]
+      required: [sources, added, resorted, dry_run, layout_error]
       properties:
         sources:
           type: array
@@ -1247,14 +1461,148 @@ components:
             allOf:
               - {$ref: "#/components/schemas/AddResult"}
               - type: object
-                required: [source, resorted]
+                required: [source, resorted, removed, linked, note]
                 properties:
                   source: {$ref: "#/components/schemas/Source"}
                   resorted: {type: integer}
+                  removed: {type: array, items: {$ref: "#/components/schemas/Channel"}, description: "A plan's channels taken off because the plan dropped them"}
+                  linked: {type: integer, description: Shared channels linked into the library for a plan}
+                  note: {type: string, description: "Why a plan source didn't change, such as an archived plan"}
         added: {type: integer}
         resorted: {type: integer}
         dry_run: {type: boolean}
-        plan_error: {type: string, nullable: true, description: Set when the radio no longer fits its memories}
+        layout_error: {type: string, nullable: true, description: Set when the radio no longer fits its memories}
+
+    OrgRef:
+      type: object
+      required: [org_id, name, role]
+      properties:
+        org_id: {type: string}
+        name: {type: string}
+        role: {type: string, enum: [operator, partner]}
+    OrgRefInput:
+      type: object
+      additionalProperties: false
+      required: [org_id]
+      properties:
+        org_id: {type: string, description: "An organization's ID or name"}
+        role: {type: string, enum: [operator, partner], description: Default operator}
+    Organization:
+      type: object
+      required: [id, name, kind, callsign, website, notes, revision, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        kind: {type: string, enum: [club, emergency, agency, individual]}
+        callsign: {type: string}
+        website: {type: string}
+        notes: {type: string}
+        revision: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    OrganizationInput:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        name: {type: string}
+        kind: {type: string}
+        callsign: {type: string}
+        website: {type: string}
+        notes: {type: string}
+        reason: {type: string, description: "Why, recorded in the history"}
+    SystemMember:
+      type: object
+      additionalProperties: false
+      required: [channel_id]
+      properties:
+        channel_id: {type: string, description: "A shared channel's ID; in input, also a unique prefix"}
+        linking: {type: string, enum: [full-time, on-demand], description: Default full-time}
+        notes: {type: string}
+    System:
+      type: object
+      required: [id, name, link, networks, organizations, members, notes, revision, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        link: {type: string, enum: ["", allstar, echolink, irlp, wires-x, rf, other]}
+        networks: {type: array, items: {type: string}, description: "The system's own nodes, NETWORK:NODE"}
+        organizations: {type: array, items: {$ref: "#/components/schemas/OrgRef"}}
+        members: {type: array, items: {$ref: "#/components/schemas/SystemMember"}}
+        notes: {type: string}
+        revision: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    SystemInput:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        name: {type: string}
+        link: {type: string}
+        networks: {type: array, items: {type: string}}
+        organizations: {type: array, items: {$ref: "#/components/schemas/OrgRefInput"}}
+        members: {type: array, items: {$ref: "#/components/schemas/SystemMember"}}
+        notes: {type: string}
+        reason: {type: string, description: "Why, recorded in the history"}
+    PlanEntry:
+      type: object
+      additionalProperties: false
+      required: [channel_id]
+      description: A shared channel, or with a query (and channel_id null) a query section
+      properties:
+        channel_id: {type: string, nullable: true}
+        query: {type: string}
+        sort: {type: string}
+        name: {type: string, description: "The channel's name in the plan; empty keeps its own"}
+        assignment: {type: string}
+        notes: {type: string}
+        section_start: {type: integer, nullable: true, minimum: 1, description: The plan channel number the entry starts at}
+    Plan:
+      type: object
+      required: [id, name, description, starts, ends, status, entries, revision, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        starts: {type: string, format: date, nullable: true}
+        ends: {type: string, format: date, nullable: true}
+        status: {type: string, enum: [draft, published, archived]}
+        entries: {type: array, items: {$ref: "#/components/schemas/PlanEntry"}}
+        revision: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PlanInput:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        name: {type: string}
+        description: {type: string}
+        starts: {type: string, format: date, nullable: true}
+        ends: {type: string, format: date, nullable: true}
+        status: {type: string}
+        entries: {type: array, items: {$ref: "#/components/schemas/PlanEntry"}}
+        reason: {type: string, description: "Why, recorded in the history"}
+    PlanRow:
+      type: object
+      required: [number, entry, channel, name, assignment, notes]
+      properties:
+        number: {type: integer, description: "The plan channel number (ICS 205's Ch #)"}
+        entry: {type: integer, description: "The entry it comes from, numbered from 1"}
+        channel: {$ref: "#/components/schemas/Channel"}
+        name: {type: string}
+        assignment: {type: string}
+        notes: {type: string}
+    RecordRevision:
+      type: object
+      required: [number, at, reason, author, changes]
+      properties:
+        number: {type: integer}
+        at: {type: string, format: date-time}
+        reason: {type: string}
+        author: {type: string}
+        changes: {type: array, items: {type: string}, description: What changed from the revision before}
 
     Model:
       type: object

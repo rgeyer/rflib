@@ -37,6 +37,9 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"TransactionRollsBack", testTransactionRollsBack},
 		{"LinksFollowSharedChannels", testLinksFollowSharedChannels},
 		{"SharedRevisions", testSharedRevisions},
+		{"Organizations", testOrganizations},
+		{"Systems", testSystems},
+		{"Plans", testPlans},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
@@ -787,4 +790,155 @@ func testSharedRevisions(t *testing.T, s store.Store) {
 	if revs, err := mine.ChannelRevisions(ctx(), channel(t, mine, "Private", 1).ID); err != nil || len(revs) != 0 {
 		t.Errorf("private revisions = %+v, %v", revs, err)
 	}
+}
+
+func testOrganizations(t *testing.T, s store.Store) {
+	shared, mine := sharedLibrary(t, s), newLibrary(t, s, "Mine")
+	o, err := shared.CreateOrg(store.WithChange(ctx(), "pilot", ""), domain.Organization{Name: "SBARC", Callsign: "w6sba", Website: "https://www.sbarc.org"})
+	if err != nil || o.Kind != domain.OrgClub || o.Callsign != "W6SBA" || o.Revision != 1 {
+		t.Fatalf("create = %+v, %v", o, err)
+	}
+	if _, err := shared.CreateOrg(ctx(), domain.Organization{Name: "SBARC"}); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("duplicate name: %v", err)
+	}
+	if got, err := shared.GetOrg(ctx(), "sbarc"); err != nil || got.ID != o.ID {
+		t.Errorf("get by name, ignoring case = %+v, %v", got, err)
+	}
+	_, err = mine.GetOrg(ctx(), o.ID)
+	mustNotFound(t, "another library's organization", err)
+
+	// Shared channels carry organizations and network nodes, and links
+	// show them.
+	allstar, _ := domain.ParseNetworkID("allstar:43761")
+	c, err := shared.CreateChannel(ctx(), domain.Channel{Name: "Rpt", ReceiveHz: 146_790_000, Mode: "FM", ReceiveTone: none, TransmitTone: none,
+		Networks: []domain.NetworkID{allstar}, Orgs: []domain.OrgRef{{OrgID: o.ID, Role: domain.RoleOperator}}})
+	if err != nil || len(c.Orgs) != 1 || c.Orgs[0].Name != "SBARC" {
+		t.Fatalf("channel = %+v, %v", c, err)
+	}
+	link, err := mine.CreateChannel(ctx(), domain.Channel{Link: &domain.Link{SharedID: c.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mine.GetChannel(ctx(), link.ID); len(got.Networks) != 1 || got.Networks[0] != allstar || len(got.Orgs) != 1 || got.Orgs[0].Name != "SBARC" {
+		t.Errorf("link = %+v", got)
+	}
+	// Private channels can't name the shared list's organizations.
+	_, err = mine.CreateChannel(ctx(), domain.Channel{Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none, Orgs: []domain.OrgRef{{OrgID: o.ID}}})
+	mustNotFound(t, "private channel's organization", err)
+	if err := shared.DeleteOrg(ctx(), o.ID); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("deleted an attached organization: %v", err)
+	}
+	// Renaming shows on what it's attached to; a save without a change
+	// records no revision.
+	o.Name = "Santa Barbara ARC"
+	if o, err = shared.UpdateOrg(ctx(), o); err != nil || o.Revision != 2 {
+		t.Fatalf("rename = %+v, %v", o, err)
+	}
+	if o, err = shared.UpdateOrg(ctx(), o); err != nil || o.Revision != 2 {
+		t.Fatalf("no-op update = %+v, %v", o, err)
+	}
+	if got, _ := shared.GetChannel(ctx(), c.ID); got.Orgs[0].Name != "Santa Barbara ARC" {
+		t.Errorf("channel's organization = %+v", got.Orgs)
+	}
+	revs, err := shared.RecordRevisions(ctx(), "organization", o.ID)
+	if err != nil || len(revs) != 2 || revs[0].Reason != "pilot" {
+		t.Fatalf("revisions = %+v, %v", revs, err)
+	}
+	if ch := domain.RecordChanges(revs[0].Record, revs[1].Record); strings.Join(ch, "; ") != "name: SBARC → Santa Barbara ARC" {
+		t.Errorf("changes = %q", ch)
+	}
+	c.Orgs = nil
+	if _, err := shared.UpdateChannel(ctx(), c); err != nil {
+		t.Fatal(err)
+	}
+	if err := shared.DeleteOrg(ctx(), o.ID); err != nil {
+		t.Errorf("delete: %v", err)
+	}
+}
+
+func testSystems(t *testing.T, s store.Store) {
+	shared, mine := sharedLibrary(t, s), newLibrary(t, s, "Mine")
+	o, _ := shared.CreateOrg(ctx(), domain.Organization{Name: "SBARC"})
+	a, b := channel(t, shared, "Broadcast Pk", 146_790_000), channel(t, shared, "La Cumbre", 145_180_000)
+	hub, _ := domain.ParseNetworkID("allstar:43763")
+	x, err := shared.CreateSystem(ctx(), domain.System{Name: "SBARC Hub", Link: "allstar", Networks: []domain.NetworkID{hub},
+		Orgs:    []domain.OrgRef{{OrgID: o.ID}},
+		Members: []domain.SystemMember{{ChannelID: b.ID, Linking: domain.LinkOnDemand, Notes: "microwave"}, {ChannelID: a.ID}}})
+	if err != nil || x.Revision != 1 {
+		t.Fatalf("create = %+v, %v", x, err)
+	}
+	got, err := shared.GetSystem(ctx(), "sbarc hub")
+	switch {
+	case err != nil:
+		t.Fatal(err)
+	case len(got.Members) != 2 || got.Members[0].ChannelID != a.ID || got.Members[0].Linking != domain.LinkFullTime || got.Members[1].Notes != "microwave":
+		t.Errorf("members, in name order = %+v", got.Members)
+	case len(got.Networks) != 1 || got.Networks[0] != hub || len(got.Orgs) != 1 || got.Orgs[0].Role != domain.RoleOperator:
+		t.Errorf("system = %+v", got)
+	}
+	if ids, err := shared.SystemChannelIDs(ctx(), x.ID); err != nil || len(ids) != 2 || !ids[a.ID] {
+		t.Errorf("channel IDs = %v, %v", ids, err)
+	}
+	// Members are the library's own channels, not links or others'.
+	link, _ := mine.CreateChannel(ctx(), domain.Channel{Link: &domain.Link{SharedID: a.ID}})
+	_, err = mine.CreateSystem(ctx(), domain.System{Name: "Mine", Members: []domain.SystemMember{{ChannelID: link.ID}}})
+	mustNotFound(t, "a link as a member", err)
+	got.Members = got.Members[:1]
+	if got, err = shared.UpdateSystem(ctx(), got); err != nil || got.Revision != 2 || len(got.Members) != 1 {
+		t.Fatalf("update = %+v, %v", got, err)
+	}
+	if revs, _ := shared.RecordRevisions(ctx(), "system", x.ID); len(revs) != 2 {
+		t.Errorf("revisions = %d", len(revs))
+	}
+	if err := shared.DeleteSystem(ctx(), x.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = shared.GetSystem(ctx(), x.ID)
+	mustNotFound(t, "deleted system", err)
+}
+
+func testPlans(t *testing.T, s store.Store) {
+	shared, mine := sharedLibrary(t, s), newLibrary(t, s, "Mine")
+	c := channel(t, shared, "2m Call", 146_520_000)
+	start, end := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC), time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
+	ten := 10
+	p, err := shared.CreatePlan(ctx(), domain.Plan{Name: "Fair", Starts: &start, Ends: &end, Entries: []domain.PlanEntry{
+		{ChannelID: c.ID, Name: "FAIR TAC1", Assignment: "Tactical"},
+		{Query: "band:2m", SectionStart: &ten},
+	}})
+	if err != nil || p.Status != domain.PlanDraft || p.Revision != 1 {
+		t.Fatalf("create = %+v, %v", p, err)
+	}
+	got, err := shared.GetPlan(ctx(), "fair")
+	switch {
+	case err != nil:
+		t.Fatal(err)
+	case got.Starts == nil || !got.Starts.Equal(start) || got.Ends == nil || !got.Ends.Equal(end):
+		t.Errorf("dates = %v, %v", got.Starts, got.Ends)
+	case len(got.Entries) != 2 || got.Entries[0].Name != "FAIR TAC1" || got.Entries[1].Sort != "name" || got.Entries[1].SectionStart == nil || *got.Entries[1].SectionStart != 10:
+		t.Errorf("entries = %+v", got.Entries)
+	}
+	got.Status = domain.PlanPublished
+	if got, err = shared.UpdatePlan(ctx(), got); err != nil || got.Revision != 2 {
+		t.Fatalf("publish = %+v, %v", got, err)
+	}
+	// Radios in other libraries use the plan through a source.
+	if byID, err := mine.PlanByID(ctx(), p.ID); err != nil || byID.Name != "Fair" {
+		t.Errorf("plan by ID = %+v, %v", byID, err)
+	}
+	_, err = mine.GetPlan(ctx(), p.ID)
+	mustNotFound(t, "another library's plan by name", err)
+	r, err := mine.CreateRadio(ctx(), domain.Radio{Name: "HT", Model: "baofeng-uv5rm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mine.AddRadioSource(ctx(), domain.RadioSource{RadioID: r.ID, PlanID: p.ID, Sort: "name"}); err != nil {
+		t.Fatal(err)
+	}
+	if srcs, _ := mine.RadioSources(ctx(), r.ID); len(srcs) != 1 || srcs[0].PlanID != p.ID || srcs[0].PlanName != "Fair" || srcs[0].Query != "" {
+		t.Errorf("sources = %+v", srcs)
+	}
+	// Entries are the library's own channels.
+	_, err = mine.CreatePlan(ctx(), domain.Plan{Name: "x", Entries: []domain.PlanEntry{{ChannelID: c.ID}}})
+	mustNotFound(t, "another library's channel in a plan", err)
 }

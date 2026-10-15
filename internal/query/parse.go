@@ -258,7 +258,8 @@ func SplitScope(n Node) (string, Node, error) {
 	switch x := n.(type) {
 	case Term:
 		if ok, err := take(x); ok || err != nil {
-			return scope, nil, err
+			// The scope alone matches everything in it.
+			return scope, And{}, err
 		}
 	case And:
 		var rest []Node

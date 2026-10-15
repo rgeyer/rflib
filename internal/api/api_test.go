@@ -349,3 +349,100 @@ func urlQuery(s string) string {
 	r := strings.NewReplacer(" ", "%20", ":", "%3A", "+", "%2B")
 	return r.Replace(s)
 }
+
+func TestOrganizationsSystemsAndPlans(t *testing.T) {
+	c := newClient(t, "")
+	L := "/libraries/default"
+	var installed struct {
+		Linked []Channel `json:"linked"`
+	}
+	c.do("POST", L+"/seeds/us-ham-calling/install", map[string]any{}, 200, &installed)
+	link := installed.Linked[0]
+	shared := link.Link.SharedID
+
+	if code := c.errCode("POST", "/organizations", map[string]any{"name": "SBARC", "reason": ""}, 400); code != "invalid" {
+		t.Errorf("no reason: %s", code)
+	}
+	var org Organization
+	c.do("POST", "/organizations", map[string]any{"name": "SBARC", "callsign": "w6sba", "reason": "pilot"}, 201, &org)
+	if org.Kind != "club" || org.Callsign != "W6SBA" {
+		t.Errorf("org = %+v", org)
+	}
+	// The shared channel gets an operator and a node; the link shows them.
+	c.do("PATCH", "/libraries/shared/channels/"+shared, map[string]any{"organizations": []map[string]any{{"org_id": "SBARC"}}, "networks": []string{"allstar:43761"}, "reason": "node"}, 200, nil)
+	var got Channel
+	c.do("GET", L+"/channels/"+link.ID, nil, 200, &got)
+	if len(got.Orgs) != 1 || got.Orgs[0].Name != "SBARC" || got.Orgs[0].Role != "operator" || strings.Join(got.Networks, ",") != "allstar:43761" {
+		t.Errorf("link = %+v", got)
+	}
+
+	var sys struct {
+		System   System    `json:"system"`
+		Channels []Channel `json:"channels"`
+	}
+	c.do("POST", "/systems", map[string]any{"name": "SBARC Hub", "link": "allstar", "networks": []string{"allstar:43763"},
+		"organizations": []map[string]any{{"org_id": org.ID}}, "members": []map[string]any{{"channel_id": shared[:8], "linking": "on-demand"}}, "reason": "pilot"}, 201, &sys)
+	if len(sys.Channels) != 1 || sys.System.Members[0].Linking != "on-demand" || sys.System.Members[0].ChannelID != shared {
+		t.Errorf("system = %+v", sys)
+	}
+	var list struct {
+		Channels []Channel `json:"channels"`
+		Total    int       `json:"total"`
+	}
+	c.do("GET", L+"/channels?q="+urlQuery(`system:"SBARC Hub" org:sbarc`), nil, 200, &list)
+	if list.Total != 1 {
+		t.Errorf("system: and org: = %d", list.Total)
+	}
+	var detail struct {
+		Channels []Channel `json:"channels"`
+		Systems  []System  `json:"systems"`
+	}
+	c.do("GET", "/organizations/sbarc", nil, 200, &detail)
+	if len(detail.Channels) != 1 || len(detail.Systems) != 1 {
+		t.Errorf("org detail = %+v", detail)
+	}
+	if code := c.errCode("DELETE", "/organizations/SBARC", nil, 409); code != "conflict" {
+		t.Errorf("delete attached: %s", code)
+	}
+
+	var plan struct {
+		Plan Plan      `json:"plan"`
+		Rows []PlanRow `json:"rows"`
+	}
+	c.do("POST", "/plans", map[string]any{"name": "Fair", "starts": "2026-07-15", "status": "published", "reason": "pilot",
+		"entries": []map[string]any{{"channel_id": shared, "name": "FAIR TAC1", "assignment": "Tactical"}, {"channel_id": nil, "query": "name:70cm mode:fm", "section_start": 5}}}, 201, &plan)
+	if len(plan.Rows) != 2 || plan.Rows[0].Name != "FAIR TAC1" || plan.Rows[1].Number != 5 || *plan.Plan.Starts != "2026-07-15" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	var sources struct {
+		Sources []Source `json:"sources"`
+	}
+	c.do("POST", L+"/radios/HT/sources", map[string]any{"plan": "fair", "section_start": 50}, 201, &sources)
+	if sources.Sources[0].Plan == nil || *sources.Sources[0].Plan != "Fair" {
+		t.Errorf("sources = %+v", sources)
+	}
+	var synced struct {
+		Added int `json:"added"`
+	}
+	c.do("POST", L+"/radios/HT/sync", map[string]any{}, 200, &synced)
+	if synced.Added != 2 {
+		t.Errorf("sync added %d", synced.Added)
+	}
+	var mems struct {
+		Memories []Memory `json:"memories"`
+	}
+	c.do("GET", L+"/radios/HT/memories", nil, 200, &mems)
+	if len(mems.Memories) != 2 || mems.Memories[0].Memory != 50 || mems.Memories[1].Memory != 54 {
+		t.Errorf("memories = %+v", mems.Memories)
+	}
+	c.do("PATCH", "/plans/Fair", map[string]any{"status": "archived", "reason": "over"}, 200, &plan)
+	var revs struct {
+		Revisions []RecordRevision `json:"revisions"`
+	}
+	c.do("GET", "/plans/Fair/history", nil, 200, &revs)
+	if len(revs.Revisions) != 2 || strings.Join(revs.Revisions[1].Changes, ";") != "status: published → archived" {
+		t.Errorf("history = %+v", revs)
+	}
+	c.do("DELETE", "/systems/SBARC%20Hub", nil, 204, nil)
+}

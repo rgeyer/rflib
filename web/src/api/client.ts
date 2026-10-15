@@ -17,6 +17,14 @@ export type Conversion = S["Conversion"];
 export type ImportResult = S["ImportResult"];
 export type ChannelInput = S["ChannelInput"];
 export type Selection = S["Selection"];
+export type Organization = S["Organization"];
+export type OrgRef = S["OrgRef"];
+export type System = S["System"];
+export type SystemMember = S["SystemMember"];
+export type Plan = S["Plan"];
+export type PlanEntry = S["PlanEntry"];
+export type PlanRow = S["PlanRow"];
+export type RecordRevision = S["RecordRevision"];
 
 const TOKEN_KEY = "rflib.token";
 

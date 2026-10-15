@@ -11,34 +11,36 @@ import (
 )
 
 type channelOut struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	ReceiveHz   int64     `json:"receive_hz"`
-	ReceiveMHz  string    `json:"receive_mhz"`
-	TransmitHz  *int64    `json:"transmit_hz,omitempty"`
-	TransmitMHz *string   `json:"transmit_mhz,omitempty"`
-	Mode        string    `json:"mode"`
-	Service     string    `json:"service"`
-	RXOnly      bool      `json:"rx_only"`
-	RXTone      string    `json:"rx_tone"`
-	TXTone      string    `json:"tx_tone"`
-	ToneSquelch bool      `json:"tone_squelch"`
-	Power       string    `json:"power"`
-	Bandwidth   string    `json:"bandwidth"`
-	Skip        bool      `json:"skip"`
-	Tags        []string  `json:"tags"`
-	ShortNames  []string  `json:"short_names"`
-	Notes       string    `json:"notes"`
-	Latitude    *float64  `json:"latitude,omitempty"`
-	Longitude   *float64  `json:"longitude,omitempty"`
-	RadiusKM    *float64  `json:"radius_km,omitempty"`
-	Status      string    `json:"status"`
-	StatusNote  string    `json:"status_note,omitempty"`
-	BackOn      string    `json:"back_on,omitempty"`
-	ReplacedBy  string    `json:"replaced_by,omitempty"`
-	Revision    int       `json:"revision,omitempty"`
-	CopiedFrom  string    `json:"copied_from,omitempty"`
-	Link        *linkOut  `json:"link,omitempty"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	ReceiveHz   int64           `json:"receive_hz"`
+	ReceiveMHz  string          `json:"receive_mhz"`
+	TransmitHz  *int64          `json:"transmit_hz,omitempty"`
+	TransmitMHz *string         `json:"transmit_mhz,omitempty"`
+	Mode        string          `json:"mode"`
+	Service     string          `json:"service"`
+	RXOnly      bool            `json:"rx_only"`
+	RXTone      string          `json:"rx_tone"`
+	TXTone      string          `json:"tx_tone"`
+	ToneSquelch bool            `json:"tone_squelch"`
+	Power       string          `json:"power"`
+	Bandwidth   string          `json:"bandwidth"`
+	Skip        bool            `json:"skip"`
+	Tags        []string        `json:"tags"`
+	ShortNames  []string        `json:"short_names"`
+	Notes       string          `json:"notes"`
+	Latitude    *float64        `json:"latitude,omitempty"`
+	Longitude   *float64        `json:"longitude,omitempty"`
+	RadiusKM    *float64        `json:"radius_km,omitempty"`
+	Status      string          `json:"status"`
+	StatusNote  string          `json:"status_note,omitempty"`
+	BackOn      string          `json:"back_on,omitempty"`
+	ReplacedBy  string          `json:"replaced_by,omitempty"`
+	Revision    int             `json:"revision,omitempty"`
+	CopiedFrom  string          `json:"copied_from,omitempty"`
+	Link        *linkOut        `json:"link,omitempty"`
+	Networks    []string        `json:"networks,omitempty"`
+	Orgs        []domain.OrgRef `json:"organizations,omitempty"`
 }
 
 // linkOut is a link's shared channel: its ID, its tags and notes, and
@@ -88,6 +90,7 @@ func newChannelOut(c domain.Channel) channelOut {
 	if c.BackOn != nil {
 		o.BackOn = c.BackOn.Format("2006-01-02")
 	}
+	o.Networks, o.Orgs = networkStrings(c.Networks), c.Orgs
 	if l := c.Link; l != nil {
 		o.Link = &linkOut{SharedID: l.SharedID, Tags: nonNil(l.Tags), Notes: l.Notes, SeenRevision: l.SeenRevision, Changed: c.Changed()}
 	}
@@ -116,6 +119,12 @@ func writeChannel(out io.Writer, c domain.Channel, format string) error {
 		domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, powerName(c.Power), c.Bandwidth, c.Skip,
 		strings.Join(c.Tags, ","), c.Notes)
 	fmt.Fprintf(out, "status: %s\n", statusText(c))
+	if len(c.Networks) > 0 {
+		fmt.Fprintf(out, "networks: %s\n", strings.Join(networkStrings(c.Networks), ", "))
+	}
+	if len(c.Orgs) > 0 {
+		fmt.Fprintf(out, "organizations: %s\n", orgRefsText(c.Orgs))
+	}
 	if l := c.Link; l != nil {
 		changed := ""
 		if c.Changed() {
@@ -127,6 +136,24 @@ func writeChannel(out io.Writer, c domain.Channel, format string) error {
 		fmt.Fprintf(out, "copied from: shared channel %s\n", c.CopiedFrom)
 	}
 	return nil
+}
+
+func networkStrings(ns []domain.NetworkID) []string {
+	var out []string
+	for _, n := range ns {
+		out = append(out, n.String())
+	}
+	return out
+}
+
+// orgRefsText lists organizations with their roles: "SBARC (operator),
+// GRONK (partner)".
+func orgRefsText(rs []domain.OrgRef) string {
+	s := make([]string, len(rs))
+	for i, r := range rs {
+		s[i] = r.Name + " (" + string(r.Role) + ")"
+	}
+	return strings.Join(s, ", ")
 }
 
 // statusText is a channel's status for reading: off-air with its note and

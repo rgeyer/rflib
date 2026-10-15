@@ -23,17 +23,21 @@ type Radio struct {
 	UpdatedAt time.Time
 }
 
-// RadioSource is one of a radio's searches. `radio sync` appends the
-// channels it matches that aren't on the radio yet to the source's part of
-// the list, in Sort order.
+// RadioSource is one of a radio's searches, or a plan. For a search, `radio
+// sync` appends the channels it matches that aren't on the radio yet to the
+// source's part of the list, in Sort order. For a plan, the source's part
+// of the list follows the plan: its channels, order, and names.
 type RadioSource struct {
 	ID      string
 	RadioID string
 	// Position orders a radio's sources, from 0. Earlier sources claim a
 	// channel first.
 	Position int
-	// Query is the search, in package query's language.
+	// Query is the search, in package query's language; empty for a plan.
 	Query string
+	// PlanID is the plan, from the shared library; empty for a search.
+	// PlanName is filled in on reads.
+	PlanID, PlanName string
 	// Sort orders the channels a sync adds: name or freq.
 	Sort string
 	// SectionStart, when set, starts the source's first channel at that
@@ -48,8 +52,8 @@ type RadioSource struct {
 var SortOrders = []string{"name", "freq"}
 
 func ValidateRadioSource(src RadioSource) error {
-	if strings.TrimSpace(src.Query) == "" {
-		return Invalidf("a source needs a query")
+	if (strings.TrimSpace(src.Query) == "") == (src.PlanID == "") {
+		return Invalidf("a source needs a query or a plan")
 	}
 	if !slices.Contains(SortOrders, src.Sort) {
 		return sortError(src.Sort)

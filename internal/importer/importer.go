@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/export"
 )
 
 // Record is one channel read from a source.
@@ -28,6 +29,9 @@ func (e RowError) Unwrap() error { return e.Err }
 type Batch struct {
 	Records []Record
 	Errors  []RowError
+	// Shared is a shared library backup's organizations, systems, and
+	// plans; only the shared library restores them.
+	Shared export.Records
 }
 
 func (b *Batch) fail(row int, format string, args ...any) {

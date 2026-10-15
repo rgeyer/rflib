@@ -159,6 +159,50 @@ type Library interface {
 	// were taken off.
 	RemoveRadioSource(ctx context.Context, src domain.RadioSource, withChannels bool) (int, error)
 
+	// Organizations, systems, and plans. Each change to one records a
+	// revision (see RecordRevisions) with the reason in ctx. They refer only
+	// to the library's own channels and organizations, and not to links;
+	// package app keeps them to the shared library.
+
+	CreateOrg(ctx context.Context, o domain.Organization) (domain.Organization, error)
+	// GetOrg looks an organization up by ID or name, ignoring case.
+	GetOrg(ctx context.Context, idOrName string) (domain.Organization, error)
+	ListOrgs(ctx context.Context) ([]domain.Organization, error)
+	UpdateOrg(ctx context.Context, o domain.Organization) (domain.Organization, error)
+	// DeleteOrg deletes an organization attached to nothing
+	// (ErrConflict otherwise).
+	DeleteOrg(ctx context.Context, id string) error
+
+	// CreateSystem stores a system with its networks, organizations, and
+	// members.
+	CreateSystem(ctx context.Context, s domain.System) (domain.System, error)
+	// GetSystem looks a system up by ID or name, ignoring case. Members
+	// come in their channels' name order.
+	GetSystem(ctx context.Context, idOrName string) (domain.System, error)
+	ListSystems(ctx context.Context) ([]domain.System, error)
+	// UpdateSystem saves a system, replacing its lists.
+	UpdateSystem(ctx context.Context, s domain.System) (domain.System, error)
+	DeleteSystem(ctx context.Context, id string) error
+	// SystemChannelIDs returns the channels in a system.
+	SystemChannelIDs(ctx context.Context, systemID string) (map[string]bool, error)
+
+	// CreatePlan stores a plan with its entries.
+	CreatePlan(ctx context.Context, p domain.Plan) (domain.Plan, error)
+	// GetPlan looks a plan up by ID or name, ignoring case.
+	GetPlan(ctx context.Context, idOrName string) (domain.Plan, error)
+	ListPlans(ctx context.Context) ([]domain.Plan, error)
+	// UpdatePlan saves a plan, replacing its entries. Plans are archived,
+	// never deleted.
+	UpdatePlan(ctx context.Context, p domain.Plan) (domain.Plan, error)
+	// PlanByID returns a plan by ID from any library: radio sources use
+	// the shared library's plans.
+	PlanByID(ctx context.Context, id string) (domain.Plan, error)
+
+	// RecordRevisions returns an organization's, system's, or plan's
+	// revisions, oldest first; kind is "organization", "system", or
+	// "plan".
+	RecordRevisions(ctx context.Context, kind, id string) ([]domain.RecordRevision, error)
+
 	CreateSearch(ctx context.Context, s domain.SavedSearch) (domain.SavedSearch, error)
 	// GetSearch looks a saved search up by ID or name; a leading @ is
 	// ignored.

@@ -4,6 +4,7 @@ import { modals } from "@mantine/modals";
 import { IconLink, IconPlus } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, call, type Channel, type Library, type Radio } from "../api/client";
 import { ChannelEditor } from "../components/ChannelEditor";
 import { QueryBar } from "../components/QueryBar";
@@ -14,7 +15,9 @@ import { duplex, formatMHz, offsetMHz, toneSummary } from "../lib/radio";
 export function Channels() {
   const lib = useLib();
   const client = useQueryClient();
-  const [text, setText] = useState("");
+  // A link can open the page with a search, such as a system's channels.
+  const [params] = useSearchParams();
+  const [text, setText] = useState(params.get("q") ?? "");
   const [shared, setShared] = useState(false);
   const [q] = useDebouncedValue((shared ? "in:shared " : "") + text, 300);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -85,7 +88,10 @@ export function Channels() {
         )}
       </Group>
       {channels.error && <Alert color="red">{channels.error.message}</Alert>}
-      {library.data?.shared && <Alert>The shared library is read-only here; its maintainer changes it with rflib shared commands.</Alert>}
+      {library.data?.shared && <Alert>
+          The shared list's channels change through rflib shared commands. A channel's organizations and network nodes can be corrected here, in
+          its editor.
+        </Alert>}
       {selected.size > 0 && (
         <Group>
           <Text size="sm">{selected.size} selected</Text>

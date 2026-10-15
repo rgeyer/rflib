@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/importer"
 	"github.com/ryan/rflib/internal/query"
 	"github.com/ryan/rflib/internal/seed"
@@ -491,8 +492,101 @@ func (s *Service) ImportShared(ctx context.Context, b importer.Batch, opts impor
 		return importer.Summary{}, nil, errNotShared
 	}
 	dropped := curateTags(&b)
-	sum, err := importer.Apply(store.WithChange(ctx, reason, ""), s.lib, b, opts)
+	ctx = store.WithChange(ctx, reason, "")
+	// One transaction: organizations go first, for the channels to refer
+	// to, and systems and plans last, since they refer to channels. A dry
+	// run does it all and rolls back, so it checks the references too.
+	var sum importer.Summary
+	err := s.lib.InTx(ctx, func(tx store.Library) error {
+		if err := restoreOrgs(ctx, tx, b.Shared.Orgs); err != nil {
+			return err
+		}
+		write := opts
+		write.DryRun = false
+		var err error
+		if sum, err = importer.Apply(ctx, tx, b, write); err != nil {
+			return err
+		}
+		if err := restoreSystemsAndPlans(ctx, tx, b.Shared); err != nil {
+			return err
+		}
+		if opts.DryRun {
+			return errDryRun
+		}
+		return nil
+	})
+	if errors.Is(err, errDryRun) {
+		err = nil
+	}
 	return sum, dropped, err
+}
+
+// errDryRun rolls back a dry run's transaction.
+var errDryRun = errors.New("dry run")
+
+// restoreOrgs creates a backup's organizations, or updates those already
+// here, keeping their IDs.
+func restoreOrgs(ctx context.Context, lib store.Library, orgs []domain.Organization) error {
+	for _, o := range orgs {
+		_, err := lib.GetOrg(ctx, o.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			_, err = lib.CreateOrg(ctx, o)
+		case err == nil:
+			_, err = lib.UpdateOrg(ctx, o)
+		}
+		if err != nil {
+			return fmt.Errorf("organization %s: %w", o.Name, err)
+		}
+	}
+	return nil
+}
+
+// restoreSystemsAndPlans creates a backup's systems and plans, or updates
+// those already here.
+func restoreSystemsAndPlans(ctx context.Context, lib store.Library, r export.Records) error {
+	for _, x := range r.Systems {
+		_, err := lib.GetSystem(ctx, x.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			_, err = lib.CreateSystem(ctx, x)
+		case err == nil:
+			_, err = lib.UpdateSystem(ctx, x)
+		}
+		if err != nil {
+			return fmt.Errorf("system %s: %w", x.Name, err)
+		}
+	}
+	for _, p := range r.Plans {
+		_, err := lib.GetPlan(ctx, p.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			_, err = lib.CreatePlan(ctx, p)
+		case err == nil:
+			_, err = lib.UpdatePlan(ctx, p)
+		}
+		if err != nil {
+			return fmt.Errorf("plan %s: %w", p.Name, err)
+		}
+	}
+	return nil
+}
+
+// sharedRecords returns the shared library's organizations, systems, and
+// plans, for a backup.
+func (s *Service) sharedRecords(ctx context.Context) (*export.Records, error) {
+	var r export.Records
+	var err error
+	if r.Orgs, err = s.lib.ListOrgs(ctx); err != nil {
+		return nil, err
+	}
+	if r.Systems, err = s.lib.ListSystems(ctx); err != nil {
+		return nil, err
+	}
+	if r.Plans, err = s.lib.ListPlans(ctx); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // curateTags keeps only curated tags on a batch's channels and returns the

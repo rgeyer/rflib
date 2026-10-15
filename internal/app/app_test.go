@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -167,7 +168,7 @@ func TestSyncPlacesAndClaims(t *testing.T) {
 		t.Fatal("dry run changed the radio")
 	}
 	res, err := s.Sync(ctx, "HT", SyncOptions{})
-	if err != nil || res.Added() != 3 || res.PlanErr != nil {
+	if err != nil || res.Added() != 3 || res.LayoutErr != nil {
 		t.Fatalf("sync = %+v, %v", res, err)
 	}
 	if again, _ := s.Sync(ctx, "HT", SyncOptions{}); again.Added() != 0 {
@@ -225,7 +226,7 @@ func TestSyncResorts(t *testing.T) {
 		t.Errorf("a plain sync re-sorted %d", plain.Resorted())
 	}
 	res, err := s.Sync(ctx, "HT", SyncOptions{Resort: true})
-	if err != nil || res.Resorted() != 4 || res.PlanErr != nil {
+	if err != nil || res.Resorted() != 4 || res.LayoutErr != nil {
 		t.Fatalf("resort: %+v, %v", res, err)
 	}
 	if got := listed(); got != "GMRS 1,GMRS 2,Mine,GMRS 10,GMRS 15" {
@@ -477,5 +478,128 @@ func TestConvertMatchesService(t *testing.T) {
 	frsList, _ := seed.Get("us-frs")
 	if res, err := s.InstallSeed(ctx, frsList, nil, false); err != nil || len(res.Converted) != 1 || res.Converted[0].Shared.Name != "FRS 1" {
 		t.Fatalf("frs = %+v, %v", res.Converted, err)
+	}
+}
+
+// sharedChannel adds a channel to the shared library.
+func sharedChannel(t *testing.T, sh *Service, name string, mhz float64) domain.Channel {
+	t.Helper()
+	c, err := sh.lib.CreateChannel(context.Background(), domain.Channel{Name: name, ReceiveHz: int64(mhz * 1e6), Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: none, TransmitTone: none})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestPlanRowsAndPlanSources(t *testing.T) {
+	ctx := context.Background()
+	s, d := newService(t)
+	sh := openShared(t, d)
+	call := sharedChannel(t, sh, "2m Call", 146.52)
+	a, b := sharedChannel(t, sh, "Broadcast Pk", 146.79), sharedChannel(t, sh, "La Cumbre", 145.18)
+	sharedChannel(t, sh, "Airband", 121.5) // outside the radio's bands
+	if _, err := s.CreateSystem(ctx, domain.System{Name: "Hub", Members: []domain.SystemMember{{ChannelID: a.ID}, {ChannelID: b.ID}}}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	ten := 10
+	p, err := s.CreatePlan(ctx, domain.Plan{Name: "Fair", Status: domain.PlanPublished, Entries: []domain.PlanEntry{
+		{ChannelID: call.ID, Name: "FAIR TAC1", Assignment: "Tactical"},
+		{Query: "system:hub", SectionStart: &ten, Assignment: "Wide area"},
+	}}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.PlanRows(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rows {
+		got = append(got, fmt.Sprintf("%d %s %s", r.Number, r.Name, r.Assignment))
+	}
+	if strings.Join(got, "; ") != "1 FAIR TAC1 Tactical; 10 Broadcast Pk Wide area; 11 La Cumbre Wide area" {
+		t.Errorf("rows = %q", got)
+	}
+	// A section start behind the entries before it, or a channel twice,
+	// is refused.
+	bad := p
+	bad.Entries = append(slices.Clone(p.Entries), domain.PlanEntry{ChannelID: call.ID})
+	if _, err := s.UpdatePlan(ctx, bad, "test"); err == nil {
+		t.Error("a channel twice was accepted")
+	}
+	five := 5
+	bad.Entries = []domain.PlanEntry{{ChannelID: a.ID, SectionStart: &ten}, {ChannelID: b.ID, SectionStart: &five}}
+	if _, err := s.UpdatePlan(ctx, bad, "test"); err == nil {
+		t.Error("a backwards section start was accepted")
+	}
+
+	// A radio with a query source and the plan: the plan claims its
+	// channels, links them in, names them, and numbers them from 100.
+	add(t, s, "Simplex", 146.55, domain.ServiceAmateur)
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	// The query source would match the plan's channels too, once linked.
+	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "freq:146.5..146.6"}); err != nil {
+		t.Fatal(err)
+	}
+	hundred := 100
+	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{PlanID: "fair", SectionStart: &hundred}); err != nil {
+		t.Fatal(err)
+	}
+	dry, err := s.Sync(ctx, "HT", SyncOptions{DryRun: true})
+	if err != nil || dry.Sources[1].Linked != 3 || len(dry.Sources[1].Add) != 3 {
+		t.Fatalf("dry run = %+v, %v", dry, err)
+	}
+	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	memories := func() string {
+		t.Helper()
+		l, _, err := s.Layout(ctx, "HT")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, m := range l.Memories {
+			out = append(out, fmt.Sprintf("%d %s", m.Location, m.Channel.Name))
+		}
+		return strings.Join(out, ", ")
+	}
+	if got := memories(); got != "1 Simplex, 100 FAIR TAC1, 109 Broadcast Pk, 110 La Cumbre" {
+		t.Errorf("memories = %q", got)
+	}
+	// The plan changes: its channels follow, and a dropped one comes off.
+	p, _ = s.GetPlan(ctx, "fair")
+	p.Entries = []domain.PlanEntry{p.Entries[1], {ChannelID: call.ID, Name: "FAIR TAC9"}}
+	p.Entries[0].Query = "name:broadcast"
+	if _, err := s.UpdatePlan(ctx, p, "test"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Sync(ctx, "HT", SyncOptions{})
+	if err != nil || len(res.Sources[1].Removed) != 1 {
+		t.Fatalf("sync = %+v, %v", res, err)
+	}
+	if got := memories(); got != "1 Simplex, 109 Broadcast Pk, 110 FAIR TAC9" {
+		t.Errorf("after the change = %q", got)
+	}
+	// Archived, it stays as it is; removed, its channels go.
+	p.Status = domain.PlanArchived
+	if _, err := s.UpdatePlan(ctx, p, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil || res.Sources[1].Note == "" || memories() != "1 Simplex, 109 Broadcast Pk, 110 FAIR TAC9" {
+		t.Errorf("archived sync = %+v, %v", res.Sources[1], err)
+	}
+	if n, err := s.RemoveSource(ctx, "HT", 2, false); err != nil || n != 2 || memories() != "1 Simplex" {
+		t.Errorf("remove = %d, %v; memories %q", n, err, memories())
+	}
+}
+
+func TestInSharedAlone(t *testing.T) {
+	s, d := newService(t)
+	sharedChannel(t, openShared(t, d), "2m Call", 146.52)
+	if cs, err := s.Find(context.Background(), "in:shared"); err != nil || len(cs) != 1 {
+		t.Errorf("in:shared = %v, %v", names(cs), err)
 	}
 }
