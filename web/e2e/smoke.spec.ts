@@ -94,7 +94,7 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.getByRole("menuitem", { name: "Off" }).click();
   await expect(page.getByText("Changed 7 memories")).toBeVisible();
   await page.getByRole("button", { name: "Scan filter" }).click();
-  await page.getByRole("menuitem", { name: "off" }).click();
+  await page.getByRole("menuitem", { name: "off", exact: true }).click();
   await expect(page.getByText("7 of 8 memories")).toBeVisible();
   await page.getByRole("button", { name: "Take off radio" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Take off" }).click();
@@ -106,4 +106,70 @@ test("the map shows located channels", async ({ page }) => {
   await page.goto("/l/default/map");
   await expect(page.getByRole("heading", { name: "Map" })).toBeVisible();
   await expect(page.locator(".leaflet-container")).toBeVisible();
+});
+
+// Runs after the first test, on the same server: organizations, a system,
+// and a plan in the shared list, and the plan programmed onto a radio.
+test("organizations, systems, and plans", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/seeds/us-ham-calling/install", { data: {} });
+  const saveWithReason = async (reason: string) => {
+    await page.getByRole("textbox", { name: "Reason" }).fill(reason);
+    await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  };
+
+  await page.goto("/l/default/orgs");
+  await page.getByRole("button", { name: "New organization" }).click();
+  await page.getByRole("textbox", { name: "Name" }).fill("SBARC");
+  await page.getByRole("textbox", { name: "Callsign" }).fill("w6sba");
+  await saveWithReason("pilot");
+  await expect(page.getByRole("heading", { name: "SBARC" })).toBeVisible();
+  await expect(page.getByText("W6SBA")).toBeVisible();
+
+  // A system, with a member picked from the shared list.
+  await page.getByRole("link", { name: "Systems" }).click();
+  await page.getByRole("button", { name: "New system" }).click();
+  await page.getByRole("textbox", { name: "Name" }).fill("Hub");
+  await page.getByRole("combobox", { name: "The system's own nodes" }).fill("allstar:43763");
+  await page.keyboard.press("Enter");
+  await saveWithReason("pilot");
+  await expect(page.getByRole("heading", { name: "Hub" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "AllStar 43763" })).toHaveAttribute("href", "https://stats.allstarlink.org/stats/43763");
+  await page.getByLabel("Add a member").fill("name:70cm");
+  await page.getByRole("option", { name: /70cm FM Call/ }).click();
+  await saveWithReason("pilot");
+  await expect(page.getByRole("row", { name: /70cm FM Call/ })).toContainText("full-time");
+
+  // A plan: a channel renamed for the event, and the system as a section.
+  await page.getByRole("link", { name: "Plans" }).click();
+  await page.getByRole("button", { name: "New plan" }).click();
+  await page.getByRole("textbox", { name: "Name" }).fill("Fair");
+  await saveWithReason("pilot");
+  await expect(page.getByRole("heading", { name: "Fair" })).toBeVisible();
+  await page.getByLabel("Add a shared channel").fill("name:2m mode:fm");
+  await page.getByRole("option", { name: /2m FM Call/ }).click();
+  await page.getByRole("textbox", { name: "Name in the plan" }).fill("FAIR TAC1");
+  await page.getByRole("textbox", { name: "Assignment" }).fill("Tactical");
+  await saveWithReason("pilot");
+  await expect(page.getByRole("row", { name: /FAIR TAC1/ }).first()).toBeVisible();
+  await page.getByRole("textbox", { name: "Add a query section" }).fill("system:hub");
+  await page.getByRole("button", { name: "Add section" }).click();
+  await page.getByRole("textbox", { name: "Starts at Ch #" }).fill("10");
+  await saveWithReason("pilot");
+  await expect(page.getByRole("row", { name: /^10 70cm FM Call/ })).toBeVisible();
+
+  // The plan on a radio, from memory 50.
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Mobile", model: "baofeng-uv5rm" } });
+  await page.goto("/l/default/radios/Mobile");
+  await page.getByRole("tab", { name: "Sources" }).click();
+  await page.getByRole("combobox", { name: "or a plan" }).click();
+  await page.getByRole("option", { name: "Fair" }).click();
+  await page.getByRole("textbox", { name: "Section start" }).fill("50");
+  await page.getByRole("button", { name: "Add source" }).click();
+  await expect(page.getByText("Plan: Fair")).toBeVisible();
+  await page.getByRole("button", { name: "Sync" }).click();
+  await expect(page.getByText(/plan Fair\): 2 to add/)).toBeVisible();
+  await page.getByRole("button", { name: "Sync now" }).click();
+  await page.getByRole("tab", { name: "Memories" }).click();
+  await expect(page.getByRole("row", { name: /FAIR TAC1/ })).toContainText("50");
+  await expect(page.getByRole("row", { name: /70cm FM Call/ })).toContainText("59");
 });

@@ -422,10 +422,13 @@ func (l *library) SetRadioEntry(ctx context.Context, radioID string, e domain.Ra
 	return nil
 }
 
-const sourceColumns = `id,radio_id,position,query,sort,section_start,keep_sorted`
+const sourceColumns = `id,radio_id,position,query,sort,section_start,keep_sorted,plan_id`
+
+// sourceSelect reads sourceColumns and the plan's name.
+const sourceSelect = sourceColumns + `,coalesce((SELECT name FROM plans WHERE plans.id=radio_sources.plan_id),'')`
 
 func listRadioSources(ctx context.Context, q querier, radioID string) ([]domain.RadioSource, error) {
-	rows, err := q.QueryContext(ctx, `SELECT `+sourceColumns+` FROM radio_sources WHERE radio_id=? ORDER BY position`, radioID)
+	rows, err := q.QueryContext(ctx, `SELECT `+sourceSelect+` FROM radio_sources WHERE radio_id=? ORDER BY position`, radioID)
 	if err != nil {
 		return nil, fmt.Errorf("list radio sources: %w", err)
 	}
@@ -456,8 +459,8 @@ func (l *library) AddRadioSource(ctx context.Context, src domain.RadioSource) (d
 			return err
 		}
 		src.Position = len(existing)
-		_, err = tx.q.ExecContext(ctx, `INSERT INTO radio_sources (`+sourceColumns+`) VALUES (?,?,?,?,?,?,?)`,
-			src.ID, src.RadioID, src.Position, src.Query, src.Sort, intOrNil(src.SectionStart), src.KeepSorted)
+		_, err = tx.q.ExecContext(ctx, `INSERT INTO radio_sources (`+sourceColumns+`) VALUES (?,?,?,?,?,?,?,?)`,
+			src.ID, src.RadioID, src.Position, src.Query, src.Sort, intOrNil(src.SectionStart), src.KeepSorted, nullable(src.PlanID))
 		if err != nil {
 			return fmt.Errorf("add radio source: %w", err)
 		}
@@ -567,7 +570,7 @@ func renumberSources(ctx context.Context, ex execer, sources []domain.RadioSourc
 }
 
 func (l *library) AllRadioSources(ctx context.Context) ([]domain.RadioSource, error) {
-	rows, err := l.q.QueryContext(ctx, `SELECT `+sourceColumns+` FROM radio_sources WHERE radio_id IN (SELECT id FROM radios WHERE library_id=?) ORDER BY radio_id, position`, l.id)
+	rows, err := l.q.QueryContext(ctx, `SELECT `+sourceSelect+` FROM radio_sources WHERE radio_id IN (SELECT id FROM radios WHERE library_id=?) ORDER BY radio_id, position`, l.id)
 	if err != nil {
 		return nil, err
 	}
@@ -580,9 +583,11 @@ func scanSources(rows *sql.Rows) ([]domain.RadioSource, error) {
 	for rows.Next() {
 		var src domain.RadioSource
 		var section sql.NullInt64
-		if err := rows.Scan(&src.ID, &src.RadioID, &src.Position, &src.Query, &src.Sort, &section, &src.KeepSorted); err != nil {
+		var plan sql.NullString
+		if err := rows.Scan(&src.ID, &src.RadioID, &src.Position, &src.Query, &src.Sort, &section, &src.KeepSorted, &plan, &src.PlanName); err != nil {
 			return nil, err
 		}
+		src.PlanID = plan.String
 		if section.Valid {
 			v := int(section.Int64)
 			src.SectionStart = &v

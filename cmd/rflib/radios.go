@@ -249,7 +249,7 @@ func newRadioChannelsCommand() *cobra.Command {
 	return cmd
 }
 
-func printWarnings(w io.Writer, p program.Plan) {
+func printWarnings(w io.Writer, p program.Layout) {
 	for _, msg := range p.Warnings {
 		fmt.Fprintln(w, "warning:", msg)
 	}
@@ -269,7 +269,7 @@ overrides. Warnings go to stderr.
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			p, es, err := a.Plan(ctx(cmd), args[0])
+			p, es, err := a.Layout(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}
@@ -568,10 +568,28 @@ or moved by hand keep their places, and section starts stay put.`}
 					for _, c := range ss.WrongMode {
 						fmt.Fprintf(out, "would skip\tsource %d\t%s\t%s\tthe radio doesn't have %s\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), c.Mode)
 					}
+					for _, c := range ss.Removed {
+						fmt.Fprintf(out, "would remove\tsource %d\t%s\t%s\tno longer in the plan\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
+					}
+					if ss.Linked > 0 {
+						fmt.Fprintf(out, "would link\tsource %d\t%d shared channels\n", n, ss.Linked)
+					}
 					if ss.Resorted > 0 {
 						fmt.Fprintf(out, "would re-sort\tsource %d\t%d channels\n", n, ss.Resorted)
 					}
+					if ss.Note != "" {
+						fmt.Fprintf(out, "note\tsource %d\t%s\n", n, ss.Note)
+					}
 					continue
+				}
+				if ss.Note != "" {
+					fmt.Fprintf(status, "%s: %s\n", app.SourceLabel(ss.Source), ss.Note)
+				}
+				if ss.Linked > 0 {
+					fmt.Fprintf(status, "%s: linked %d shared channels into the library\n", app.SourceLabel(ss.Source), ss.Linked)
+				}
+				if len(ss.Removed) > 0 {
+					fmt.Fprintf(status, "%s: removed %d no longer in the plan\n", app.SourceLabel(ss.Source), len(ss.Removed))
 				}
 				if len(ss.Add) > 0 || len(ss.Skipped) > 0 || len(ss.WrongMode) > 0 {
 					fmt.Fprintf(status, "%s: added %d%s\n", app.SourceLabel(ss.Source), ss.Added, skippedNote(ss.AddResult))
@@ -587,8 +605,8 @@ or moved by hand keep their places, and section starts stay put.`}
 			if n := res.Resorted(); n > 0 {
 				fmt.Fprintf(status, "Re-sorted %d channels; program the radio again\n", n)
 			}
-			if res.PlanErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s no longer exports: %v\n", res.Radio.Name, res.PlanErr)
+			if res.LayoutErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s no longer exports: %v\n", res.Radio.Name, res.LayoutErr)
 			}
 			return nil
 		})
@@ -641,9 +659,10 @@ var sourceListing = listing[sourceRow]{
 		{name: "kept_sorted", text: func(r sourceRow) string { return yesNo(r.KeepSorted) }, json: func(r sourceRow) any { return r.KeepSorted }},
 		{name: "channels", text: func(r sourceRow) string { return strconv.Itoa(r.channels) }, json: func(r sourceRow) any { return r.channels }},
 		{name: "query", text: func(r sourceRow) string { return r.Query }},
+		{name: "plan", text: func(r sourceRow) string { return r.PlanName }},
 		{name: "id", id: true, text: func(r sourceRow) string { return r.ID }},
 	},
-	defaults: []string{"number", "section", "sort", "kept_sorted", "channels", "query"},
+	defaults: []string{"number", "section", "sort", "kept_sorted", "channels", "query", "plan"},
 }
 
 func keepSortedFlag(cmd *cobra.Command) {
@@ -689,17 +708,26 @@ func newRadioSourcesListCommand() *cobra.Command {
 }
 
 func newRadioSourcesAddCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "add RADIO QUERY...", Short: "Add a source to the end of a radio's sources", Args: cobra.MinimumNArgs(2)}
+	cmd := &cobra.Command{Use: "add RADIO [QUERY...]", Short: "Add a source to the end of a radio's sources", Args: cobra.MinimumNArgs(1),
+		Long: `Add a source to the end of a radio's sources: a query, or with --plan a
+communications plan from the shared list (see rflib plan). A plan source
+follows the plan: radio sync links its channels into the library, puts them
+in the plan's order with the plan's names, and numbers them as the plan does
+from the section start. Removing the source takes its channels off.`}
 	cmd.Flags().String("sort", "name", "Order its channels are added in: name or freq")
 	cmd.Flags().String("section-start", "", "Start the source's channels at this memory number")
+	cmd.Flags().String("plan", "", "Use a plan, by name, instead of a query")
 	keepSortedFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		section, err := parseSectionStart(getString(cmd, "section-start"))
 		if err != nil {
 			return err
 		}
+		if (len(args) > 1) == (getString(cmd, "plan") != "") {
+			return fmt.Errorf("give a query or --plan, not both")
+		}
 		keep, _ := cmd.Flags().GetBool("keep-sorted")
-		src := domain.RadioSource{Query: strings.Join(args[1:], " "), Sort: getString(cmd, "sort"), SectionStart: section, KeepSorted: keep}
+		src := domain.RadioSource{Query: strings.Join(args[1:], " "), Sort: getString(cmd, "sort"), SectionStart: section, KeepSorted: keep, PlanID: getString(cmd, "plan")}
 		return withApp(cmd, func(a *app.Service) error {
 			r, src, err := a.AddSource(ctx(cmd), args[0], src)
 			if err == nil {
@@ -769,7 +797,7 @@ func newRadioSourcesMoveCommand() *cobra.Command {
 }
 
 func newRadioSourcesRemoveCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "remove RADIO N", Short: "Remove a source; its channels stay unless --with-channels", Args: cobra.ExactArgs(2)}
+	cmd := &cobra.Command{Use: "remove RADIO N", Short: "Remove a source; its channels stay unless --with-channels or it's a plan", Args: cobra.ExactArgs(2)}
 	cmd.Flags().Bool("with-channels", false, "Also take the channels it added off the radio")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		withChannels, _ := cmd.Flags().GetBool("with-channels")
@@ -785,7 +813,7 @@ func newRadioSourcesRemoveCommand() *cobra.Command {
 			removed, err := a.RemoveSource(ctx(cmd), r.ID, n, withChannels)
 			if err == nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Removed source %d from %s", n, r.Name)
-				if withChannels {
+				if withChannels || removed > 0 {
 					fmt.Fprintf(cmd.ErrOrStderr(), " and %d channels", removed)
 				}
 				fmt.Fprintln(cmd.ErrOrStderr())
@@ -806,7 +834,7 @@ manufacturer software's CSV for profile radios. Warnings go to stderr.`}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
 		return withApp(cmd, func(a *app.Service) error {
-			p, _, err := a.Plan(ctx(cmd), args[0])
+			p, _, err := a.Layout(ctx(cmd), args[0])
 			if err != nil {
 				return err
 			}

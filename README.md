@@ -177,7 +177,7 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 | `power:` | `low`, `medium`, `high`, `max`, or `none` |
 | `squelch:`, `skip:` | `yes` or `no` |
 | `is:` | `repeater` (transmit differs from receive), `simplex`, `rxonly`, `transmit` (a radio export would let it transmit; see [Where radios transmit](#where-radios-transmit)), `skip` |
-| `has:` | `location`, `service`, `tag`, `tone`, `power`, `notes`, `shortname`, `radio` |
+| `has:` | `location`, `service`, `tag`, `tone`, `power`, `notes`, `shortname`, `radio`, `network`, `org` |
 | `near:` | `LAT,LON,KM`, see below |
 | `radio:` | A radio's name, `any`, or `none` |
 | `tunes:` | A radio or model name: channels in its bands and in a mode it has |
@@ -185,6 +185,9 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 | `id:` | A channel ID |
 | `status:` | `active`, `off-air`, or `retired` (see [Status and changes](#status-and-changes)) |
 | `in:` | `mine` (the default) or `shared`: search your library or the whole shared list. Only at the top level of a query. |
+| `org:` | An organization's name or ID: channels it operates |
+| `system:` | A system's name or ID: its members, or links to them |
+| `allstar:`, `echolink:`, `irlp:`, `wires-x:` | A node number on that network |
 
 **Location.** `near:` matches when a channel's location is within the distance plus the channel's own `--radius-km`, so a repeater whose coverage reaches you counts. Channels without a location never match `near:`. To keep them, say so: `near:34.64,-120.46,40 OR -has:location`.
 
@@ -326,8 +329,74 @@ A radio's **sources** are searches that `radio sync` adds new matching channels 
 - **Re-sorting:** `radio sync HT --resort` also puts each source's channels in its sort order, within the places in the list they already hold. Channels added or moved by hand keep their places, and section starts stay put. Memory numbers change, so program the radio again afterwards; `--dry-run --resort` counts what would move. To re-sort a source on every sync, set it with `radio sources set HT 2 --keep-sorted` (or `--keep-sorted` on `radio sources add`).
 - **Changing a source:** `radio sources set HT 2 --query ... --sort ... --section-start ... --keep-sorted` changes a source. A new section start moves to the source's first channel right away.
 - **Removing a source:** `radio sources remove HT 2` removes a source and leaves its channels on the radio. Add `--with-channels` to take them off too.
+- **Plans:** a source can be a plan instead of a query, and then follows the plan; see [Plans](#plans).
 
 Sync warns when the result no longer fits the radio, such as a source running past the next section start.
+
+## Organizations, systems, and plans
+
+The shared list also records who runs its repeaters, how they're linked, and the communications plans that use them. All three live in the shared library, so the commands work the same from any library. Changes are maintainer operations: each takes a `--reason`, and every change is kept in a history (`rflib org|system|plan history NAME`).
+
+### Network nodes
+
+A channel can carry its nodes on linking networks: AllStar, EchoLink, IRLP, and WIRES-X. Search them with `allstar:43761`, `echolink:`, `irlp:`, and `wires-x:`, or `has:network`. The web interface links each node to its network's own pages; rflib fetches nothing from the networks.
+
+```sh
+./rflib channel update --id <id> --networks allstar:43761,echolink:12345
+./rflib shared update --id <id> --networks allstar:43761 --reason "node numbers"
+```
+
+The shared tags `linked`, `allstar`, `echolink`, and `wires-x` are gone: network nodes and systems say it better. Upgrading (`rflib init`) takes them off shared channels; your own tags stay.
+
+### Organizations
+
+Organizations are who runs or supports repeaters and systems: clubs, emergency services, agencies, and individuals. They're plain records, attached to shared channels and systems as an **operator** or a **partner** (such as a site's co-sponsor). `org:NAME` finds the channels an organization operates.
+
+```sh
+./rflib org add SBARC --callsign W6SBA --website https://www.sbarc.org --reason "pilot"
+./rflib shared update --id <id> --operators SBARC --partners GRONK --reason "who runs it"
+./rflib org show SBARC      # its channels and systems
+./rflib org list
+```
+
+An organization attached to anything can't be deleted.
+
+### Systems
+
+A system is a set of interconnected channels, such as a club's linked repeaters, as its operators intend it: not its live connections. Members are shared channels, linked **full-time** (usually linked) or **on demand** (may be linked), with a note on how. A system can have nodes of its own, such as a hub's AllStar node, and its members can belong to different organizations. `system:NAME` finds a system's channels, in your library through your links.
+
+```sh
+./rflib system add "SBARC Hub" --link allstar --networks allstar:43763 --operators SBARC --reason "pilot"
+./rflib system members add "SBARC Hub" --id <id>,<id> --reason "pilot"
+./rflib system members add "SBARC Hub" --id <id> --on-demand --notes "microwave to the hub" --reason "pilot"
+./rflib system show "SBARC Hub"
+./rflib channel list 'system:"SBARC Hub"'
+```
+
+In a library, a link's ID stands for its shared channel. The map draws lines between a system's members, dashed for members linked on demand.
+
+### Plans
+
+A plan is a communications plan: an ordered selection of shared channels, each with its name and assignment in the plan, laid out as ICS 205 lists them. An event is a plan with dates. A plan is `draft`, `published`, or `archived`, and is never deleted.
+
+```sh
+./rflib plan add "Fair 2026" --starts 2026-07-15 --ends 2026-07-26 --reason "county fair"
+./rflib plan entries add "Fair 2026" --id <id> --name "FAIR TAC1" --assignment "Tactical" --reason "plan"
+./rflib plan entries add "Fair 2026" -q 'system:"SBARC Hub"' --section-start 10 --assignment "Wide area" --reason "plan"
+./rflib plan channels "Fair 2026"     # Ch #, name, assignment, frequencies, tones, mode, remarks
+./rflib plan show "Fair 2026"         # the entries, numbered for entries move, set, and remove
+./rflib plan update "Fair 2026" --status published --reason "ready"
+```
+
+- **Entries** are shared channels, renamed for the plan if you like (147.420 simplex as "FAIR TAC1", so plans rarely need new shared channels), or **query sections**, which bring in every shared channel a query matches, in name or frequency order, leaving out channels the plan lists elsewhere.
+- **Numbers:** a plan numbers its channels from 1 (ICS 205's Ch #); `--section-start N` starts an entry at channel N.
+
+**On a radio**, a plan is a source: `rflib radio sources add HT --plan "Fair 2026" --section-start 50`. Its part of the radio follows the plan:
+
+- `radio sync` links the plan's channels into your library where they aren't yet, puts them in the plan's order with the plan's names, and numbers them as the plan does from the section start: plan channel 10 becomes memory 59 when the source starts at 50.
+- Plans claim their channels before query sources, and a plan's channel that's elsewhere on the radio moves into the plan's part.
+- Channels the plan drops come off, and removing the source takes all of its channels off.
+- An archived plan's channels stay as they are.
 
 ## Power
 
@@ -365,7 +434,7 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 - **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and location. New columns are only ever added at the end; the group columns were removed when groups were.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
 - **`export profile NAME`** writes a radio programming tool's own CSV format, such as Yaesu ADMS. See [Export profiles](#export-profiles) below.
-- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out. Links are kept as links, with the shared channel as it was. The CSV writes a link's shared and own tags and notes together.
+- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out. Links are kept as links, with the shared channel as it was. A backup of the shared library (`--library shared`) also holds its organizations, systems, and plans, which `rflib shared import json` restores. The CSV writes a link's shared and own tags and notes together.
 
 ## Import
 
@@ -547,6 +616,7 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 - **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
 - **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources; sync with a preview; and the programming file to download.
+- **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
 - **Import:** a file, its options, a dry-run preview, then the import.
 - **Built-in lists** and **shared changes**, as `rflib seed install` and `rflib shared changes` do.
 
@@ -568,9 +638,9 @@ curl -H "Authorization: Bearer s3cret" 'localhost:8080/api/v1/libraries/default/
 
 - **The description:** `GET /api/v1/openapi.yaml` is the OpenAPI document, which lists every endpoint and shape. Its source is `internal/api/openapi.yaml`, and the tests hold every route and response to it.
 - **Authentication:** with `$RFLIB_API_TOKEN` set, every request but `/health` and the document needs `Authorization: Bearer TOKEN`. Serving on anything but a loopback address requires a token.
-- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-delete`, `link`, and `copy`), `radios` (memories, channels, overrides, sources, sync, and export), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), `seeds/{list}/install`, and `feed`. `models`, `profiles`, `seeds`, and `tags` sit beside `libraries`.
+- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-delete`, `link`, and `copy`), `radios` (memories, channels, overrides, sources, sync, and export), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), `seeds/{list}/install`, and `feed`. `organizations`, `systems`, and `plans` (each with `history`), which live in the shared list, and `models`, `profiles`, `seeds`, and `tags` sit beside `libraries`.
 - **Values:** frequencies are exact integer Hz, and tones use the library's syntax (`ctcss:100.000`, `dcs:023`). Queries are the same as the CLI's, in a `q` parameter or a `query` field. Channel IDs can be shortened to a unique prefix.
-- **Changes:** `PATCH` changes only the fields given, and `null` clears `tx_hz` and `location`. Changes to the `shared` library need a `reason`.
+- **Changes:** `PATCH` changes only the fields given, and `null` clears `tx_hz` and `location`. Changes to the `shared` library, organizations, systems, and plans need a `reason`.
 - **Errors** are `{"error": {"code", "message"}}`: 400 for a request to fix, 401 without a valid token, 403 for everyday changes to the shared library, 404, 409 for a name in use, and 500 for anything else (the detail goes to the server's log).
 - **The feed:** `GET /libraries/shared/feed?since=CURSOR` returns shared channels changed since a previous response's `cursor`. It's how a local copy will keep up with a hosted shared list.
 

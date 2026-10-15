@@ -24,7 +24,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite database path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
 	root.PersistentFlags().String("library", "", "Library to use, by name or ID (default $RFLIB_LIBRARY, then the default library; see rflib library)")
-	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newSharedCommand(), newTagCommand(), newServeCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newLibraryCommand())
+	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newSharedCommand(), newTagCommand(), newServeCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newLibraryCommand(), newOrgCommand(), newSystemCommand(), newPlanCommand())
 	return root
 }
 
@@ -95,6 +95,7 @@ func channelFields(cmd *cobra.Command) {
 	cmd.Flags().String("notes", "", "Notes")
 	cmd.Flags().String("tags", "", "Comma-separated tags; on update, +x,-y adds x and removes y (empty clears on update)")
 	cmd.Flags().String("short-names", "", "Comma-separated abbreviations of the name for narrow radio displays, such as \"Metro Rpt,MtRpt\" (empty clears on update)")
+	cmd.Flags().String("networks", "", "Comma-separated linking-network nodes, such as allstar:43763,echolink:12345 (networks: allstar, echolink, irlp, wires-x; empty clears on update)")
 }
 
 // applyChannelFlags copies flags onto c. With all=false only flags the user
@@ -174,6 +175,13 @@ func applyChannelFlags(cmd *cobra.Command, a *app.Service, c *domain.Channel, al
 	}
 	if set("short-names") {
 		c.ShortNames = splitTags(getString(cmd, "short-names"))
+	}
+	if set("networks") {
+		ns, err := domain.ParseNetworkIDs(splitTags(getString(cmd, "networks")))
+		if err != nil {
+			return fmt.Errorf("--networks: %w", err)
+		}
+		c.Networks = ns
 	}
 	if set("lat") || set("lon") || set("radius-km") {
 		var lat, lon, radius *float64

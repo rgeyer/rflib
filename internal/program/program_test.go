@@ -229,7 +229,7 @@ func TestLeavesOutModesTheRadioLacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !p.Memories[0].LeftOut || p.Memories[1].LeftOut || !strings.Contains(strings.Join(p.Warnings, "\n"), `memory 1 "2m SSB Call": left out: the radio doesn't have USB`) {
-		t.Fatalf("plan = %+v", p)
+		t.Fatalf("layout = %+v", p)
 	}
 	var out bytes.Buffer
 	n, err := Write(&out, p, false, &bytes.Buffer{})
@@ -238,7 +238,7 @@ func TestLeavesOutModesTheRadioLacks(t *testing.T) {
 		t.Fatalf("export (%d, %v):\n%s", n, err, out.String())
 	}
 	if p.Memories[0].LeftOut != true {
-		t.Error("Write changed the plan")
+		t.Error("Write changed the layout")
 	}
 }
 

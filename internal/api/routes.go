@@ -82,6 +82,24 @@ func (s *server) routes() []route {
 		{"POST", R + "/sync", s.lib(s.syncRadio), false},
 		{"GET", R + "/export", s.lib(s.exportRadio), false},
 
+		{"GET", "/organizations", s.recordHandler(s.listOrgs), false},
+		{"POST", "/organizations", s.recordHandler(s.createOrg), false},
+		{"GET", "/organizations/{org}", s.recordHandler(s.getOrg), false},
+		{"PATCH", "/organizations/{org}", s.recordHandler(s.updateOrg), false},
+		{"DELETE", "/organizations/{org}", s.recordHandler(s.deleteOrg), false},
+		{"GET", "/organizations/{org}/history", s.recordHandler(s.history(app.KindOrganization, "org")), false},
+		{"GET", "/systems", s.recordHandler(s.listSystems), false},
+		{"POST", "/systems", s.recordHandler(s.createSystem), false},
+		{"GET", "/systems/{system}", s.recordHandler(s.getSystem), false},
+		{"PATCH", "/systems/{system}", s.recordHandler(s.updateSystem), false},
+		{"DELETE", "/systems/{system}", s.recordHandler(s.deleteSystem), false},
+		{"GET", "/systems/{system}/history", s.recordHandler(s.history(app.KindSystem, "system")), false},
+		{"GET", "/plans", s.recordHandler(s.listPlans), false},
+		{"POST", "/plans", s.recordHandler(s.createPlan), false},
+		{"GET", "/plans/{plan}", s.recordHandler(s.getPlan), false},
+		{"PATCH", "/plans/{plan}", s.recordHandler(s.updatePlan), false},
+		{"GET", "/plans/{plan}/history", s.recordHandler(s.history(app.KindPlan, "plan")), false},
+
 		{"GET", "/models", s.listModels, false},
 		{"GET", "/models/{name}", s.getModel, false},
 		{"GET", "/profiles", s.listProfiles, false},
@@ -957,7 +975,7 @@ func (s *server) deleteRadio(w http.ResponseWriter, r *http.Request, a *app.Serv
 }
 
 func (s *server) memories(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	p, es, err := a.Plan(ctx(r), r.PathValue("radio"))
+	p, es, err := a.Layout(ctx(r), r.PathValue("radio"))
 	if err != nil {
 		return err
 	}
@@ -1198,6 +1216,7 @@ func (s *server) listSources(w http.ResponseWriter, r *http.Request, a *app.Serv
 
 type sourceInput struct {
 	Query        *string         `json:"query"`
+	Plan         *string         `json:"plan"`
 	Sort         *string         `json:"sort"`
 	SectionStart json.RawMessage `json:"section_start"`
 	KeepSorted   *bool           `json:"keep_sorted"`
@@ -1206,6 +1225,12 @@ type sourceInput struct {
 func (in sourceInput) apply(src *domain.RadioSource) error {
 	if in.Query != nil {
 		src.Query = *in.Query
+	}
+	if in.Plan != nil {
+		if src.ID != "" && *in.Plan != src.PlanID && *in.Plan != src.PlanName {
+			return badRequest("a source's plan can't change; add another source")
+		}
+		src.PlanID = *in.Plan
 	}
 	if in.Sort != nil {
 		src.Sort = *in.Sort
@@ -1312,7 +1337,10 @@ func (s *server) moveSource(w http.ResponseWriter, r *http.Request, a *app.Servi
 type SourceSync struct {
 	Source Source `json:"source"`
 	AddResult
-	Resorted int `json:"resorted"`
+	Resorted int       `json:"resorted"`
+	Removed  []Channel `json:"removed"`
+	Linked   int       `json:"linked"`
+	Note     string    `json:"note"`
 }
 
 func (s *server) syncRadio(w http.ResponseWriter, r *http.Request, a *app.Service) error {
@@ -1335,13 +1363,13 @@ func (s *server) syncRadio(w http.ResponseWriter, r *http.Request, a *app.Servic
 		if in.DryRun {
 			added.Added = len(added.Add)
 		}
-		out[i] = SourceSync{newSources([]domain.RadioSource{ss.Source}, nil)[0], newAddResult(added), ss.Resorted}
+		out[i] = SourceSync{newSources([]domain.RadioSource{ss.Source}, nil)[0], newAddResult(added), ss.Resorted, newChannels(ss.Removed), ss.Linked, ss.Note}
 	}
-	var planErr *string
-	if res.PlanErr != nil {
-		planErr = optional(res.PlanErr.Error())
+	var layoutErr *string
+	if res.LayoutErr != nil {
+		layoutErr = optional(res.LayoutErr.Error())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sources": out, "added": res.Added(), "resorted": res.Resorted(), "dry_run": in.DryRun, "plan_error": planErr})
+	writeJSON(w, http.StatusOK, map[string]any{"sources": out, "added": res.Added(), "resorted": res.Resorted(), "dry_run": in.DryRun, "layout_error": layoutErr})
 	return nil
 }
 
@@ -1350,7 +1378,7 @@ func (s *server) exportRadio(w http.ResponseWriter, r *http.Request, a *app.Serv
 	if err != nil {
 		return err
 	}
-	p, _, err := a.Plan(ctx(r), r.PathValue("radio"))
+	p, _, err := a.Layout(ctx(r), r.PathValue("radio"))
 	if err != nil {
 		return err
 	}

@@ -24,11 +24,14 @@ a saved search.
   mode:FM|NFM|AM|USB|LSB    power:low|medium|high|max|none
   squelch:yes|no            skip:yes|no
   is:repeater|simplex|rxonly|transmit|skip
-  has:location|service|tag|tone|power|notes|shortname|radio
+  has:location|service|tag|tone|power|notes|shortname|radio|network|org
   near:LAT,LON,KM           within KM plus the channel's radius; channels
                             without a location never match
   radio:NAME|any|none       tunes:RADIO|MODEL  in its bands and modes
   status:active|off-air|retired               (shared channels' status)
+  org:NAME                  operated by an organization
+  system:NAME               a member of a system
+  allstar:N echolink:N irlp:N wires-x:N       a node on a linking network
   in:mine|shared            search the library (default) or the whole
                             shared list; only at the top level
   created: updated:         YYYY-MM-DD, >=, <, ranges

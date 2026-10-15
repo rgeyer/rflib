@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,22 +50,26 @@ func openAt(t *testing.T, version int64, seed string) *DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	stmts := []string{`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`, baselineSchema}
-	for _, m := range migrations {
-		if m.version > baselineVersion && m.version <= version {
-			stmts = append(stmts, m.sql)
-		}
-	}
-	stmts = append(stmts, `INSERT INTO schema_migrations(version) VALUES (?)`, seed)
-	for i, q := range stmts {
-		args := []any{}
-		if i == len(stmts)-2 {
-			args = append(args, version)
-		}
+	exec := func(q string, args ...any) {
 		if _, err := d.db.ExecContext(ctx, q, args...); err != nil {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
+	exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`)
+	exec(baselineSchema)
+	for _, m := range migrations {
+		if m.version <= baselineVersion || m.version > version {
+			continue
+		}
+		exec(m.sql)
+		if m.after != nil {
+			if err := d.inTx(ctx, func(tx *sql.Tx) error { return m.after(ctx, tx) }); err != nil {
+				t.Fatalf("migration %d: %v", m.version, err)
+			}
+		}
+	}
+	exec(`INSERT INTO schema_migrations(version) VALUES (?)`, version)
+	exec(seed)
 	return d
 }
 
@@ -221,6 +226,28 @@ func TestMigrateV11DefaultMark(t *testing.T) {
 				t.Errorf("default library = %+v, %v; want %q", lib, err, tc.want)
 			}
 		})
+	}
+}
+
+// v12 takes the network tags off shared channels, which systems and network
+// nodes replace, and leaves personal tags alone.
+func TestMigrateV12NetworkTags(t *testing.T) {
+	ctx := context.Background()
+	d := openAt(t, 11, `
+INSERT INTO channels (id, library_id, name, receive_hz, mode, receive_tone_kind, transmit_tone_kind, created_at, updated_at) VALUES
+	('s1', (SELECT id FROM libraries WHERE kind = 'shared'), 'Rpt', 146790000, 'FM', 'none', 'none', '', ''),
+	('p1', (SELECT id FROM libraries WHERE is_default = 1), 'Mine', 146520000, 'FM', 'none', 'none', '', '');
+INSERT INTO channel_tags VALUES ('s1', 'allstar'), ('s1', 'linked'), ('s1', 'ares'), ('p1', 'echolink');`)
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sh, _ := d.GetLibrary(ctx, domain.SharedLibrary)
+	def, _ := d.GetLibrary(ctx, "")
+	if c, err := d.Library(sh.ID).GetChannel(ctx, "s1"); err != nil || strings.Join(c.Tags, ",") != "ares" {
+		t.Errorf("shared tags = %v, %v", c.Tags, err)
+	}
+	if c, err := d.Library(def.ID).GetChannel(ctx, "p1"); err != nil || strings.Join(c.Tags, ",") != "echolink" {
+		t.Errorf("personal tags = %v, %v", c.Tags, err)
 	}
 }
 

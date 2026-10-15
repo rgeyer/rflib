@@ -78,7 +78,7 @@ func exportJSON(t *testing.T, s store.Library) string {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := export.WriteJSON(&buf, cs); err != nil {
+	if err := export.WriteJSON(&buf, cs, nil); err != nil {
 		t.Fatal(err)
 	}
 	return buf.String()

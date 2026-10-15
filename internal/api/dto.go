@@ -58,6 +58,8 @@ type Channel struct {
 	Revision    int       `json:"revision"`
 	CopiedFrom  *string   `json:"copied_from"`
 	Link        *Link     `json:"link"`
+	Networks    []string  `json:"networks"`
+	Orgs        []OrgRef  `json:"organizations"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -93,6 +95,7 @@ func newChannel(c domain.Channel) Channel {
 	if l := c.Link; l != nil {
 		o.Link = &Link{SharedID: l.SharedID, Tags: nonNil(l.Tags), Notes: l.Notes, SeenRevision: l.SeenRevision, Changed: c.Changed()}
 	}
+	o.Networks, o.Orgs = networkStrings(c.Networks), newOrgRefs(c.Orgs)
 	return o
 }
 
@@ -106,7 +109,7 @@ func newChannels(cs []domain.Channel) []Channel {
 
 // channelFields are the fields a request may set on a channel.
 var channelFields = []string{"name", "rx_hz", "tx_hz", "mode", "service", "rx_only", "rx_tone", "tx_tone", "tone_squelch",
-	"power", "bandwidth", "skip", "tags", "short_names", "notes", "location"}
+	"power", "bandwidth", "skip", "tags", "short_names", "notes", "location", "networks", "organizations"}
 
 // applyChannel sets the fields present in raw on c. Absent fields are left
 // alone; a null clears tx_hz and location. A service turns rx_only on when
@@ -190,6 +193,28 @@ func applyChannel(c *domain.Channel, raw map[string]json.RawMessage) error {
 			return err
 		}
 		c.Location = loc
+	}
+	if _, ok := raw["networks"]; ok {
+		var vs []string
+		if err := get("networks", &vs); err != nil {
+			return err
+		}
+		ns, err := domain.ParseNetworkIDs(vs)
+		if err != nil {
+			return err
+		}
+		c.Networks = ns
+	}
+	if _, ok := raw["organizations"]; ok {
+		var in []orgRefInput
+		if err := get("organizations", &in); err != nil {
+			return err
+		}
+		rs, err := appOrgRefs(in)
+		if err != nil {
+			return err
+		}
+		c.Orgs = rs
 	}
 	return nil
 }
@@ -327,13 +352,15 @@ func cmpOr(v, fallback string) string {
 }
 
 type Source struct {
-	Number       int    `json:"number"`
-	ID           string `json:"id"`
-	Query        string `json:"query"`
-	Sort         string `json:"sort"`
-	SectionStart *int   `json:"section_start"`
-	KeepSorted   bool   `json:"keep_sorted"`
-	Channels     int    `json:"channels"`
+	Number       int     `json:"number"`
+	ID           string  `json:"id"`
+	Query        string  `json:"query"`
+	Plan         *string `json:"plan"`
+	PlanID       *string `json:"plan_id"`
+	Sort         string  `json:"sort"`
+	SectionStart *int    `json:"section_start"`
+	KeepSorted   bool    `json:"keep_sorted"`
+	Channels     int     `json:"channels"`
 }
 
 func newSources(srcs []domain.RadioSource, es []domain.RadioEntry) []Source {
@@ -343,7 +370,7 @@ func newSources(srcs []domain.RadioSource, es []domain.RadioEntry) []Source {
 	}
 	out := make([]Source, len(srcs))
 	for i, s := range srcs {
-		out[i] = Source{s.Position + 1, s.ID, s.Query, s.Sort, s.SectionStart, s.KeepSorted, count[s.ID]}
+		out[i] = Source{s.Position + 1, s.ID, s.Query, optional(s.PlanName), optional(s.PlanID), s.Sort, s.SectionStart, s.KeepSorted, count[s.ID]}
 	}
 	return out
 }
@@ -369,7 +396,7 @@ type Memory struct {
 	Channel      Channel   `json:"channel"`
 }
 
-func newMemories(p program.Plan, es []domain.RadioEntry) []Memory {
+func newMemories(p program.Layout, es []domain.RadioEntry) []Memory {
 	out := make([]Memory, len(p.Memories))
 	for i, m := range p.Memories {
 		e := es[i]

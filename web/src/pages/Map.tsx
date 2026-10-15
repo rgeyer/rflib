@@ -5,10 +5,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Circle, CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import { api, call, type Channel } from "../api/client";
+import { SystemLines } from "../components/SystemLines";
 import { useLib } from "../lib/library";
+import { useSystems } from "../lib/records";
 import { formatMHz, toneSummary } from "../lib/radio";
 
-/** MapPage shows channels with a location, and how far each reaches. */
+/** MapPage shows channels with a location, how far each reaches, and the
+ * systems that link them. */
 export function MapPage() {
   const lib = useLib();
   const [text, setText] = useState("");
@@ -18,6 +21,9 @@ export function MapPage() {
     queryFn: () => call<{ channels: Channel[]; total: number }>(api.GET("/libraries/{lib}/channels", { params: { path: { lib }, query: { q } } })),
   });
   const located = channels.data?.channels ?? [];
+  const systems = useSystems();
+  // System members are shared channels; a link stands in for its own.
+  const where = new Map(located.map((c) => [c.link?.shared_id ?? c.id, [c.location!.latitude, c.location!.longitude] as [number, number]]));
   const center: [number, number] = located.length
     ? [located.reduce((s, c) => s + c.location!.latitude, 0) / located.length, located.reduce((s, c) => s + c.location!.longitude, 0) / located.length]
     : [39.5, -98.35];
@@ -48,6 +54,7 @@ export function MapPage() {
             </Popup>
           </CircleMarker>
         ))}
+        <SystemLines systems={systems.data?.systems ?? []} where={(id) => where.get(id) ?? null} />
         {located
           .filter((c) => c.location!.radius_km != null)
           .map((c) => (

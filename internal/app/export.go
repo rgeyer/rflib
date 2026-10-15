@@ -65,7 +65,13 @@ func (s *Service) Export(ctx context.Context, w io.Writer, req ExportRequest) (E
 		return res, export.GenericCSV{}.Export(w, cs)
 	case "json":
 		res.Count = len(cs)
-		return res, export.WriteJSON(w, cs)
+		var recs *export.Records
+		if s.info.Shared && req.Query == nil {
+			if recs, err = s.sharedRecords(ctx); err != nil {
+				return res, err
+			}
+		}
+		return res, export.WriteJSON(w, cs, recs)
 	case "chirp":
 		start := 1
 		if req.Start != nil {

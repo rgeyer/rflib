@@ -9,8 +9,11 @@ import { Changes } from "./pages/Changes";
 import { Channels } from "./pages/Channels";
 import { ImportPage } from "./pages/Import";
 import { Lists } from "./pages/Lists";
+import { OrgPage, Orgs } from "./pages/Orgs";
+import { PlanPage, Plans } from "./pages/Plans";
 import { RadioPage } from "./pages/Radio";
 import { Radios } from "./pages/Radios";
+import { SystemPage, Systems } from "./pages/Systems";
 
 // The map brings Leaflet, so it loads when first opened.
 const MapPage = lazy(() => import("./pages/Map").then((m) => ({ default: m.MapPage })));
@@ -32,6 +35,12 @@ export function App() {
         />
         <Route path="radios" element={<Radios />} />
         <Route path="radios/:radio" element={<RadioPage />} />
+        <Route path="systems" element={<Systems />} />
+        <Route path="systems/:system" element={<SystemPage />} />
+        <Route path="plans" element={<Plans />} />
+        <Route path="plans/:plan" element={<PlanPage />} />
+        <Route path="orgs" element={<Orgs />} />
+        <Route path="orgs/:org" element={<OrgPage />} />
         <Route path="import" element={<ImportPage />} />
         <Route path="lists" element={<Lists />} />
         <Route path="changes" element={<Changes />} />

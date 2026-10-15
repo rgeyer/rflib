@@ -197,6 +197,29 @@ ALTER TABLE libraries ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0;
 INSERT INTO libraries (id, name, description, kind, created_at, updated_at) SELECT ` + newIDSQL + `, 'default', '', '', strftime('%Y-%m-%dT%H:%M:%fZ'), strftime('%Y-%m-%dT%H:%M:%fZ') WHERE NOT EXISTS (SELECT 1 FROM libraries WHERE kind = '');
 UPDATE libraries SET is_default = 1 WHERE id = coalesce((SELECT id FROM libraries WHERE name = 'default' AND kind = ''), (SELECT id FROM libraries WHERE kind = '' ORDER BY created_at, name LIMIT 1));
 CREATE UNIQUE INDEX idx_libraries_default ON libraries(is_default) WHERE is_default = 1;`},
+	// Organizations, systems, and plans, kept in the shared library;
+	// network identifiers on channels and systems; revisions of records
+	// other than channels; and plans as radio sources. The network tags
+	// give way to network identifiers and systems, so they come off shared
+	// channels (personal tags stay).
+	{version: 12, sql: `
+CREATE TABLE organizations (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL, callsign TEXT NOT NULL DEFAULT '', website TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(library_id, name));
+CREATE TABLE channel_networks (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, network TEXT NOT NULL, node TEXT NOT NULL, PRIMARY KEY(channel_id, network, node));
+CREATE INDEX idx_channel_networks_node ON channel_networks(network, node);
+CREATE TABLE channel_orgs (channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, org_id TEXT NOT NULL REFERENCES organizations(id), role TEXT NOT NULL, PRIMARY KEY(channel_id, org_id, role));
+CREATE INDEX idx_channel_orgs_org ON channel_orgs(org_id);
+CREATE TABLE systems (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, name TEXT NOT NULL, link_type TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(library_id, name));
+CREATE TABLE system_networks (system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE, network TEXT NOT NULL, node TEXT NOT NULL, PRIMARY KEY(system_id, network, node));
+CREATE TABLE system_orgs (system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE, org_id TEXT NOT NULL REFERENCES organizations(id), role TEXT NOT NULL, PRIMARY KEY(system_id, org_id, role));
+CREATE INDEX idx_system_orgs_org ON system_orgs(org_id);
+CREATE TABLE system_members (system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE, channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, linking TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', PRIMARY KEY(system_id, channel_id));
+CREATE INDEX idx_system_members_channel ON system_members(channel_id);
+CREATE TABLE plans (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', starts_on TEXT, ends_on TEXT, status TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(library_id, name));
+CREATE TABLE plan_entries (plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, position INTEGER NOT NULL, channel_id TEXT REFERENCES channels(id) ON DELETE CASCADE, query TEXT NOT NULL DEFAULT '', sort TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', assignment TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', section_start INTEGER, PRIMARY KEY(plan_id, position));
+CREATE INDEX idx_plan_entries_channel ON plan_entries(channel_id);
+CREATE TABLE record_revisions (kind TEXT NOT NULL, record_id TEXT NOT NULL, revision INTEGER NOT NULL, changed_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', record TEXT NOT NULL, PRIMARY KEY(kind, record_id, revision));
+ALTER TABLE radio_sources ADD COLUMN plan_id TEXT REFERENCES plans(id);
+DELETE FROM channel_tags WHERE tag IN ('linked', 'allstar', 'echolink', 'wires-x') AND channel_id IN (SELECT id FROM channels WHERE link_id IS NULL AND library_id IN (SELECT id FROM libraries WHERE kind = 'shared'));`},
 }
 
 // ungroup finishes migration 9 once new_channels holds the channels: it

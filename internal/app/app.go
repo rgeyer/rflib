@@ -133,8 +133,8 @@ func (s *Service) ListChannels(ctx context.Context) ([]domain.Channel, error) {
 	return s.lib.ListChannels(ctx)
 }
 
-// QueryEnv resolves what queries refer to: saved searches, radios, and
-// radio models.
+// QueryEnv resolves what queries refer to: saved searches, radios, radio
+// models, and systems.
 func (s *Service) QueryEnv(ctx context.Context) query.Env {
 	return query.Env{
 		Search: func(name string) (string, error) {
@@ -158,6 +158,7 @@ func (s *Service) QueryEnv(ctx context.Context) query.Env {
 			}
 			return m.Receives, nil
 		},
+		System: func(ref string) (map[string]bool, error) { return s.systemChannels(ctx, ref) },
 	}
 }
 
@@ -238,7 +239,8 @@ func (s *Service) Import(ctx context.Context, b importer.Batch, opts importer.Op
 			c.Tags, c.Notes, c.CopiedFrom, c.Link = c.AllTags(), c.AllNotes(), c.Link.SharedID, nil
 			copied = append(copied, importer.RowError{Row: r.Row, Err: domain.Invalidf("%s: its shared channel isn't in this database's shared list, so it's a private copy", c.Name)})
 		}
-		c.Status, c.StatusNote, c.BackOn, c.ReplacedBy = domain.StatusActive, "", nil, ""
+		// Organizations belong to shared channels.
+		c.Status, c.StatusNote, c.BackOn, c.ReplacedBy, c.Orgs = domain.StatusActive, "", nil, "", nil
 	}
 	sum, err := importer.Apply(ctx, s.lib, b, opts)
 	sum.Warnings = append(copied, sum.Warnings...)

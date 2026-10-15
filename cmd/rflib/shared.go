@@ -352,6 +352,7 @@ func newSharedUpdateCommand() *cobra.Command {
 		Long: "Correct a shared channel; only supplied flags change. Links follow the change,\nand it's recorded in the channel's history with --reason."}
 	idFlag(cmd, "Shared channel ID (required)")
 	channelFields(cmd)
+	orgFlags(cmd)
 	reasonFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		return withShared(cmd, func(a *app.Service) error {
@@ -360,6 +361,9 @@ func newSharedUpdateCommand() *cobra.Command {
 				return err
 			}
 			if err := applyChannelFlags(cmd, a, &c, false); err != nil {
+				return err
+			}
+			if c.Orgs, err = applyOrgFlags(cmd, a, c.Orgs); err != nil {
 				return err
 			}
 			c, warnings, err := a.UpdateShared(ctx(cmd), c, getString(cmd, "reason"))

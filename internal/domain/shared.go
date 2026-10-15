@@ -140,6 +140,8 @@ func SharedChanges(a, b Channel) []string {
 	add("tone squelch", fmt.Sprint(a.ToneSquelch), fmt.Sprint(b.ToneSquelch))
 	add("bandwidth", a.Bandwidth, b.Bandwidth)
 	add("location", loc(a.Location), loc(b.Location))
+	add("networks", formatNetworkIDs(a.Networks), formatNetworkIDs(b.Networks))
+	add("organizations", formatOrgRefs(a.Orgs), formatOrgRefs(b.Orgs))
 	add("tags", strings.Join(a.Tags, ","), strings.Join(b.Tags, ","))
 	add("notes", a.Notes, b.Notes)
 	add("status", string(a.Status.OrActive()), string(b.Status.OrActive()))
@@ -160,10 +162,6 @@ var CuratedTags = []struct{ Name, Meaning string }{
 	{"races", "used by RACES (Radio Amateur Civil Emergency Service)"},
 	{"skywarn", "used for SKYWARN severe-weather spotting"},
 	{"net", "hosts a regular scheduled net"},
-	{"linked", "linked to other repeaters"},
-	{"allstar", "connected to AllStar Link"},
-	{"echolink", "connected to EchoLink"},
-	{"wires-x", "connected to Yaesu WIRES-X"},
 	{"emergency", "set aside for emergency traffic"},
 	{"travel", "useful to travelers, such as a highway or travel net"},
 	{"simplex", "a simplex frequency in common use"},

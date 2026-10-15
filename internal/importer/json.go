@@ -28,6 +28,18 @@ func ParseJSON(r io.Reader) (Batch, error) {
 	for _, g := range doc.Groups {
 		groups[g.ID] = g
 	}
+	for _, o := range doc.Organizations {
+		o.Organization.ID, o.Organization.CreatedAt, o.Organization.UpdatedAt = o.ID, o.CreatedAt, o.UpdatedAt
+		b.Shared.Orgs = append(b.Shared.Orgs, o.Organization)
+	}
+	for _, x := range doc.Systems {
+		x.System.ID, x.System.CreatedAt, x.System.UpdatedAt = x.ID, x.CreatedAt, x.UpdatedAt
+		b.Shared.Systems = append(b.Shared.Systems, x.System)
+	}
+	for _, p := range doc.Plans {
+		p.Plan.ID, p.Plan.CreatedAt, p.Plan.UpdatedAt = p.ID, p.CreatedAt, p.UpdatedAt
+		b.Shared.Plans = append(b.Shared.Plans, p.Plan)
+	}
 	for i, rec := range doc.Channels {
 		row := i + 1
 		c := domain.Channel{ID: rec.ID, Name: rec.Name, ReceiveHz: rec.ReceiveHz, TransmitHz: rec.TransmitHz, Mode: rec.Mode, ToneSquelch: rec.ToneSquelch, Power: domain.PowerFromText(rec.Power), Bandwidth: rec.Bandwidth, Skip: rec.Skip, Tags: rec.Tags, ShortNames: rec.ShortNames, Notes: rec.Notes, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt}
@@ -65,6 +77,11 @@ func ParseJSON(r io.Reader) (Batch, error) {
 		if l := rec.Link; l != nil {
 			c.Link = &domain.Link{SharedID: l.SharedID, SeenRevision: l.SeenRevision, Tags: l.Tags, Notes: l.Notes}
 		}
+		if c.Networks, err = domain.ParseNetworkIDs(rec.Networks); err != nil {
+			b.fail(row, "networks: %v", err)
+			continue
+		}
+		c.Orgs = rec.Orgs
 		if rec.GroupID != nil {
 			g, ok := groups[*rec.GroupID]
 			if !ok {

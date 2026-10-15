@@ -70,25 +70,25 @@ func (s *Service) RadioModel(ctx context.Context, idOrName string) (domain.Radio
 	return r, m, err
 }
 
-// Plan plans a radio's memories (see program.Build). The entries are in
-// the same order as the plan's memories.
-func (s *Service) Plan(ctx context.Context, idOrName string) (program.Plan, []domain.RadioEntry, error) {
+// Layout lays out a radio's memories (see program.Build). The entries are in
+// the same order as the layout's memories.
+func (s *Service) Layout(ctx context.Context, idOrName string) (program.Layout, []domain.RadioEntry, error) {
 	r, m, err := s.RadioModel(ctx, idOrName)
 	if err != nil {
-		return program.Plan{}, nil, err
+		return program.Layout{}, nil, err
 	}
 	es, err := s.lib.RadioEntries(ctx, r.ID)
 	if err != nil {
-		return program.Plan{}, nil, err
+		return program.Layout{}, nil, err
 	}
 	p, err := program.Build(r, m, es)
 	return p, es, err
 }
 
-// replan reports an error when a change leaves a radio unable to export,
+// relayout reports an error when a change leaves a radio unable to export,
 // such as a section start behind the channels before it.
-func (s *Service) replan(ctx context.Context, r domain.Radio) error {
-	if _, _, err := s.Plan(ctx, r.ID); err != nil {
+func (s *Service) relayout(ctx context.Context, r domain.Radio) error {
+	if _, _, err := s.Layout(ctx, r.ID); err != nil {
 		return fmt.Errorf("saved, but %s no longer exports: %w", r.Name, err)
 	}
 	return nil
@@ -297,7 +297,7 @@ func (s *Service) RadioEntry(ctx context.Context, radio, channelID string) (doma
 }
 
 // SetEntry saves a radio's overrides for one of its channels, and reports
-// an error if the radio no longer plans, such as a section start behind
+// an error if the radio no longer lays out, such as a section start behind
 // the channels before it. The overrides are saved either way.
 func (s *Service) SetEntry(ctx context.Context, radio string, e domain.RadioEntry) error {
 	r, err := s.lib.GetRadio(ctx, radio)
@@ -307,7 +307,7 @@ func (s *Service) SetEntry(ctx context.Context, radio string, e domain.RadioEntr
 	if err := s.lib.SetRadioEntry(ctx, r.ID, e); err != nil {
 		return err
 	}
-	return s.replan(ctx, r)
+	return s.relayout(ctx, r)
 }
 
 // EntryEdit is a change to a radio's overrides for many channels at once.
@@ -321,7 +321,7 @@ type EntryEdit struct {
 
 // SetEntries applies an edit to the radio's overrides for each selected
 // channel on it, and returns the channels changed. Like SetEntry, it
-// reports an error if the radio no longer plans; the overrides are saved
+// reports an error if the radio no longer lays out; the overrides are saved
 // either way.
 func (s *Service) SetEntries(ctx context.Context, radio string, sel Selection, edit EntryEdit) ([]domain.Channel, error) {
 	r, cs, err := s.OnRadio(ctx, radio, sel)
@@ -351,7 +351,7 @@ func (s *Service) SetEntries(ctx context.Context, radio string, sel Selection, e
 	if err != nil {
 		return nil, err
 	}
-	return cs, s.replan(ctx, r)
+	return cs, s.relayout(ctx, r)
 }
 
 // --- sources ---
@@ -383,13 +383,23 @@ func (s *Service) Source(ctx context.Context, radio string, number int) (domain.
 	return r, sources[number-1], nil
 }
 
-// AddSource appends a source to a radio after checking its query.
+// AddSource appends a source to a radio after checking its query. A
+// plan source's PlanID may be the plan's name.
 func (s *Service) AddSource(ctx context.Context, radio string, src domain.RadioSource) (domain.Radio, domain.RadioSource, error) {
 	r, err := s.lib.GetRadio(ctx, radio)
 	if err != nil {
 		return r, src, err
 	}
-	if _, err := s.CheckQuery(ctx, src.Query, nil); err != nil {
+	if src.PlanID != "" {
+		if src.Query != "" {
+			return r, src, domain.Invalidf("a source is a query or a plan, not both")
+		}
+		p, err := s.GetPlan(ctx, src.PlanID)
+		if err != nil {
+			return r, src, err
+		}
+		src.PlanID, src.PlanName = p.ID, p.Name
+	} else if _, err := s.CheckQuery(ctx, src.Query, nil); err != nil {
 		return r, src, err
 	}
 	src.RadioID, src.Sort = r.ID, orDefault(src.Sort, "name")
@@ -398,19 +408,21 @@ func (s *Service) AddSource(ctx context.Context, radio string, src domain.RadioS
 }
 
 // UpdateSource saves a changed source after checking its query, and
-// reports an error if the radio no longer plans.
+// reports an error if the radio no longer lays out.
 func (s *Service) UpdateSource(ctx context.Context, src domain.RadioSource) error {
 	r, err := s.lib.GetRadio(ctx, src.RadioID)
 	if err != nil {
 		return err
 	}
-	if _, err := s.CheckQuery(ctx, src.Query, nil); err != nil {
-		return err
+	if src.PlanID == "" {
+		if _, err := s.CheckQuery(ctx, src.Query, nil); err != nil {
+			return err
+		}
 	}
 	if err := s.lib.UpdateRadioSource(ctx, src); err != nil {
 		return err
 	}
-	return s.replan(ctx, r)
+	return s.relayout(ctx, r)
 }
 
 // MoveSource moves a radio's source number from to number to (both from
@@ -427,30 +439,39 @@ func (s *Service) MoveSource(ctx context.Context, radio string, from, to int) er
 }
 
 // RemoveSource deletes a radio's source by number. Its channels stay unless
-// withChannels; it returns how many were taken off.
+// withChannels, or it's a plan, whose channels always go with it; it
+// returns how many were taken off.
 func (s *Service) RemoveSource(ctx context.Context, radio string, number int, withChannels bool) (int, error) {
 	_, src, err := s.Source(ctx, radio, number)
 	if err != nil {
 		return 0, err
 	}
-	return s.lib.RemoveRadioSource(ctx, src, withChannels)
+	return s.lib.RemoveRadioSource(ctx, src, withChannels || src.PlanID != "")
 }
 
-// SyncResult is what a radio sync did, source by source. PlanErr is set
-// when the radio no longer plans afterwards, such as a source running past
+// SyncResult is what a radio sync did, source by source. LayoutErr is set
+// when the radio no longer lays out afterwards, such as a source running past
 // the next section start.
 type SyncResult struct {
-	Radio   domain.Radio
-	Sources []SourceSync
-	PlanErr error
+	Radio     domain.Radio
+	Sources   []SourceSync
+	LayoutErr error
 }
 
 type SourceSync struct {
 	Source domain.RadioSource
 	AddResult
 	// Resorted is how many of the source's channels already on the radio
-	// changed places when it was re-sorted.
+	// changed places when it was re-sorted, or for a plan, put in the
+	// plan's order.
 	Resorted int
+	// For a plan: Removed lists the channels taken off because the plan
+	// dropped them, Linked counts the shared channels linked into the
+	// library for it, and Note says why nothing changed, such as an
+	// archived plan.
+	Removed []domain.Channel
+	Linked  int
+	Note    string
 }
 
 // Added is how many channels the sync added in all.
@@ -498,7 +519,23 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 	if err != nil {
 		return res, err
 	}
+	// Plans claim their channels first: each is a curated list, so its
+	// channels belong in its part of the radio whatever else matches them.
+	plans := map[string]SourceSync{}
 	for _, src := range sources {
+		if src.PlanID != "" {
+			ss, err := s.syncPlan(ctx, r, m, src, claimed, opts)
+			if err != nil {
+				return res, fmt.Errorf("source %d: %w", src.Position+1, err)
+			}
+			plans[src.ID] = ss
+		}
+	}
+	for _, src := range sources {
+		if src.PlanID != "" {
+			res.Sources = append(res.Sources, plans[src.ID])
+			continue
+		}
 		n, err := query.Parse(src.Query)
 		if err == nil {
 			err = localQuery(n)
@@ -537,8 +574,8 @@ func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (Syn
 		return res, err
 	}
 	if !dryRun {
-		if _, _, err := s.Plan(ctx, r.ID); err != nil {
-			res.PlanErr = err
+		if _, _, err := s.Layout(ctx, r.ID); err != nil {
+			res.LayoutErr = err
 		}
 	}
 	return res, nil
@@ -558,7 +595,7 @@ func (s *Service) resort(ctx context.Context, r domain.Radio, res *SyncResult, o
 	moved := 0
 	for i := range res.Sources {
 		ss := &res.Sources[i]
-		if !opts.Resort && !ss.Source.KeepSorted {
+		if ss.Source.PlanID != "" || !opts.Resort && !ss.Source.KeepSorted {
 			continue
 		}
 		var slots []int
@@ -595,7 +632,186 @@ func (r SyncResult) Resorted() int {
 	return n
 }
 
-// SourceLabel describes a source for messages: its number and query.
+// SourceLabel describes a source for messages: its number and query or
+// plan.
 func SourceLabel(src domain.RadioSource) string {
+	if src.PlanID != "" {
+		return fmt.Sprintf("Source %d (plan %s)", src.Position+1, src.PlanName)
+	}
 	return fmt.Sprintf("Source %d (%s)", src.Position+1, strings.TrimSpace(src.Query))
 }
+
+// syncPlan makes a plan source's part of the radio follow the plan: the
+// plan's channels, linked into the library where they aren't yet, in the
+// plan's order, named as the plan names them, and numbered from the
+// source's section start as the plan numbers them. A plan's channel
+// already elsewhere on the radio moves into the plan's part; channels the
+// plan dropped come off. Channels outside the radio's bands or in modes it
+// lacks are left out unless opts.AnyBand or opts.AnyMode. An archived
+// plan's channels stay as they are.
+func (s *Service) syncPlan(ctx context.Context, r domain.Radio, m model.Model, src domain.RadioSource, claimed map[string]bool, opts SyncOptions) (SourceSync, error) {
+	ss := SourceSync{Source: src}
+	es, err := s.lib.RadioEntries(ctx, r.ID)
+	if err != nil {
+		return ss, err
+	}
+	sh, err := s.shared(ctx)
+	if err != nil {
+		return ss, err
+	}
+	p, err := sh.lib.GetPlan(ctx, src.PlanID)
+	if err != nil {
+		return ss, err
+	}
+	if p.Status == domain.PlanArchived {
+		ss.Note = "the plan is archived, so its channels stay as they are"
+		return ss, nil
+	}
+	rows, err := s.PlanRows(ctx, p)
+	if err != nil {
+		return ss, fmt.Errorf("plan %s: %w", p.Name, err)
+	}
+	cs := make([]domain.Channel, len(rows))
+	for i, row := range rows {
+		cs[i] = row.Channel
+	}
+	var fit AddResult
+	fit.fit(m, cs, opts.AnyBand, opts.AnyMode)
+	ss.Skipped, ss.WrongMode = fit.Skipped, fit.WrongMode
+	fits := map[string]bool{}
+	for _, c := range fit.Add {
+		fits[c.ID] = true
+	}
+	mine, err := s.lib.ListChannels(ctx)
+	if err != nil {
+		return ss, err
+	}
+	linkOf := map[string]string{}
+	for _, c := range mine {
+		if c.Link != nil {
+			linkOf[c.Link.SharedID] = c.ID
+		}
+	}
+	var toLink []string
+	for _, c := range fit.Add {
+		if linkOf[c.ID] == "" {
+			toLink = append(toLink, c.ID)
+		}
+	}
+	ss.Linked = len(toLink)
+	if !opts.DryRun && len(toLink) > 0 {
+		lr, err := s.LinkChannels(ctx, Selection{IDs: toLink}, nil)
+		if err != nil {
+			return ss, err
+		}
+		for _, c := range lr.Linked {
+			linkOf[c.Link.SharedID] = c.ID
+		}
+	}
+	// want is the source's part of the radio as the plan has it; a
+	// channel not linked yet (in a dry run) goes by its shared ID.
+	type want struct {
+		id   string
+		row  PlanRow
+		name string
+	}
+	var wants []want
+	wanted := map[string]bool{}
+	for _, row := range rows {
+		if !fits[row.Channel.ID] {
+			continue
+		}
+		id := linkOf[row.Channel.ID]
+		if id == "" {
+			id = row.Channel.ID
+		}
+		name := ""
+		if p.Entries[row.Entry].Name != "" {
+			name = row.Name
+		}
+		wants = append(wants, want{id, row, name})
+		wanted[id] = true
+	}
+	var off []string
+	ours := map[string]bool{}
+	for _, e := range es {
+		switch {
+		case e.SourceID == src.ID && !wanted[e.Channel.ID]:
+			ss.Removed = append(ss.Removed, e.Channel)
+			off = append(off, e.Channel.ID)
+		case e.SourceID == src.ID:
+			ours[e.Channel.ID] = true
+		case wanted[e.Channel.ID]:
+			// Elsewhere on the radio: it moves into the plan's part.
+			off = append(off, e.Channel.ID)
+		}
+	}
+	var add []string
+	for _, w := range wants {
+		claimed[w.id] = true
+		if !ours[w.id] {
+			add = append(add, w.id)
+			ss.Add = append(ss.Add, w.row.Channel)
+		}
+	}
+	if opts.DryRun {
+		return ss, nil
+	}
+	if len(off) > 0 {
+		if _, err := s.lib.RemoveRadioChannels(ctx, r.ID, off); err != nil {
+			return ss, err
+		}
+	}
+	if len(add) > 0 {
+		if ss.Added, err = s.lib.AddSourceChannels(ctx, src, add); err != nil {
+			return ss, err
+		}
+	}
+	// Put the source's channels in the plan's order, in the places they
+	// hold.
+	if es, err = s.lib.RadioEntries(ctx, r.ID); err != nil {
+		return ss, err
+	}
+	order := make([]string, len(es))
+	k := 0
+	for i, e := range es {
+		order[i] = e.Channel.ID
+		if e.SourceID == src.ID && k < len(wants) {
+			if order[i] != wants[k].id && ours[order[i]] {
+				ss.Resorted++
+			}
+			order[i] = wants[k].id
+			k++
+		}
+	}
+	if err := s.lib.ReorderRadioChannels(ctx, r.ID, order); err != nil {
+		return ss, err
+	}
+	if es, err = s.lib.RadioEntries(ctx, r.ID); err != nil {
+		return ss, err
+	}
+	k, prev := 0, 0
+	for _, e := range es {
+		if e.SourceID != src.ID || k >= len(wants) {
+			continue
+		}
+		w := wants[k]
+		var section *int
+		if src.SectionStart != nil && (k == 0 || w.row.Number != prev+1) {
+			at := *src.SectionStart + w.row.Number - 1
+			section = &at
+		}
+		prev = w.row.Number
+		k++
+		if e.Name == w.name && equalInt(e.SectionStart, section) {
+			continue
+		}
+		e.Name, e.SectionStart = w.name, section
+		if err := s.lib.SetRadioEntry(ctx, r.ID, e); err != nil {
+			return ss, err
+		}
+	}
+	return ss, nil
+}
+
+func equalInt(a, b *int) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }

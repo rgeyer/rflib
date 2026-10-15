@@ -26,6 +26,10 @@ type Env struct {
 	// Tunes reports whether a radio (by ID or name) or radio model can
 	// receive a channel: its frequency and its mode.
 	Tunes func(ref string) (func(domain.Channel) bool, error)
+	// System returns the IDs of a system's channels (by system ID or
+	// name), which are shared channels: a link matches through its shared
+	// channel.
+	System func(ref string) (map[string]bool, error)
 }
 
 // Compile turns a query into a Matcher, resolving saved searches,
@@ -151,9 +155,10 @@ var Fields = []string{
 	"name", "notes", "service", "tag", "group", "freq", "rx", "tx", "band", "duplex",
 	"tone", "txtone", "rxtone", "mode", "power", "squelch", "skip", "is", "has",
 	"near", "radio", "tunes", "created", "updated", "id", "status", "in",
+	"org", "system", "allstar", "echolink", "irlp", "wires-x",
 }
 
-var fieldAliases = map[string]string{"frequency": "freq", "tags": "tag", "svc": "service"}
+var fieldAliases = map[string]string{"frequency": "freq", "tags": "tag", "svc": "service", "organization": "org", "wiresx": "wires-x"}
 
 func (c *compiler) term(t Term) (Matcher, error) {
 	switch t.Field {
@@ -282,6 +287,30 @@ func (c *compiler) term(t Term) (Matcher, error) {
 		}, nil
 	case "id":
 		return func(ch domain.Channel) bool { return ch.ID == v }, nil
+	case "org":
+		// The operator, by name (ignoring case) or ID.
+		return func(ch domain.Channel) bool {
+			return slices.ContainsFunc(ch.Orgs, func(r domain.OrgRef) bool {
+				return r.Role == domain.RoleOperator && (strings.EqualFold(r.Name, v) || r.OrgID == v)
+			})
+		}, nil
+	case "system":
+		if c.env.System == nil {
+			return nil, domain.Invalidf("systems can't be used here")
+		}
+		in, err := c.env.System(v)
+		if err != nil {
+			return nil, err
+		}
+		return func(ch domain.Channel) bool {
+			return in[ch.ID] || ch.Link != nil && in[ch.Link.SharedID]
+		}, nil
+	case "allstar", "echolink", "irlp", "wires-x":
+		want, err := domain.ParseNetworkID(t.Field + ":" + v)
+		if err != nil {
+			return nil, err
+		}
+		return func(ch domain.Channel) bool { return slices.Contains(ch.Networks, want) }, nil
 	}
 	return nil, domain.Invalidf("unknown field")
 }
@@ -395,7 +424,7 @@ func freqMatcher(field string, ok func(int64) bool) Matcher {
 // IsValues and HasValues are the words is: and has: take.
 var (
 	IsValues  = []string{"repeater", "simplex", "rxonly", "transmit", "skip"}
-	HasValues = []string{"location", "service", "tag", "tone", "power", "notes", "shortname", "radio"}
+	HasValues = []string{"location", "service", "tag", "tone", "power", "notes", "shortname", "radio", "network", "org"}
 )
 
 func isMatcher(v string) (Matcher, error) {
@@ -440,6 +469,10 @@ func (c *compiler) hasMatcher(v string) (Matcher, error) {
 		return func(ch domain.Channel) bool { return len(ch.ShortNames) > 0 }, nil
 	case "radio":
 		return c.term(Term{Field: "radio", Value: "any"})
+	case "network", "networks":
+		return func(ch domain.Channel) bool { return len(ch.Networks) > 0 }, nil
+	case "org", "orgs":
+		return func(ch domain.Channel) bool { return len(ch.Orgs) > 0 }, nil
 	}
 	return nil, domain.Invalidf("unknown value %q; use %s", v, strings.Join(HasValues, ", "))
 }

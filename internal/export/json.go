@@ -12,17 +12,53 @@ import (
 // version on any incompatible change to Document.
 const (
 	DocumentFormat  = "rflib"
-	DocumentVersion = 3
+	DocumentVersion = 4
 )
 
 // Document is the full-fidelity JSON backup: every stored field, including IDs
 // and timestamps, so a restore reproduces the library exactly. Version 1
 // backups also had groups, which importing turns into locations and tags.
+// A backup of the shared library also has its organizations, systems, and
+// plans (version 4).
 type Document struct {
-	Format   string          `json:"format"`
-	Version  int             `json:"version"`
-	Groups   []GroupRecord   `json:"groups,omitempty"`
-	Channels []ChannelRecord `json:"channels"`
+	Format        string          `json:"format"`
+	Version       int             `json:"version"`
+	Groups        []GroupRecord   `json:"groups,omitempty"`
+	Organizations []OrgRecord     `json:"organizations,omitempty"`
+	Channels      []ChannelRecord `json:"channels"`
+	Systems       []SystemRecord  `json:"systems,omitempty"`
+	Plans         []PlanRecord    `json:"plans,omitempty"`
+}
+
+// Records are the shared library's organizations, systems, and plans, for
+// a backup.
+type Records struct {
+	Orgs    []domain.Organization
+	Systems []domain.System
+	Plans   []domain.Plan
+}
+
+// OrgRecord, SystemRecord, and PlanRecord are the records with their IDs
+// and timestamps; the rest is the record's own JSON (see domain.Snapshot).
+type OrgRecord struct {
+	ID string `json:"id"`
+	domain.Organization
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type SystemRecord struct {
+	ID string `json:"id"`
+	domain.System
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PlanRecord struct {
+	ID string `json:"id"`
+	domain.Plan
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // GroupRecord is a group in a version 1 backup.
@@ -71,8 +107,12 @@ type ChannelRecord struct {
 	// Link makes the record a link (version 3). Its other fields show the
 	// shared channel as it was, so a restore without it can make a copy;
 	// Tags and Notes are the user's own.
-	Link      *LinkRecord `json:"link,omitempty"`
-	CreatedAt time.Time   `json:"created_at"`
+	Link *LinkRecord `json:"link,omitempty"`
+	// Networks are NETWORK:NODE values, and Orgs a shared channel's
+	// organizations (version 4).
+	Networks  []string        `json:"networks,omitempty"`
+	Orgs      []domain.OrgRef `json:"organizations,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 }
 
@@ -85,9 +125,21 @@ type LinkRecord struct {
 	Notes        string   `json:"notes,omitempty"`
 }
 
-// WriteJSON writes channels as an indented Document.
-func WriteJSON(w io.Writer, channels []domain.Channel) error {
+// WriteJSON writes channels, and recs when not nil, as an indented
+// Document.
+func WriteJSON(w io.Writer, channels []domain.Channel, recs *Records) error {
 	doc := Document{Format: DocumentFormat, Version: DocumentVersion, Channels: []ChannelRecord{}}
+	if recs != nil {
+		for _, o := range recs.Orgs {
+			doc.Organizations = append(doc.Organizations, OrgRecord{ID: o.ID, Organization: o, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt})
+		}
+		for _, x := range recs.Systems {
+			doc.Systems = append(doc.Systems, SystemRecord{ID: x.ID, System: x, CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt})
+		}
+		for _, p := range recs.Plans {
+			doc.Plans = append(doc.Plans, PlanRecord{ID: p.ID, Plan: p, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt})
+		}
+	}
 	for _, c := range channels {
 		tags := c.Tags
 		if tags == nil {
@@ -113,6 +165,10 @@ func WriteJSON(w io.Writer, channels []domain.Channel) error {
 		if l := c.Link; l != nil {
 			rec.Link = &LinkRecord{SharedID: l.SharedID, SeenRevision: l.SeenRevision, Tags: l.Tags, Notes: l.Notes}
 		}
+		for _, n := range c.Networks {
+			rec.Networks = append(rec.Networks, n.String())
+		}
+		rec.Orgs = c.Orgs
 		doc.Channels = append(doc.Channels, rec)
 	}
 	enc := json.NewEncoder(w)

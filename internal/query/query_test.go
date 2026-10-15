@@ -32,6 +32,7 @@ func TestParseCanonical(t *testing.T) {
 		{`name:"say \"hi\""`, `name:"say \"hi\""`},
 		{`"OR"`, `"OR"`},
 		{"x-ray", "x-ray"},
+		{"wiresx:123 organization:SBARC", "wires-x:123 org:SBARC"},
 	} {
 		n, err := Parse(tc.in)
 		if err != nil {
@@ -119,9 +120,11 @@ func library(t *testing.T) []domain.Channel {
 		{ID: "call", Name: "2m FM Call", ShortNames: []string{"Call"}, ReceiveHz: 146_520_000, TransmitHz: hz(146_520_000), Mode: "FM",
 			Service: domain.ServiceAmateur, Tags: []string{"calling", "ham"}, TransmitTone: none, ReceiveTone: none, CreatedAt: day("2026-09-01")},
 		{ID: "marian", Name: "Marian", ReceiveHz: 147_300_000, TransmitHz: hz(147_900_000), Mode: "FM", Tags: []string{"ham", "home"},
-			TransmitTone: ctcss(t, "ctcss:131.8"), ReceiveTone: none, Location: home, Notes: "Hospital repeater", CreatedAt: day("2026-10-01")},
+			TransmitTone: ctcss(t, "ctcss:131.8"), ReceiveTone: none, Location: home, Notes: "Hospital repeater", CreatedAt: day("2026-10-01"),
+			Networks: []domain.NetworkID{{Network: domain.NetworkAllStar, Node: "12345"}}, Orgs: []domain.OrgRef{{OrgID: "o1", Name: "SBARC", Role: domain.RoleOperator}}},
 		{ID: "uhf", Name: "Tranq UHF", ReceiveHz: 449_140_000, TransmitHz: hz(444_140_000), Mode: "FM", Tags: []string{"far", "ham"},
-			TransmitTone: ctcss(t, "ctcss:131.8"), ReceiveTone: ctcss(t, "ctcss:131.8"), ToneSquelch: true, Location: far, CreatedAt: day("2026-10-05")},
+			TransmitTone: ctcss(t, "ctcss:131.8"), ReceiveTone: ctcss(t, "ctcss:131.8"), ToneSquelch: true, Location: far, CreatedAt: day("2026-10-05"),
+			Orgs: []domain.OrgRef{{OrgID: "o2", Name: "GRONK", Role: domain.RolePartner}}, Link: &domain.Link{SharedID: "s-uhf"}},
 		{ID: "sheriff", Name: "SBCoSO Ops 1D", ReceiveHz: 460_275_000, TransmitHz: hz(465_275_000), Mode: "NFM",
 			TransmitTone: ctcss(t, "dcs:023"), ReceiveTone: ctcss(t, "dcs:023"), ToneSquelch: true, Tags: []string{"statewide"}, CreatedAt: day("2026-10-05")},
 		{ID: "wx", Name: "WX1", ReceiveHz: 162_550_000, Mode: "FM", Service: domain.ServiceNOAA, RXOnly: true, Skip: true,
@@ -168,6 +171,12 @@ var testEnv = Env{
 			return nil, fmt.Errorf("no radio %q", ref)
 		}
 		return func(c domain.Channel) bool { return c.ReceiveHz >= 136_000_000 && c.ReceiveHz <= 174_000_000 }, nil
+	},
+	System: func(ref string) (map[string]bool, error) {
+		if !strings.EqualFold(ref, "SBARC Hub") {
+			return nil, fmt.Errorf("no system %q", ref)
+		}
+		return map[string]bool{"marian": true, "s-uhf": true}, nil
 	},
 }
 
@@ -235,6 +244,14 @@ func TestMatch(t *testing.T) {
 		{"tunes:ht", "call marian wx xband"},
 		{"-tunes:ht", "uhf sheriff gmrs"},
 		{"tag:ham (is:repeater OR band:70cm) -group:far", "marian"},
+		{"org:sbarc", "marian"},
+		{"org:o1", "marian"},
+		{"org:gronk", ""}, // a partner, not the operator
+		{"has:org", "marian uhf"},
+		{"has:network", "marian"},
+		{"allstar:12345", "marian"},
+		{"echolink:12345", ""},
+		{`system:"sbarc hub"`, "marian uhf"}, // uhf through its shared channel
 	} {
 		m, err := CompileText(tc.q, testEnv)
 		if err != nil {

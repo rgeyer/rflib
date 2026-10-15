@@ -118,6 +118,8 @@ func channelColumns() []field[domain.Channel] {
 		{name: "bandwidth", text: func(c c) string { return c.Bandwidth }},
 		{name: "notes", text: func(c c) string { return c.AllNotes() }},
 		{name: "status", text: func(c c) string { return string(c.Status.OrActive()) }},
+		{name: "networks", text: func(c c) string { return strings.Join(networkStrings(c.Networks), ",") }, json: func(c c) any { return nonNil(networkStrings(c.Networks)) }},
+		{name: "operators", text: func(c c) string { return strings.Join(orgNames(c.Orgs, domain.RoleOperator), ",") }, json: func(c c) any { return nonNil(orgNames(c.Orgs, domain.RoleOperator)) }},
 		{name: "linked", text: func(c c) string { return yesNo(c.Link != nil) }, json: func(c c) any { return c.Link != nil }},
 		{name: "shared_id", id: true, text: func(c c) string {
 			if c.Link == nil {
@@ -128,6 +130,17 @@ func channelColumns() []field[domain.Channel] {
 		{name: "created", text: func(c c) string { return date(c.CreatedAt) }, json: func(c c) any { return c.CreatedAt }},
 		{name: "updated", text: func(c c) string { return date(c.UpdatedAt) }, json: func(c c) any { return c.UpdatedAt }},
 	}
+}
+
+// orgNames are the names of the organizations in a role.
+func orgNames(rs []domain.OrgRef, role domain.OrgRole) []string {
+	var out []string
+	for _, r := range rs {
+		if r.Role == role {
+			out = append(out, r.Name)
+		}
+	}
+	return out
 }
 
 func nonNil(v []string) []string {

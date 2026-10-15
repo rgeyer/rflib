@@ -23,6 +23,7 @@ func prepareChannel(c *domain.Channel) error {
 	c.Status = c.Status.OrActive()
 	c.Tags = domain.NormalizeTags(c.Tags)
 	c.ShortNames = domain.NormalizeShortNames(c.Name, c.ShortNames)
+	c.Networks = domain.NormalizeNetworkIDs(c.Networks)
 	return nil
 }
 
@@ -86,6 +87,11 @@ func (tx *library) writeChannel(ctx context.Context, c domain.Channel, old *doma
 	if err := prepareChannel(&c); err != nil {
 		return c, err
 	}
+	if c.Link == nil {
+		if c.Orgs, err = tx.orgRefs(ctx, c.Orgs); err != nil {
+			return c, err
+		}
+	}
 	record := false
 	if isShared {
 		switch {
@@ -133,6 +139,12 @@ func (tx *library) writeChannel(ctx context.Context, c domain.Channel, old *doma
 	if err := writeChannelLists(ctx, tx.q, c); err != nil {
 		return c, err
 	}
+	// A link's networks and organizations are its shared channel's.
+	if c.Link == nil {
+		if err := writeChannelRefs(ctx, tx.q, c); err != nil {
+			return c, err
+		}
+	}
 	if record {
 		if err := tx.recordRevision(ctx, c); err != nil {
 			return c, err
@@ -175,6 +187,94 @@ func writeChannelLists(ctx context.Context, ex execer, c domain.Channel) error {
 		}
 	}
 	return nil
+}
+
+// writeChannelRefs replaces a channel's network identifiers and
+// organizations.
+func writeChannelRefs(ctx context.Context, ex execer, c domain.Channel) error {
+	if err := writeNetworks(ctx, ex, "channel_networks", "channel_id", c.ID, c.Networks); err != nil {
+		return err
+	}
+	return writeOrgRefs(ctx, ex, "channel_orgs", "channel_id", c.ID, c.Orgs)
+}
+
+func writeNetworks(ctx context.Context, ex execer, table, key, id string, ns []domain.NetworkID) error {
+	if _, err := ex.ExecContext(ctx, `DELETE FROM `+table+` WHERE `+key+`=?`, id); err != nil {
+		return err
+	}
+	for _, n := range ns {
+		if _, err := ex.ExecContext(ctx, `INSERT INTO `+table+`(`+key+`,network,node) VALUES(?,?,?)`, id, string(n.Network), n.Node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeOrgRefs(ctx context.Context, ex execer, table, key, id string, rs []domain.OrgRef) error {
+	if _, err := ex.ExecContext(ctx, `DELETE FROM `+table+` WHERE `+key+`=?`, id); err != nil {
+		return err
+	}
+	for _, r := range rs {
+		if _, err := ex.ExecContext(ctx, `INSERT INTO `+table+`(`+key+`,org_id,role) VALUES(?,?,?)`, id, r.OrgID, string(r.Role)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// orgRefs checks that the organizations are this library's, fills in their
+// names, and normalizes the list.
+func (l *library) orgRefs(ctx context.Context, rs []domain.OrgRef) ([]domain.OrgRef, error) {
+	out := make([]domain.OrgRef, len(rs))
+	for i, r := range rs {
+		o, err := l.GetOrg(ctx, r.OrgID)
+		if err != nil {
+			return nil, err
+		}
+		role, err := domain.ParseOrgRole(string(r.Role))
+		if err != nil {
+			return nil, err
+		}
+		out[i] = domain.OrgRef{OrgID: o.ID, Name: o.Name, Role: role}
+	}
+	return domain.NormalizeOrgRefs(out), nil
+}
+
+// parseNetworks and parseOrgRefs read the lists the list query joins.
+func parseNetworks(s sql.NullString) []domain.NetworkID {
+	if !s.Valid || s.String == "" {
+		return nil
+	}
+	var out []domain.NetworkID
+	for _, v := range strings.Split(s.String, listSeparator) {
+		net, node, _ := strings.Cut(v, ":")
+		out = append(out, domain.NetworkID{Network: domain.Network(net), Node: node})
+	}
+	return domain.NormalizeNetworkIDs(out)
+}
+
+func parseOrgRefs(s sql.NullString) []domain.OrgRef {
+	if !s.Valid || s.String == "" {
+		return nil
+	}
+	var out []domain.OrgRef
+	for _, v := range strings.Split(s.String, listSeparator) {
+		p := strings.SplitN(v, "\x1e", 3)
+		if len(p) == 3 {
+			out = append(out, domain.OrgRef{Role: domain.OrgRole(p[0]), OrgID: p[1], Name: p[2]})
+		}
+	}
+	return domain.NormalizeOrgRefs(out)
+}
+
+// networksSQL and orgsSQL select an owner's network identifiers and
+// organizations as one text each; see parseNetworks and parseOrgRefs.
+func networksSQL(table, key, owner string) string {
+	return `(SELECT group_concat(w.network || ':' || w.node, char(31)) FROM ` + table + ` w WHERE w.` + key + `=` + owner + `)`
+}
+
+func orgsSQL(table, key, owner string) string {
+	return `(SELECT group_concat(o.role || char(30) || o.org_id || char(30) || g.name, char(31)) FROM ` + table + ` o JOIN organizations g ON g.id=o.org_id WHERE o.` + key + `=` + owner + `)`
 }
 
 func locationArgs(l *domain.Location) (lat, lon, radius any) {
@@ -245,7 +345,7 @@ const listSeparator = "\x1f"
 // listChannels returns the channels matching where, a SQL condition on c,
 // with links resolved to their shared channels.
 func (l *library) listChannels(ctx context.Context, where string, args ...any) ([]domain.Channel, error) {
-	q := `SELECT c.id,c.latitude,c.longitude,c.radius_km,c.name,c.receive_hz,c.transmit_hz,c.mode,c.service,c.rx_only,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.link_id,c.seen_revision,c.status,c.status_note,c.back_on,c.replaced_by,c.revision,c.copied_from,c.created_at,c.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id),(SELECT group_concat(n.name, char(31) ORDER BY n.position) FROM channel_short_names n WHERE n.channel_id=c.id) FROM channels c WHERE ` + where + ` ORDER BY c.name,c.receive_hz`
+	q := `SELECT c.id,c.latitude,c.longitude,c.radius_km,c.name,c.receive_hz,c.transmit_hz,c.mode,c.service,c.rx_only,c.receive_tone_kind,c.receive_ctcss_millihz,c.receive_dcs_code,c.receive_dcs_inverted,c.transmit_tone_kind,c.transmit_ctcss_millihz,c.transmit_dcs_code,c.transmit_dcs_inverted,c.tone_squelch,c.power,c.bandwidth,c.skip,c.notes,c.link_id,c.seen_revision,c.status,c.status_note,c.back_on,c.replaced_by,c.revision,c.copied_from,c.created_at,c.updated_at,(SELECT group_concat(t.tag, char(31) ORDER BY t.tag) FROM channel_tags t WHERE t.channel_id=c.id),(SELECT group_concat(n.name, char(31) ORDER BY n.position) FROM channel_short_names n WHERE n.channel_id=c.id),` + networksSQL("channel_networks", "channel_id", "c.id") + `,` + orgsSQL("channel_orgs", "channel_id", "c.id") + ` FROM channels c WHERE ` + where + ` ORDER BY c.name,c.receive_hz`
 	rows, err := l.q.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
@@ -304,11 +404,11 @@ func scanChannel(r scanner) (domain.Channel, error) {
 	var rtD, ttD sql.NullInt64
 	var rtInv, ttInv, ts, skip bool
 	var created, updated string
-	var tags, shortNames, linkID, backOn, replacedBy sql.NullString
+	var tags, shortNames, linkID, backOn, replacedBy, networks, orgs sql.NullString
 	var lat, lon, radius sql.NullFloat64
 	var seen int
 	err := r.Scan(&c.ID, &lat, &lon, &radius, &c.Name, &c.ReceiveHz, &c.TransmitHz, &c.Mode, &c.Service, &c.RXOnly, &c.ReceiveTone.Kind, &rtCT, &rtD, &rtInv, &c.TransmitTone.Kind, &ttCT, &ttD, &ttInv, &ts, &c.Power, &c.Bandwidth, &skip, &c.Notes,
-		&linkID, &seen, &c.Status, &c.StatusNote, &backOn, &replacedBy, &c.Revision, &c.CopiedFrom, &created, &updated, &tags, &shortNames)
+		&linkID, &seen, &c.Status, &c.StatusNote, &backOn, &replacedBy, &c.Revision, &c.CopiedFrom, &created, &updated, &tags, &shortNames, &networks, &orgs)
 	if err != nil {
 		return c, err
 	}
@@ -352,6 +452,7 @@ func scanChannel(r scanner) (domain.Channel, error) {
 	if tags.Valid && tags.String != "" {
 		c.Tags = strings.Split(tags.String, listSeparator)
 	}
+	c.Networks, c.Orgs = parseNetworks(networks), parseOrgRefs(orgs)
 	return c, nil
 }
 
@@ -360,31 +461,36 @@ func scanChannel(r scanner) (domain.Channel, error) {
 // revisionRecord is a shared channel as a revision stores it: the fields
 // the shared channel owns.
 type revisionRecord struct {
-	Name         string   `json:"name"`
-	ReceiveHz    int64    `json:"receive_hz"`
-	TransmitHz   *int64   `json:"transmit_hz,omitempty"`
-	Mode         string   `json:"mode"`
-	Service      string   `json:"service,omitempty"`
-	RXOnly       bool     `json:"rx_only,omitempty"`
-	ReceiveTone  string   `json:"receive_tone"`
-	TransmitTone string   `json:"transmit_tone"`
-	ToneSquelch  bool     `json:"tone_squelch,omitempty"`
-	Bandwidth    string   `json:"bandwidth,omitempty"`
-	Latitude     *float64 `json:"latitude,omitempty"`
-	Longitude    *float64 `json:"longitude,omitempty"`
-	RadiusKM     *float64 `json:"radius_km,omitempty"`
-	Tags         []string `json:"tags,omitempty"`
-	Notes        string   `json:"notes,omitempty"`
-	Status       string   `json:"status"`
-	StatusNote   string   `json:"status_note,omitempty"`
-	BackOn       string   `json:"back_on,omitempty"`
-	ReplacedBy   string   `json:"replaced_by,omitempty"`
+	Name         string          `json:"name"`
+	ReceiveHz    int64           `json:"receive_hz"`
+	TransmitHz   *int64          `json:"transmit_hz,omitempty"`
+	Mode         string          `json:"mode"`
+	Service      string          `json:"service,omitempty"`
+	RXOnly       bool            `json:"rx_only,omitempty"`
+	ReceiveTone  string          `json:"receive_tone"`
+	TransmitTone string          `json:"transmit_tone"`
+	ToneSquelch  bool            `json:"tone_squelch,omitempty"`
+	Bandwidth    string          `json:"bandwidth,omitempty"`
+	Latitude     *float64        `json:"latitude,omitempty"`
+	Longitude    *float64        `json:"longitude,omitempty"`
+	RadiusKM     *float64        `json:"radius_km,omitempty"`
+	Tags         []string        `json:"tags,omitempty"`
+	Notes        string          `json:"notes,omitempty"`
+	Status       string          `json:"status"`
+	StatusNote   string          `json:"status_note,omitempty"`
+	BackOn       string          `json:"back_on,omitempty"`
+	ReplacedBy   string          `json:"replaced_by,omitempty"`
+	Networks     []string        `json:"networks,omitempty"`
+	Orgs         []domain.OrgRef `json:"organizations,omitempty"`
 }
 
 func (tx *library) recordRevision(ctx context.Context, c domain.Channel) error {
 	r := revisionRecord{Name: c.Name, ReceiveHz: c.ReceiveHz, TransmitHz: c.TransmitHz, Mode: c.Mode, Service: string(c.Service), RXOnly: c.RXOnly,
 		ReceiveTone: domain.FormatTone(c.ReceiveTone), TransmitTone: domain.FormatTone(c.TransmitTone), ToneSquelch: c.ToneSquelch, Bandwidth: c.Bandwidth,
-		Tags: c.Tags, Notes: c.Notes, Status: string(c.Status), StatusNote: c.StatusNote, ReplacedBy: c.ReplacedBy}
+		Tags: c.Tags, Notes: c.Notes, Status: string(c.Status), StatusNote: c.StatusNote, ReplacedBy: c.ReplacedBy, Orgs: c.Orgs}
+	for _, n := range c.Networks {
+		r.Networks = append(r.Networks, n.String())
+	}
 	if l := c.Location; l != nil {
 		r.Latitude, r.Longitude, r.RadiusKM = &l.Latitude, &l.Longitude, l.RadiusKM
 	}
@@ -436,6 +542,12 @@ func (l *library) ChannelRevisions(ctx context.Context, id string) ([]domain.Rev
 		if r.BackOn != "" {
 			if t, err := time.Parse(time.DateOnly, r.BackOn); err == nil {
 				ch.BackOn = &t
+			}
+		}
+		ch.Orgs = r.Orgs
+		for _, v := range r.Networks {
+			if n, err := domain.ParseNetworkID(v); err == nil {
+				ch.Networks = append(ch.Networks, n)
 			}
 		}
 		rev.Channel = ch

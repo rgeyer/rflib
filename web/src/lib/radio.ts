@@ -56,7 +56,8 @@ export function formatTone(t: Tone): string {
   }
 }
 
-function shortTone(text: string): string {
+/** shortTone shows one tone as repeater lists do: 100.0 or D023N. */
+export function shortTone(text: string): string {
   const t = parseTone(text);
   if (t.kind === "ctcss") return Number(t.hz).toFixed(1);
   if (t.kind === "dcs") return `D${t.code}${t.inverted ? "I" : "N"}`;
