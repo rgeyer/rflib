@@ -35,7 +35,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"DeleteLibraryCascades", testDeleteLibraryCascades},
 		{"SuppliedIDs", testSuppliedIDs},
 		{"TransactionRollsBack", testTransactionRollsBack},
-		{"LinksFollowSharedChannels", testLinksFollowSharedChannels},
+		{"SharedViewsAndAnnotations", testSharedViewsAndAnnotations},
 		{"SharedRevisions", testSharedRevisions},
 		{"Organizations", testOrganizations},
 		{"Systems", testSystems},
@@ -671,68 +671,108 @@ func sharedLibrary(t *testing.T, s store.Store) store.Library {
 	return s.Library(lib.ID)
 }
 
-func testLinksFollowSharedChannels(t *testing.T, s store.Store) {
+// A library sees a shared channel by its ID, with the user's annotation
+// (tags, notes, short names) over it; radios hold it directly; and the
+// library follows it. No annotation's own ID ever shows.
+func testSharedViewsAndAnnotations(t *testing.T, s store.Store) {
 	shared, mine := sharedLibrary(t, s), newLibrary(t, s, "Mine")
 	tx := int64(147_900_000)
 	tone, _ := domain.ParseTone("ctcss:131.8")
 	sc, err := shared.CreateChannel(ctx(), domain.Channel{Name: "Marian", ReceiveHz: 147_300_000, TransmitHz: &tx, Mode: "FM", ReceiveTone: none, TransmitTone: tone,
-		Tags: []string{"linked"}, Notes: "Hospital site"})
+		Tags: []string{"net"}, Notes: "Hospital site"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A link's own fields are the user's; the rest comes from the shared
-	// channel, whatever the link row says.
-	link, err := mine.CreateChannel(ctx(), domain.Channel{Name: "ignored", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none,
-		Tags: []string{"mine"}, Notes: "my note", Power: domain.PowerLow, ShortNames: []string{"Mar"}, Link: &domain.Link{SharedID: sc.ID}})
+	onlyShared := func(what string, cs ...domain.Channel) {
+		t.Helper()
+		for _, c := range cs {
+			if c.Link != nil && c.ID != sc.ID {
+				t.Fatalf("%s: a view of %s has ID %s", what, sc.ID, c.ID)
+			}
+		}
+	}
+
+	// Unannotated, the library sees it but doesn't list it.
+	view, err := mine.GetChannel(ctx(), sc.ID)
+	if err != nil || view.ID != sc.ID || view.Link == nil || view.Name != "Marian" || len(view.Tags) != 0 || strings.Join(view.Link.Tags, ",") != "net" {
+		t.Fatalf("view = %+v, %v", view, err)
+	}
+	if all, _ := mine.ListChannels(ctx()); len(all) != 0 {
+		t.Fatalf("unannotated shared channel listed: %+v", all)
+	}
+
+	// Saving the view saves the annotation; power stays the shared
+	// channel's, and the shared fields can't be overwritten.
+	view.Tags, view.Notes, view.ShortNames, view.Power, view.Name = []string{"mine"}, "my note", []string{"Mar"}, domain.PowerLow, "ignored"
+	saved, err := mine.UpdateChannel(ctx(), view)
+	onlyShared("update", saved)
+	if err != nil || saved.Name != "Marian" || strings.Join(saved.Tags, ",") != "mine" || saved.Notes != "my note" || strings.Join(saved.ShortNames, ",") != "Mar" || saved.Power != domain.PowerUnset {
+		t.Fatalf("annotated = %+v, %v", saved, err)
+	}
+	// Creating it again, as a backup restore does, saves the same one.
+	again, err := mine.CreateChannel(ctx(), domain.Channel{Tags: []string{"mine", "more"}, Link: &domain.Link{SharedID: sc.ID}})
+	onlyShared("create", again)
+	all, _ := mine.ListChannels(ctx())
+	onlyShared("list", all...)
+	if err != nil || len(all) != 1 || strings.Join(all[0].Tags, ",") != "mine,more" {
+		t.Fatalf("annotations = %+v, %v", all, err)
+	}
+
+	// A radio holds the shared channel by its ID, annotated.
+	r, err := mine.CreateRadio(ctx(), domain.Radio{Name: "HT", Model: "baofeng-uv5rm"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := mine.GetChannel(ctx(), link.ID)
-	switch {
-	case err != nil:
+	if _, err := mine.AddRadioChannels(ctx(), r.ID, []string{sc.ID}); err != nil {
 		t.Fatal(err)
-	case got.Name != "Marian" || got.ReceiveHz != 147_300_000 || got.Revision != 1 || got.Link == nil || got.Link.SharedID != sc.ID:
-		t.Fatalf("link = %+v", got)
-	case strings.Join(got.Tags, ",") != "mine" || strings.Join(got.Link.Tags, ",") != "linked" || got.Notes != "my note" || got.Link.Notes != "Hospital site":
-		t.Errorf("own and shared tags or notes mixed: %+v", got)
-	case got.Power != domain.PowerLow || strings.Join(got.ShortNames, ",") != "Mar":
-		t.Errorf("own fields = %+v", got)
 	}
-	// The shared channel changes; the link follows and sees it's newer.
+	es, err := mine.RadioEntries(ctx(), r.ID)
+	if err != nil || len(es) != 1 || es[0].Channel.ID != sc.ID || strings.Join(es[0].Channel.Tags, ",") != "mine,more" {
+		t.Fatalf("radio entries = %+v, %v", es, err)
+	}
+	onlyShared("radio", es[0].Channel)
+
+	// The library follows it: a change shows until marked seen.
 	sc.Name = "Marian Hospital"
 	if _, err := shared.UpdateChannel(ctx(), sc); err != nil {
 		t.Fatal(err)
 	}
-	if all, _ := mine.ListChannels(ctx()); len(all) != 1 || all[0].Name != "Marian Hospital" || !all[0].Changed() {
-		t.Fatalf("after shared change: %+v", all)
+	if got, _ := mine.GetChannel(ctx(), sc.ID); got.Name != "Marian Hospital" || !got.Changed() {
+		t.Fatalf("after a shared change: %+v", got)
 	}
-	got, _ = mine.GetChannel(ctx(), link.ID)
-	got.Link.SeenRevision = got.Revision
-	if saved, err := mine.UpdateChannel(ctx(), got); err != nil || saved.Changed() {
-		t.Fatalf("acknowledge: %+v, %v", saved, err)
+	if err := mine.MarkSeen(ctx(), sc.ID, 2); err != nil {
+		t.Fatal(err)
 	}
-	// Only shared channels can be linked to, and a linked one can't go.
-	private := channel(t, mine, "Private", 146_520_000)
-	_, err = mine.CreateChannel(ctx(), domain.Channel{Name: "x", ReceiveHz: 1, Mode: "FM", ReceiveTone: none, TransmitTone: none, Link: &domain.Link{SharedID: private.ID}})
-	mustNotFound(t, "link to a private channel", err)
+	if got, _ := mine.GetChannel(ctx(), sc.ID); got.Changed() {
+		t.Error("still changed after being seen")
+	}
+
+	// In use, it can't be deleted from the shared list.
 	if err := shared.DeleteChannel(ctx(), sc.ID); !errors.Is(err, store.ErrConflict) {
-		t.Errorf("deleted a linked shared channel: %v", err)
+		t.Errorf("deleted a shared channel in use: %v", err)
 	}
-	// Clearing the link makes a private channel of what it showed.
-	got, _ = mine.GetChannel(ctx(), link.ID)
-	got.Link, got.CopiedFrom = nil, sc.ID
-	if _, err := mine.UpdateChannel(ctx(), got); err != nil {
+	// Only shared channels can be annotated or held as shared.
+	private := channel(t, mine, "Private", 146_520_000)
+	_, err = mine.CreateChannel(ctx(), domain.Channel{Tags: []string{"x"}, Link: &domain.Link{SharedID: private.ID}})
+	mustNotFound(t, "annotate a private channel", err)
+
+	// Replacing it on radios moves the entry; clearing the annotation and
+	// deleting the view remove only the user's own.
+	if err := mine.ReplaceOnRadios(ctx(), sc.ID, private.ID); err != nil {
 		t.Fatal(err)
 	}
-	sc.Name = "Renamed again"
-	if _, err := shared.UpdateChannel(ctx(), sc); err != nil {
-		t.Fatal(err)
+	if es, _ := mine.RadioEntries(ctx(), r.ID); len(es) != 1 || es[0].Channel.ID != private.ID {
+		t.Fatalf("after replace = %+v", es)
 	}
-	if got, _ := mine.GetChannel(ctx(), link.ID); got.Link != nil || got.Name != "Marian Hospital" || got.CopiedFrom != sc.ID || got.Revision != 0 {
-		t.Errorf("copy = %+v", got)
+	if err := mine.DeleteChannel(ctx(), sc.ID); err != nil {
+		t.Fatalf("delete the annotation: %v", err)
 	}
+	if all, _ := mine.ListChannels(ctx()); len(all) != 1 || all[0].ID != private.ID {
+		t.Fatalf("after deleting the annotation: %+v", all)
+	}
+	mustNotFound(t, "delete an unannotated view", mine.DeleteChannel(ctx(), sc.ID))
 	if err := shared.DeleteChannel(ctx(), sc.ID); err != nil {
-		t.Errorf("unlinked shared channel: %v", err)
+		t.Errorf("unused shared channel: %v", err)
 	}
 }
 
@@ -976,4 +1016,3 @@ func testSeedChannels(t *testing.T, s store.Store) {
 		t.Errorf("record outlived its channel: %+v, %v", got, err)
 	}
 }
-

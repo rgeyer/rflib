@@ -7,23 +7,20 @@ import (
 
 func TestOrgsSystemsAndPlans(t *testing.T) {
 	c := newCLI(t)
-	c.linkLists("us-ham-calling")
 	call := c.ok("channel", "list", "in:shared", "name:\"2m FM Call\"", "--fields", "id")
 	c.ok("org", "add", "SBARC", "--callsign", "w6sba", "--reason", "pilot")
 	c.fails("required flag(s) \"reason\" not set", "org", "add", "GRONK")
 
-	// A shared channel's operator and AllStar node, found by query from
-	// the library through its link.
+	// A shared channel's operator and AllStar node, found by query.
 	c.ok("shared", "update", "--id", call, "--operators", "sbarc", "--networks", "allstar:43761", "--reason", "node")
-	if got := c.ok("channel", "list", "org:SBARC allstar:43761", "--fields", "name,networks,operators"); got != "2m FM Call\tallstar:43761\tSBARC" {
+	if got := c.ok("channel", "list", "in:shared org:SBARC allstar:43761", "--fields", "name,networks,operators"); got != "2m FM Call\tallstar:43761\tSBARC" {
 		t.Errorf("org: and allstar: = %q", got)
 	}
 	c.fails("isn't one of the shared tags", "shared", "update", "--id", call, "--tags", "allstar", "--reason", "x")
 
 	c.ok("system", "add", "SBARC Hub", "--link", "allstar", "--networks", "allstar:43763", "--operators", "SBARC", "--reason", "pilot")
-	link := c.ok("channel", "list", "name:\"2m FM Call\"", "--fields", "id")
-	c.ok("system", "members", "add", "SBARC Hub", "--id", link, "--on-demand", "--reason", "pilot") // a link stands for its shared channel
-	if got := c.ok("channel", "list", `system:"SBARC Hub"`, "--fields", "name"); got != "2m FM Call" {
+	c.ok("system", "members", "add", "SBARC Hub", "--id", call, "--on-demand", "--reason", "pilot")
+	if got := c.ok("channel", "list", `in:shared system:"SBARC Hub"`, "--fields", "name"); got != "2m FM Call" {
 		t.Errorf("system: = %q", got)
 	}
 	if got := c.ok("system", "show", "sbarc hub"); !strings.Contains(got, "allstar:43763") || !strings.Contains(got, "2m FM Call\t146.520000\ton-demand") {

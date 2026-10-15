@@ -125,12 +125,11 @@ func (c *client) errCode(method, path string, body any, want int) string {
 }
 
 // Every route is in the spec, and every operation in the spec is routed.
-// seedAndLink puts built-in lists in the shared list, then links their
-// channels into the default library, as a user would, and returns the
-// links in list order.
+// seedAndLink puts built-in lists in the shared list and returns the
+// default library's views of their channels, in list order.
 func (c *client) seedAndLink(lists ...string) []Channel {
 	c.t.Helper()
-	var ids []string
+	var out []Channel
 	for _, id := range lists {
 		c.do("POST", "/seeds/"+id+"/update", map[string]any{}, 200, nil)
 		l, err := seed.Get(id)
@@ -142,14 +141,12 @@ func (c *client) seedAndLink(lists ...string) []Channel {
 			c.t.Fatal(err)
 		}
 		for _, r := range b.Records {
-			ids = append(ids, app.SeedID(id, r.Channel.Name))
+			var v Channel
+			c.do("GET", "/libraries/default/channels/"+app.SeedID(id, r.Channel.Name), nil, 200, &v)
+			out = append(out, v)
 		}
 	}
-	var res struct {
-		Linked []Channel `json:"linked"`
-	}
-	c.do("POST", "/libraries/default/channels/link", map[string]any{"select": map[string]any{"ids": ids}}, 200, &res)
-	return res.Linked
+	return out
 }
 
 // The built-in lists' status, and an update that installs one.
@@ -280,9 +277,22 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 
 	// Bulk changes.
 	var bulk channelsResult
-	c.do("POST", L+"/channels/bulk-update", map[string]any{"select": map[string]any{"query": "band:noaa"}, "edit": map[string]any{"tags": map[string]any{"add": []string{"wx"}}, "skip": true}}, 200, &bulk)
-	if len(bulk.Channels) != 7 || !bulk.Channels[0].Skip || !slices.Contains(bulk.Channels[0].Tags, "wx") {
+	// Tagging shared channels annotates them, which puts them in the
+	// library; their skip is set per radio.
+	var wxIDs []string
+	for _, v := range linked {
+		wxIDs = append(wxIDs, v.ID)
+	}
+	if code := c.errCode("POST", L+"/channels/bulk-update", map[string]any{"select": map[string]any{"ids": wxIDs}, "edit": map[string]any{"skip": true}}, 400); code != "invalid" {
+		t.Errorf("skip on shared channels: %s", code)
+	}
+	c.do("POST", L+"/channels/bulk-update", map[string]any{"select": map[string]any{"ids": wxIDs}, "edit": map[string]any{"tags": map[string]any{"add": []string{"wx"}}}}, 200, &bulk)
+	if len(bulk.Channels) != 7 || bulk.Channels[0].ID != wx.ID || !slices.Contains(bulk.Channels[0].Tags, "wx") {
 		t.Errorf("bulk update = %+v", bulk.Channels[0])
+	}
+	c.do("GET", L+"/channels?q="+urlQuery("band:noaa"), nil, 200, &list)
+	if list.Total != 7 {
+		t.Errorf("annotated in the library = %d", list.Total)
 	}
 
 	// A radio, its channels, overrides, sources, sync, and export.
@@ -413,7 +423,12 @@ func urlQuery(s string) string {
 func TestOrganizationsSystemsAndPlans(t *testing.T) {
 	c := newClient(t, "")
 	L := "/libraries/default"
-	link := c.seedAndLink("us-ham-calling")[0]
+	var link Channel
+	for _, v := range c.seedAndLink("us-ham-calling") {
+		if v.Name == "2m FM Call" {
+			link = v
+		}
+	}
 	shared := link.Link.SharedID
 
 	if code := c.errCode("POST", "/organizations", map[string]any{"name": "SBARC", "reason": ""}, 400); code != "invalid" {
@@ -445,7 +460,7 @@ func TestOrganizationsSystemsAndPlans(t *testing.T) {
 		Channels []Channel `json:"channels"`
 		Total    int       `json:"total"`
 	}
-	c.do("GET", L+"/channels?q="+urlQuery(`system:"SBARC Hub" org:sbarc`), nil, 200, &list)
+	c.do("GET", L+"/channels?q="+urlQuery(`in:shared system:"SBARC Hub" org:sbarc`), nil, 200, &list)
 	if list.Total != 1 {
 		t.Errorf("system: and org: = %d", list.Total)
 	}

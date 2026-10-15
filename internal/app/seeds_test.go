@@ -137,3 +137,121 @@ func TestRecordSeeds(t *testing.T) {
 		t.Error("a list never seeded counts as installed")
 	}
 }
+
+// No annotation row's own ID ever leaves the service: every channel it
+// returns is the library's own, or a shared channel by its shared ID.
+func TestNoAnnotationIDsLeak(t *testing.T) {
+	ctx := context.Background()
+	s, d := newService(t)
+	sh := openShared(t, d)
+	for _, id := range []string{"us-gmrs", "us-noaa"} {
+		l, _ := seed.Get(id)
+		if _, err := sh.UpdateSeed(ctx, l, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shared, _ := sh.lib.ListChannels(ctx)
+	sharedIDs := map[string]bool{}
+	for _, c := range shared {
+		sharedIDs[c.ID] = true
+	}
+	// Annotate some, put some on a radio, convert one, copy one.
+	noaa, err := s.FindForRadios(ctx, mustParse(t, "service:noaa"))
+	if err != nil || len(noaa) != 7 {
+		t.Fatalf("noaa = %d, %v", len(noaa), err)
+	}
+	if _, _, err := s.UpdateChannels(ctx, Selection{IDs: []string{noaa[0].ID, noaa[1].ID}}, ChannelEdit{Tags: &TagEdit{Add: []string{"wx"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{Query: mustParse(t, "service:noaa OR band:gmrs is:repeater")}); err != nil {
+		t.Fatal(err)
+	}
+	mine := add(t, s, "Family", 462.675, domain.ServiceGMRS)
+	hz := mine.ReceiveHz
+	mine.TransmitHz, mine.Tags = &hz, []string{"family"}
+	if _, _, err := s.UpdateChannel(ctx, mine); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ConvertToLinks(ctx, nil, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	copies, err := s.CopyChannels(ctx, Selection{IDs: []string{noaa[1].ID}})
+	if err != nil || len(copies) != 1 {
+		t.Fatalf("copy = %+v, %v", copies, err)
+	}
+	private := map[string]bool{}
+	all, _ := s.lib.ListChannels(ctx)
+	for _, c := range all {
+		if c.Link == nil {
+			private[c.ID] = true
+		}
+	}
+
+	check := func(what string, cs ...domain.Channel) {
+		t.Helper()
+		for _, c := range cs {
+			switch {
+			case c.Link != nil && (c.ID != c.Link.SharedID || !sharedIDs[c.ID]):
+				t.Errorf("%s: %s has ID %s for shared %s", what, c.Name, c.ID, c.Link.SharedID)
+			case c.Link == nil && !private[c.ID] && !sharedIDs[c.ID]:
+				t.Errorf("%s: %s has an unknown ID %s", what, c.Name, c.ID)
+			}
+		}
+	}
+	check("library", all...)
+	for _, q := range []string{"", "in:shared", "tag:wx", "service:gmrs"} {
+		found, err := s.Find(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("find "+q, found...)
+		forRadios, err := s.FindForRadios(ctx, mustParse(t, q))
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("for radios "+q, forRadios...)
+	}
+	_, es, err := s.RadioEntries(ctx, "HT")
+	if err != nil || len(es) == 0 {
+		t.Fatalf("entries = %d, %v", len(es), err)
+	}
+	for _, e := range es {
+		check("radio", e.Channel)
+	}
+	layout, _, err := s.Layout(ctx, "HT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range layout.Memories {
+		check("layout", m.Channel)
+	}
+	ids := make([]string, len(es))
+	for i, e := range es {
+		ids[i] = e.Channel.ID
+	}
+	selected, err := s.Select(ctx, Selection{IDs: ids})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("select", selected...)
+	for _, id := range ids {
+		c, err := s.GetChannel(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("get", c)
+	}
+	if _, err := sh.SetStatus(ctx, noaa[0].ID, StatusChange{Status: domain.StatusOffAir}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.Changes(ctx)
+	if err != nil || len(changes) == 0 {
+		t.Fatalf("changes = %d, %v", len(changes), err)
+	}
+	for _, ch := range changes {
+		check("changes", ch.Channel)
+	}
+}

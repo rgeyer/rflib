@@ -53,11 +53,10 @@ function fromChannel(c: Channel): Form {
   };
 }
 
-/** toInput turns the form into API fields, or an error to show. A link
- * sends only what's its own. */
+/** toInput turns the form into API fields, or an error to show. A shared
+ * channel sends only the user's annotation: tags, short names, and notes. */
 function toInput(f: Form, linked: boolean): ChannelInput | string {
-  const own: ChannelInput = { tags: f.tags, short_names: f.short_names, notes: f.notes, power: f.power, skip: f.skip };
-  if (linked) return own;
+  if (linked) return { tags: f.tags, short_names: f.short_names, notes: f.notes };
   const rx = parseMHz(f.rx);
   if (rx === null) return "The receive frequency must be MHz, such as 146.52";
   let tx: number | null = null;
@@ -72,7 +71,7 @@ function toInput(f: Form, linked: boolean): ChannelInput | string {
     location = { latitude, longitude, radius_km: f.radius.trim() === "" ? null : Number(f.radius) };
   }
   return {
-    ...own, name: f.name, rx_hz: rx, tx_hz: tx, mode: f.mode, service: f.service, rx_only: f.rx_only,
+    tags: f.tags, short_names: f.short_names, notes: f.notes, power: f.power, skip: f.skip, name: f.name, rx_hz: rx, tx_hz: tx, mode: f.mode, service: f.service, rx_only: f.rx_only,
     tx_tone: f.tx_tone, rx_tone: f.rx_tone, tone_squelch: f.tone_squelch, bandwidth: f.bandwidth, location, networks: f.networks,
   };
 }
@@ -174,10 +173,10 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
       >
         <Stack gap="sm">
           {linked && (
-            <Alert icon={<IconLink size={18} />} title="Linked to a shared channel">
+            <Alert icon={<IconLink size={18} />} title="A shared channel">
               <Text size="sm">
-                It follows the shared channel's corrections. Your tags, notes, power, skip, and short names are yours; to change the rest,
-                make it a private copy.
+                It follows the maintainers' corrections. Your tags, notes, and short names are yours; power and scan are set on each radio. To
+                change the rest, make a private copy.
               </Text>
               <Button mt="xs" size="xs" variant="light" onClick={() => copy.mutate()} loading={copy.isPending}>
                 Make a private copy
@@ -216,12 +215,12 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
           <Group>
             <Switch label="Tone squelch" disabled={shared} checked={form.tone_squelch} onChange={(e) => set("tone_squelch", e.currentTarget.checked)} />
             <Switch label="Receive only" disabled={shared} checked={form.rx_only} onChange={(e) => set("rx_only", e.currentTarget.checked)} />
-            {!maintainer && (
+            {!maintainer && !linked && (
               <Switch label="Skip in scans" disabled={ownFixed} checked={form.skip} onChange={(e) => set("skip", e.currentTarget.checked)} />
             )}
           </Group>
           <Group grow>
-            {!maintainer && (
+            {!maintainer && !linked && (
               <Select
                 label="Power"
                 disabled={ownFixed}

@@ -23,8 +23,8 @@ type Radio struct {
 	// model's.
 	NameLength int
 	Notes      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // RadioSource is one of a radio's searches, or a plan. For a search, `radio

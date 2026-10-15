@@ -389,20 +389,21 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 	if mineNow, _ := s.GetChannel(ctx, mine.ID); mineNow.Link != nil {
 		t.Fatal("seeding touched a private library")
 	}
-	if cvs, err := s.ConvertToLinks(ctx, nil, nil, false); err != nil || len(cvs) != 1 {
+	cvs, err := s.ConvertToLinks(ctx, nil, nil, false)
+	if err != nil || len(cvs) != 1 {
 		t.Fatalf("convert = %+v, %v", cvs, err)
 	}
-	link, _ := s.GetChannel(ctx, mine.ID)
-	if link.Link == nil || link.Name != "GMRS 15" || strings.Join(link.ShortNames, ",") != "GMRS 15 Rpt" || strings.Join(link.Tags, ",") != "family" || link.Notes != "our channel" {
+	// The private channel gives way to the shared one, which carries its
+	// tags, notes, and name as the user's annotation.
+	if _, err := s.GetChannel(ctx, mine.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("the private channel stayed: %v", err)
+	}
+	link, _ := s.GetChannel(ctx, cvs[0].Shared.ID)
+	if link.Link == nil || link.ID != cvs[0].Shared.ID || link.Name != "GMRS 15" || strings.Join(link.ShortNames, ",") != "GMRS 15 Rpt" || strings.Join(link.Tags, ",") != "family" || link.Notes != "our channel" {
 		t.Fatalf("converted = %+v", link)
 	}
 	if again, err := sh.UpdateSeed(ctx, gmrs, false); err != nil || again.Pending() {
 		t.Errorf("update again = %+v, %v", again.Changes, err)
-	}
-	// Linking again reports each channel's existing link, for a radio.
-	lr, err := s.LinkChannels(ctx, Selection{IDs: []string{link.Link.SharedID}}, nil)
-	if err != nil || len(lr.Linked) != 0 || strings.Join(lr.LinkIDs, ",") != mine.ID {
-		t.Errorf("link again = %+v, %v", lr, err)
 	}
 	// Seed tags that repeat fields are left off shared channels.
 	if cs, _ := sh.Find(ctx, "tag:gmrs"); len(cs) != 0 {
@@ -424,7 +425,10 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 		t.Error("bulk edit of a shared field")
 	}
 	low := domain.PowerLow
-	if _, _, err := s.UpdateChannels(ctx, Selection{IDs: []string{link.ID}}, ChannelEdit{Power: &low, Tags: &TagEdit{Add: []string{"x"}}}); err != nil {
+	if _, _, err := s.UpdateChannels(ctx, Selection{IDs: []string{link.ID}}, ChannelEdit{Power: &low}); err == nil || !strings.Contains(err.Error(), "set on each radio") {
+		t.Errorf("power on a shared channel: %v", err)
+	}
+	if _, _, err := s.UpdateChannels(ctx, Selection{IDs: []string{link.ID}}, ChannelEdit{Tags: &TagEdit{Add: []string{"x"}}}); err != nil {
 		t.Errorf("own fields: %v", err)
 	}
 
@@ -456,8 +460,9 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 		!slices.Contains(changes[0].Changes, "status: active → off-air") {
 		t.Fatalf("changes = %+v, %v", changes, err)
 	}
-	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{Query: mustParse(t, "in:shared name:x")}); err == nil {
-		t.Error("in:shared added to a radio")
+	// A radio takes shared channels by query too, without linking.
+	if _, res, err := s.AddChannels(ctx, "HT", AddRequest{Query: mustParse(t, `in:shared name:"GMRS 17"`)}); err != nil || res.Added != 2 {
+		t.Errorf("in:shared onto a radio = %+v, %v", res, err)
 	}
 	if acked, err := s.Acknowledge(ctx, Selection{All: true}); err != nil || len(acked) != 1 {
 		t.Fatalf("acknowledge = %d, %v", len(acked), err)
@@ -474,15 +479,20 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 	if changes, _ := s.Changes(ctx); len(changes) != 1 || changes[0].Replacement == nil || changes[0].Replacement.Name != "GMRS 16" {
 		t.Fatalf("retired change = %+v", changes)
 	}
-	if moved, err := s.Relink(ctx, Selection{IDs: []string{link.ID}}); err != nil || len(moved) != 1 || moved[0].Name != "GMRS 16" || moved[0].Changed() {
+	moved, err := s.Relink(ctx, Selection{IDs: []string{link.ID}})
+	if err != nil || len(moved) != 1 || moved[0].Name != "GMRS 16" || moved[0].Changed() || !slices.Contains(moved[0].Tags, "family") {
 		t.Fatalf("relink = %+v, %v", moved, err)
+	}
+	if es, _, _ := s.radioEntriesNamed(ctx, "HT"); !slices.Contains(es, "GMRS 16") || slices.Contains(es, "GMRS 15") {
+		t.Errorf("HT after relink = %v", es)
 	}
 	if _, revs, err := sh.History(ctx, link.Link.SharedID); err != nil || len(revs) != 3 || revs[2].Reason != "moved" {
 		t.Errorf("history = %+v, %v", revs, err)
 	}
 
-	// A copy stops following the shared channel.
-	copies, err := s.CopyChannels(ctx, Selection{IDs: []string{link.ID}})
+	// A copy stops following the shared channel, and takes its place on
+	// radios.
+	copies, err := s.CopyChannels(ctx, Selection{IDs: []string{moved[0].ID}})
 	if err != nil || len(copies) != 1 || copies[0].Link != nil || copies[0].CopiedFrom == "" || !slices.Contains(copies[0].Tags, "family") {
 		t.Fatalf("copy = %+v, %v", copies, err)
 	}
@@ -578,7 +588,8 @@ func TestPlanRowsAndPlanSources(t *testing.T) {
 	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
 		t.Fatal(err)
 	}
-	// The query source would match the plan's channels too, once linked.
+	// The query source matches the plan's channels too, but the plan
+	// claims them first.
 	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "freq:146.5..146.6"}); err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +598,7 @@ func TestPlanRowsAndPlanSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	dry, err := s.Sync(ctx, "HT", SyncOptions{DryRun: true})
-	if err != nil || dry.Sources[1].Linked != 3 || len(dry.Sources[1].Add) != 3 {
+	if err != nil || len(dry.Sources[1].Add) != 3 {
 		t.Fatalf("dry run = %+v, %v", dry, err)
 	}
 	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil {
@@ -642,3 +653,14 @@ func TestInSharedAlone(t *testing.T) {
 		t.Errorf("in:shared = %v, %v", names(cs), err)
 	}
 }
+
+// radioEntriesNamed lists a radio's channel names, for tests.
+func (s *Service) radioEntriesNamed(ctx context.Context, radio string) ([]string, domain.Radio, error) {
+	r, es, err := s.RadioEntries(ctx, radio)
+	var out []string
+	for _, e := range es {
+		out = append(out, e.Channel.Name)
+	}
+	return out, r, err
+}
+

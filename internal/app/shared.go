@@ -16,12 +16,13 @@ import (
 	"github.com/ryan/rflib/internal/store"
 )
 
-// The shared library holds channels shared with everyone. Other libraries
-// link to them: a link shows the shared channel and follows its changes,
-// and keeps the user's own tags, notes, skip, power, and short names.
-// Everyday commands can't change the shared library; the operations here
-// marked as maintainer operations do, and record a revision for each
-// change.
+// The shared library holds channels shared with everyone. A library sees a
+// shared channel by its shared ID, with the user's annotation (their own
+// tags, notes, and short names) laid over it, and its radios hold shared
+// channels directly. A library follows the shared channels it annotates or
+// has on a radio, for Changes. Everyday commands can't change the shared
+// library; the operations here marked as maintainer operations do, and
+// record a revision for each change.
 
 // sharedLibrary returns the shared library.
 func (s *Service) sharedLibrary(ctx context.Context) (store.Library, error) {
@@ -43,114 +44,115 @@ func (s *Service) shared(ctx context.Context) (*Service, error) {
 	return Open(ctx, s.st, domain.SharedLibrary)
 }
 
-// LinkedEdit refuses a change to a link's shared fields: those belong to
-// the shared channel. old is the link as stored, c as it would be saved.
+// LinkedEdit refuses a change to a shared channel other than to the user's
+// annotation: its tags, notes, and short names. Power and skip are set per
+// radio. old is the view as stored, c as it would be saved.
 func LinkedEdit(old, c domain.Channel) error {
 	if old.Link == nil || c.Link == nil || old.Link.SharedID != c.Link.SharedID {
 		return nil
+	}
+	if c.Power != old.Power || c.Skip != old.Skip {
+		return domain.Invalidf("%s is a shared channel, so its power and scan are set on each radio (rflib radio channels set)", old.Name)
 	}
 	a, b := old, c
 	a.Tags, a.Notes, b.Tags, b.Notes = nil, "", nil, ""
 	if changes := domain.SharedChanges(a, b); len(changes) > 0 {
 		field, _, _ := strings.Cut(changes[0], ":")
-		return domain.Invalidf("%s is linked to a shared channel, so its %s can't change here; make it a private copy with rflib channel copy --id %s", old.Name, field, old.ID)
+		return domain.Invalidf("%s is a shared channel, so its %s can't change here; make it a private copy with rflib channel copy --id %s", old.Name, field, old.ID)
 	}
 	return nil
 }
 
-// localQuery refuses in:shared where only the library's own channels make
-// sense, such as what goes on a radio.
-func localQuery(n query.Node) error {
-	if scope, _, err := query.SplitScope(n); err != nil || scope != "shared" {
-		return err
-	}
-	return domain.Invalidf("in:shared finds shared channels to link; link them first (rflib channel link), then use them here")
-}
-
-// --- linking ---
-
-// LinkResult is what linking did: the links made, and the shared channels
-// skipped because the library already links to them.
-// LinkIDs is the library's link to each selected shared channel, new or
-// already there, in the selection's order, so they can go on a radio.
-type LinkResult struct {
-	Linked  []domain.Channel
-	Already []domain.Channel
-	LinkIDs []string
-}
-
-// LinkChannels links the selected shared channels into the library. The
-// selection's IDs and query refer to the shared list. Own tags are added
-// to every link.
-func (s *Service) LinkChannels(ctx context.Context, sel Selection, tags []string) (LinkResult, error) {
-	var res LinkResult
-	if err := s.writable(); err != nil {
-		return res, err
-	}
-	sh, err := s.shared(ctx)
-	if err != nil {
-		return res, err
-	}
-	targets, err := sh.Select(ctx, sel)
-	if err != nil {
-		return res, err
-	}
-	links, err := s.linksTo(ctx)
-	if err != nil {
-		return res, err
-	}
-	err = s.lib.InTx(ctx, func(tx store.Library) error {
-		for _, t := range targets {
-			if id, ok := links[t.ID]; ok {
-				res.Already = append(res.Already, t)
-				res.LinkIDs = append(res.LinkIDs, id)
-				continue
-			}
-			c, err := tx.CreateChannel(ctx, domain.Channel{Tags: tags, Link: &domain.Link{SharedID: t.ID, SeenRevision: t.Revision}})
-			if err != nil {
-				return fmt.Errorf("%s: %w", t.Name, err)
-			}
-			links[t.ID] = c.ID
-			res.Linked = append(res.Linked, c)
-			res.LinkIDs = append(res.LinkIDs, c.ID)
-		}
-		return nil
-	})
-	return res, err
-}
-
-
-// linksTo maps each shared channel the library links to to its link's ID.
-func (s *Service) linksTo(ctx context.Context) (map[string]string, error) {
-	cs, err := s.lib.ListChannels(ctx)
+// radioScope returns the channels a radio can take: the library's own and
+// every shared channel, seen through the library's annotations, less those
+// the library has copied (a copy stands in for its shared channel). With
+// sharedOnly, only the shared ones.
+func (s *Service) radioScope(ctx context.Context, sharedOnly bool) ([]domain.Channel, error) {
+	mine, err := s.lib.ListChannels(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]string{}
-	for _, c := range cs {
-		if c.Link != nil {
-			out[c.Link.SharedID] = c.ID
+	if s.info.Shared {
+		return mine, nil
+	}
+	sh, err := s.sharedLibrary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	shared, err := sh.ListChannels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	views := map[string]domain.Channel{}
+	copied := map[string]bool{}
+	var out []domain.Channel
+	for _, c := range mine {
+		switch {
+		case c.Link != nil:
+			views[c.ID] = c
+		case !sharedOnly:
+			out = append(out, c)
+		}
+		if c.CopiedFrom != "" {
+			copied[c.CopiedFrom] = true
+		}
+	}
+	for _, c := range shared {
+		if copied[c.ID] {
+			continue
+		}
+		if v, ok := views[c.ID]; ok {
+			out = append(out, v)
+		} else {
+			out = append(out, domain.Linked(domain.Channel{}, c, c.Revision))
+		}
+	}
+	slices.SortStableFunc(out, domain.CompareChannels)
+	return out, nil
+}
+
+// FindForRadios returns the channels matching a query among those a radio
+// can take (see radioScope), in name order; with in:shared, among the
+// shared channels.
+func (s *Service) FindForRadios(ctx context.Context, n query.Node) ([]domain.Channel, error) {
+	scope, n, err := query.SplitScope(n)
+	if err != nil {
+		return nil, err
+	}
+	m, err := query.Compile(n, s.QueryEnv(ctx))
+	if err != nil {
+		return nil, err
+	}
+	all, err := s.radioScope(ctx, scope == "shared")
+	if err != nil {
+		return nil, err
+	}
+	out := all[:0]
+	for _, c := range all {
+		if m(c) {
+			out = append(out, c)
 		}
 	}
 	return out, nil
 }
 
-// Conversion is a private channel that matches a shared one, and the link
-// it becomes.
+// Conversion is a private channel that matches a shared one, and the
+// library's view of the shared channel it becomes.
 type Conversion struct {
 	Private, Shared, Link domain.Channel
 }
 
-// ConvertToLinks turns private channels into links to the shared channels
-// they match: the same frequencies, tones, and tone squelch
+// ConvertToLinks replaces private channels with the shared channels they
+// match: the same frequencies, tones, and tone squelch
 // (domain.ProgrammedKey), and the same service unless the private channel
 // has none, since FRS and GMRS share frequencies. Of several matches, one
-// with the same name wins, then an active one. The channel keeps its ID, so
-// radios keep it; its tags and notes stay its own, less what the shared
-// channel already has, and a name that differs from the shared one is kept
-// as a short name. only, when not nil, limits the shared channels
-// considered, and ids, when not nil, limits the private channels. With
-// dryRun nothing changes.
+// with the same name wins, then an active one. The shared channel takes
+// the private one's place on radios, keeping its overrides; the private
+// channel's tags and notes, less what the shared channel already has, and
+// a name that differs from the shared one, as a short name, become the
+// user's annotation; and the private channel goes. only, when not nil,
+// limits the shared channels considered, and ids, when not nil, limits the
+// private channels. With dryRun nothing changes.
 func (s *Service) ConvertToLinks(ctx context.Context, only map[string]bool, ids []string, dryRun bool) ([]Conversion, error) {
 	if err := s.writable(); err != nil {
 		return nil, err
@@ -179,6 +181,12 @@ func (s *Service) convertTo(ctx context.Context, shared []domain.Channel, only m
 	if err != nil {
 		return nil, err
 	}
+	views := map[string]domain.Channel{}
+	for _, c := range mine {
+		if c.Link != nil {
+			views[c.ID] = c
+		}
+	}
 	var out []Conversion
 	for _, c := range mine {
 		if c.Link != nil || (ids != nil && !slices.Contains(ids, c.ID)) {
@@ -188,24 +196,39 @@ func (s *Service) convertTo(ctx context.Context, shared []domain.Channel, only m
 		if !ok {
 			continue
 		}
-		link := c
-		link.Link = &domain.Link{SharedID: target.ID, SeenRevision: target.Revision}
-		link.Tags = slices.DeleteFunc(slices.Clone(c.Tags), func(t string) bool { return slices.Contains(target.Tags, t) })
-		if strings.TrimSpace(c.Notes) == strings.TrimSpace(target.Notes) {
-			link.Notes = ""
+		view, ok := views[target.ID]
+		if !ok {
+			view = domain.Linked(domain.Channel{}, target, target.Revision)
 		}
-		if c.Name != target.Name && !slices.Contains(c.ShortNames, c.Name) {
-			link.ShortNames = append(slices.Clone(c.ShortNames), c.Name)
+		for _, t := range c.Tags {
+			if !slices.Contains(target.Tags, t) && !slices.Contains(view.Tags, t) {
+				view.Tags = append(view.Tags, t)
+			}
 		}
-		out = append(out, Conversion{Private: c, Shared: target, Link: domain.Linked(link, target)})
+		if n := strings.TrimSpace(c.Notes); n != "" && n != strings.TrimSpace(target.Notes) && !strings.Contains(view.Notes, n) {
+			view.Notes = strings.TrimSpace(strings.TrimSpace(view.Notes) + "\n" + n)
+		}
+		for _, name := range append([]string{c.Name}, c.ShortNames...) {
+			if name != target.Name && !slices.Contains(view.ShortNames, name) {
+				view.ShortNames = append(view.ShortNames, name)
+			}
+		}
+		views[target.ID] = view
+		out = append(out, Conversion{Private: c, Shared: target, Link: view})
 	}
 	if dryRun || len(out) == 0 {
 		return out, nil
 	}
 	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		for i, cv := range out {
-			saved, err := tx.UpdateChannel(ctx, cv.Link)
+			saved, err := tx.SaveAnnotation(ctx, cv.Link)
 			if err != nil {
+				return fmt.Errorf("%s: %w", cv.Private.Name, err)
+			}
+			if err := tx.ReplaceOnRadios(ctx, cv.Private.ID, cv.Shared.ID); err != nil {
+				return fmt.Errorf("%s: %w", cv.Private.Name, err)
+			}
+			if err := tx.DeleteChannel(ctx, cv.Private.ID); err != nil {
 				return fmt.Errorf("%s: %w", cv.Private.Name, err)
 			}
 			out[i].Link = saved
@@ -215,7 +238,7 @@ func (s *Service) convertTo(ctx context.Context, shared []domain.Channel, only m
 	return out, err
 }
 
-// bestMatch picks the shared channel a private one should link to from
+// bestMatch picks the shared channel a private one should become from
 // those programmed the same, or reports none fits.
 func bestMatch(c domain.Channel, candidates []domain.Channel) (domain.Channel, bool) {
 	var best domain.Channel
@@ -238,10 +261,11 @@ func bestMatch(c domain.Channel, candidates []domain.Channel) (domain.Channel, b
 	return best, score >= 0
 }
 
-// CopyChannels turns the selected links into private channels showing what
-// they showed, with the shared tags and notes made their own. They stop
-// following the shared channel and remember it in CopiedFrom. Private
-// channels in the selection are left alone.
+// CopyChannels makes a private channel from each selected shared channel,
+// showing what it showed, with the shared tags and notes made its own, and
+// remembering it in CopiedFrom. The copy takes the shared channel's place
+// on radios, and the user's annotation of it goes. Private channels in the
+// selection are left alone.
 func (s *Service) CopyChannels(ctx context.Context, sel Selection) ([]domain.Channel, error) {
 	if err := s.writable(); err != nil {
 		return nil, err
@@ -256,11 +280,22 @@ func (s *Service) CopyChannels(ctx context.Context, sel Selection) ([]domain.Cha
 			if c.Link == nil {
 				continue
 			}
-			c.Tags, c.Notes, c.CopiedFrom = c.AllTags(), c.AllNotes(), c.Link.SharedID
-			c.Link, c.Status, c.StatusNote, c.BackOn, c.ReplacedBy = nil, domain.StatusActive, "", nil, ""
-			saved, err := tx.UpdateChannel(ctx, c)
+			sharedID := c.Link.SharedID
+			cp := c
+			cp.ID, cp.Tags, cp.Notes, cp.CopiedFrom = "", c.AllTags(), c.AllNotes(), sharedID
+			cp.Link, cp.Status, cp.StatusNote, cp.BackOn, cp.ReplacedBy, cp.Revision = nil, domain.StatusActive, "", nil, "", 0
+			cp.Orgs, cp.Networks = nil, nil
+			saved, err := tx.CreateChannel(ctx, cp)
 			if err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
+			}
+			if err := tx.ReplaceOnRadios(ctx, sharedID, saved.ID); err != nil {
+				return fmt.Errorf("%s: %w", c.Name, err)
+			}
+			if c.Annotated() {
+				if err := tx.DeleteChannel(ctx, sharedID); err != nil {
+					return fmt.Errorf("%s: %w", c.Name, err)
+				}
 			}
 			out = append(out, saved)
 		}
@@ -271,7 +306,7 @@ func (s *Service) CopyChannels(ctx context.Context, sel Selection) ([]domain.Cha
 
 // --- changes ---
 
-// Change is a link whose shared channel changed since the user last
+// Change is a followed shared channel that changed since the user last
 // acknowledged it: what changed, why, the radios it's on, and, for a
 // retired channel, its replacement.
 type Change struct {
@@ -282,13 +317,45 @@ type Change struct {
 	Replacement *domain.Channel
 }
 
-// Changes lists the library's links whose shared channel changed.
-func (s *Service) Changes(ctx context.Context) ([]Change, error) {
+// followed returns the library's views of the shared channels it follows:
+// those it annotates or has on a radio.
+func (s *Service) followed(ctx context.Context) ([]domain.Channel, map[string][]string, error) {
+	onRadios, err := s.radioNames(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	cs, err := s.lib.ListChannels(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	onRadios, err := s.radioNames(ctx)
+	seen := map[string]bool{}
+	var out []domain.Channel
+	for _, c := range cs {
+		if c.Link != nil {
+			out = append(out, c)
+			seen[c.ID] = true
+		}
+	}
+	var ids []string
+	for id := range onRadios {
+		if !seen[id] {
+			ids = append(ids, id)
+		}
+	}
+	views, err := s.lib.SharedViews(ctx, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, v := range views {
+		out = append(out, v)
+	}
+	slices.SortStableFunc(out, domain.CompareChannels)
+	return out, onRadios, nil
+}
+
+// Changes lists the followed shared channels that changed.
+func (s *Service) Changes(ctx context.Context) ([]Change, error) {
+	cs, onRadios, err := s.followed(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -347,31 +414,78 @@ func (s *Service) radioNames(ctx context.Context) (map[string][]string, error) {
 	return out, nil
 }
 
-// Acknowledge marks the selected links' shared changes as seen, and
-// returns the links that had changes.
-func (s *Service) Acknowledge(ctx context.Context, sel Selection) ([]domain.Channel, error) {
-	return s.eachChangedLink(ctx, sel, func(_ context.Context, c *domain.Channel) (bool, error) {
-		c.Link.SeenRevision = c.Revision
-		return true, nil
-	})
+// changedSelection returns the selected followed shared channels that
+// changed. The selection's IDs may name any followed channel; a query or
+// All picks among them.
+func (s *Service) changedSelection(ctx context.Context, sel Selection) ([]domain.Channel, error) {
+	cs, _, err := s.followed(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var m query.Matcher
+	if sel.Query != nil {
+		if m, err = query.Compile(sel.Query, s.QueryEnv(ctx)); err != nil {
+			return nil, err
+		}
+	}
+	ids, err := s.ChannelIDs(ctx, sel.IDs)
+	if err != nil {
+		return nil, err
+	}
+	var out []domain.Channel
+	for _, c := range cs {
+		switch {
+		case !c.Changed():
+		case len(ids) > 0 && !slices.Contains(ids, c.ID):
+		case m != nil && !m(c):
+		case len(ids) == 0 && m == nil && !sel.All:
+		default:
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
-// Relink moves the selected links to a retired shared channel over to its
-// replacement, and returns them.
+// Acknowledge marks the selected followed shared channels' changes as
+// seen, and returns those that had changes.
+func (s *Service) Acknowledge(ctx context.Context, sel Selection) ([]domain.Channel, error) {
+	if err := s.writable(); err != nil {
+		return nil, err
+	}
+	cs, err := s.changedSelection(ctx, sel)
+	if err != nil {
+		return nil, err
+	}
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
+		for i, c := range cs {
+			if err := tx.MarkSeen(ctx, c.ID, c.Revision); err != nil {
+				return err
+			}
+			cs[i].Link.SeenRevision = c.Revision
+		}
+		return nil
+	})
+	return cs, err
+}
+
+// Relink moves each selected retired shared channel's place on radios, and
+// the user's annotation, to its replacement, and returns the replacements
+// as the library now sees them.
 func (s *Service) Relink(ctx context.Context, sel Selection) ([]domain.Channel, error) {
+	if err := s.writable(); err != nil {
+		return nil, err
+	}
 	sh, err := s.sharedLibrary(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// Replacements are looked up before the library's transaction starts:
-	// the shared library can't be read inside it.
-	cs, err := s.Select(ctx, sel)
+	cs, err := s.changedSelection(ctx, sel)
 	if err != nil {
 		return nil, err
 	}
 	next := map[string]domain.Channel{}
 	for _, c := range cs {
-		if c.Changed() && c.Status.OrActive() == domain.StatusRetired && c.ReplacedBy != "" {
+		if c.Status.OrActive() == domain.StatusRetired && c.ReplacedBy != "" {
 			r, err := sh.GetChannel(ctx, c.ReplacedBy)
 			if err != nil {
 				return nil, fmt.Errorf("%s: replacement: %w", c.Name, err)
@@ -379,42 +493,28 @@ func (s *Service) Relink(ctx context.Context, sel Selection) ([]domain.Channel, 
 			next[c.ID] = r
 		}
 	}
-	return s.eachChangedLink(ctx, sel, func(_ context.Context, c *domain.Channel) (bool, error) {
-		r, ok := next[c.ID]
-		if ok {
-			c.Link = &domain.Link{SharedID: r.ID, SeenRevision: r.Revision}
-		}
-		return ok, nil
-	})
-}
-
-// eachChangedLink saves fn's change to each selected link whose shared
-// channel changed, in one transaction. fn runs inside it, so it must not
-// reach the shared library.
-func (s *Service) eachChangedLink(ctx context.Context, sel Selection, fn func(context.Context, *domain.Channel) (bool, error)) ([]domain.Channel, error) {
-	if err := s.writable(); err != nil {
-		return nil, err
-	}
-	cs, err := s.Select(ctx, sel)
-	if err != nil {
-		return nil, err
-	}
 	var out []domain.Channel
 	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		for _, c := range cs {
-			if !c.Changed() {
-				continue
-			}
-			ok, err := fn(ctx, &c)
-			if err != nil {
-				return err
-			}
+			r, ok := next[c.ID]
 			if !ok {
 				continue
 			}
-			saved, err := tx.UpdateChannel(ctx, c)
+			if err := tx.ReplaceOnRadios(ctx, c.ID, r.ID); err != nil {
+				return fmt.Errorf("%s: %w", c.Name, err)
+			}
+			moved := domain.Linked(c, r, r.Revision)
+			saved, err := tx.SaveAnnotation(ctx, moved)
 			if err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
+			}
+			if c.Annotated() {
+				if err := tx.DeleteChannel(ctx, c.ID); err != nil {
+					return fmt.Errorf("%s: %w", c.Name, err)
+				}
+			}
+			if err := tx.MarkSeen(ctx, c.ID, c.Revision); err != nil {
+				return err
 			}
 			out = append(out, saved)
 		}
@@ -621,11 +721,9 @@ func curateTags(b *importer.Batch) []string {
 
 // --- built-in lists ---
 
-
 // SeedID is the shared channel ID a built-in list's row gets: the same in
 // every database, so a list updates the channels it seeded.
 func SeedID(list, name string) string {
 	h := sha1.Sum([]byte("rflib-seed\x00" + list + "\x00" + name))
 	return fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
-

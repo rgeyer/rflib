@@ -229,11 +229,109 @@ DELETE FROM channel_tags WHERE tag IN ('linked', 'allstar', 'echolink', 'wires-x
 	// Which built-in list each seeded shared channel came from, and the row
 	// as last applied.
 	{version: 15, sql: `CREATE TABLE seed_channels (channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE, list TEXT NOT NULL, name TEXT NOT NULL, applied TEXT NOT NULL);`},
+	// Radios hold shared channels directly, and a library follows the
+	// shared channels it uses (see foldLinks).
+	{version: 16, after: foldLinks, sql: `CREATE TABLE shared_follows (library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, shared_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, seen_revision INTEGER NOT NULL, PRIMARY KEY(library_id, shared_id));`},
 }
 
 // ungroup finishes migration 9 once new_channels holds the channels: it
 // tags each grouped channel with its group's name, rewrites group: terms in
 // saved searches and radio sources to tag:, and swaps the tables.
+// foldLinks turns links into what radios and annotations need now. A
+// radio's entry for a link moves to its shared channel (dropped where the
+// radio has that already), taking the link's power and skip where the
+// radio had none of its own. The link's seen revision becomes a follow. A
+// link with no tags, notes, or short names of its own goes; the rest stay
+// as annotations, without power or skip.
+func foldLinks(ctx context.Context, tx *sql.Tx) error {
+	type link struct {
+		id, library, shared, power string
+		seen                       int
+		skip                       bool
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, library_id, link_id, seen_revision, power, skip FROM channels WHERE link_id IS NOT NULL`)
+	if err != nil {
+		return err
+	}
+	var links []link
+	for rows.Next() {
+		var l link
+		if err := rows.Scan(&l.id, &l.library, &l.shared, &l.seen, &l.power, &l.skip); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		links = append(links, l)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	radios := map[string]bool{}
+	for _, l := range links {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO shared_follows (library_id, shared_id, seen_revision) VALUES (?,?,?)
+			ON CONFLICT(library_id, shared_id) DO UPDATE SET seen_revision=max(seen_revision, excluded.seen_revision)`, l.library, l.shared, l.seen); err != nil {
+			return err
+		}
+		entries, err := tx.QueryContext(ctx, `SELECT radio_id FROM radio_channels WHERE channel_id=?`, l.id)
+		if err != nil {
+			return err
+		}
+		var onRadios []string
+		for entries.Next() {
+			var r string
+			if err := entries.Scan(&r); err != nil {
+				_ = entries.Close()
+				return err
+			}
+			onRadios = append(onRadios, r)
+		}
+		if err := entries.Close(); err != nil {
+			return err
+		}
+		for _, r := range onRadios {
+			radios[r] = true
+			var has int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM radio_channels WHERE radio_id=? AND channel_id=?`, r, l.shared).Scan(&has); err != nil {
+				return err
+			}
+			if has > 0 {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM radio_channels WHERE radio_id=? AND channel_id=?`, r, l.id); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE radio_channels SET channel_id=?,
+				power=CASE WHEN power='' THEN ? ELSE power END,
+				skip=CASE WHEN skip IS NULL AND ? THEN 1 ELSE skip END
+				WHERE radio_id=? AND channel_id=?`, l.shared, l.power, l.skip, r, l.id); err != nil {
+				return err
+			}
+		}
+		var own int
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM channel_tags WHERE channel_id=?) + (SELECT count(*) FROM channel_short_names WHERE channel_id=?)
+			+ (SELECT count(*) FROM channels WHERE id=? AND trim(notes)<>'')`, l.id, l.id, l.id).Scan(&own); err != nil {
+			return err
+		}
+		q := `UPDATE channels SET power='', skip=0, seen_revision=0 WHERE id=?`
+		if own == 0 {
+			q = `DELETE FROM channels WHERE id=?`
+		}
+		if _, err := tx.ExecContext(ctx, q, l.id); err != nil {
+			return err
+		}
+	}
+	// Close the gaps dropped entries left in radios' memory order.
+	for r := range radios {
+		order, err := radioOrder(ctx, tx, r)
+		if err != nil {
+			return err
+		}
+		if err := renumber(ctx, tx, r, order); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func ungroup(ctx context.Context, tx *sql.Tx) error {
 	type group struct{ id, library, name string }
 	var groups []group

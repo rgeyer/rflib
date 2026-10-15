@@ -95,9 +95,10 @@ func dedupeFlag(cmd *cobra.Command) {
 }
 
 // runExport fills in the export's query and numbering flags, runs it, and
-// reports what it left out on stderr.
-// runExport writes an export of the user's library.
-func runExport(cmd *cobra.Command, req app.ExportRequest) error { return runExportFrom(cmd, withApp, req) }
+// reports what it left out on stderr, for the user's library.
+func runExport(cmd *cobra.Command, req app.ExportRequest) error {
+	return runExportFrom(cmd, withApp, req)
+}
 
 // runExportFrom writes an export of the library open opens.
 func runExportFrom(cmd *cobra.Command, open func(*cobra.Command, func(*app.Service) error) error, req app.ExportRequest) error {

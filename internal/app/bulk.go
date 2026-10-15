@@ -41,7 +41,7 @@ func (s *Service) ChannelIDs(ctx context.Context, refs []string) ([]string, erro
 			return nil, fmt.Errorf("channel %q: %w", ref, store.ErrNotFound)
 		}
 		if all == nil {
-			cs, err := s.lib.ListChannels(ctx)
+			cs, err := s.radioScope(ctx, false)
 			if err != nil {
 				return nil, err
 			}
@@ -97,12 +97,25 @@ func (s *Service) selectIn(ctx context.Context, sel Selection, scope map[string]
 		return nil, err
 	}
 	var cs []domain.Channel
-	if sel.Query != nil {
+	switch {
+	case sel.Query != nil:
 		if cs, err = s.FindChannels(ctx, sel.Query); err != nil {
 			return nil, err
 		}
-	} else if cs, err = s.lib.ListChannels(ctx); err != nil {
-		return nil, err
+	case len(ids) > 0:
+		// IDs may name shared channels the library hasn't annotated.
+		for _, id := range ids {
+			c, err := s.lib.GetChannel(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			cs = append(cs, c)
+		}
+		slices.SortStableFunc(cs, domain.CompareChannels)
+	default:
+		if cs, err = s.lib.ListChannels(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return slices.DeleteFunc(cs, func(c domain.Channel) bool {
 		return (len(ids) > 0 && !slices.Contains(ids, c.ID)) || (scope != nil && !scope[c.ID])

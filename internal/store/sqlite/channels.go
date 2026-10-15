@@ -38,6 +38,9 @@ func (l *library) shared(ctx context.Context) (bool, error) {
 }
 
 func (l *library) CreateChannel(ctx context.Context, c domain.Channel) (domain.Channel, error) {
+	if c.Link != nil {
+		return l.SaveAnnotation(ctx, c)
+	}
 	err := l.inTx(ctx, func(tx *library) error {
 		if err := freeID(ctx, tx.q, "channels", &c.ID); err != nil {
 			return err
@@ -58,6 +61,12 @@ func (l *library) UpdateChannel(ctx context.Context, c domain.Channel) (domain.C
 		if err != nil {
 			return err
 		}
+		if old.Link != nil {
+			// A view of a shared channel: save the user's annotation.
+			c.Link = &domain.Link{SharedID: old.Link.SharedID}
+			c, err = tx.SaveAnnotation(ctx, c)
+			return err
+		}
 		c.CreatedAt, c.UpdatedAt = old.CreatedAt, time.Now().UTC()
 		c, err = tx.writeChannel(ctx, c, &old)
 		return err
@@ -74,15 +83,8 @@ func (tx *library) writeChannel(ctx context.Context, c domain.Channel, old *doma
 	if err != nil {
 		return c, err
 	}
-	if c.Link != nil {
-		if isShared {
-			return c, domain.Invalidf("a shared channel can't link to another")
-		}
-		target, err := tx.sharedChannel(ctx, c.Link.SharedID)
-		if err != nil {
-			return c, err
-		}
-		c = domain.Linked(c, target)
+	if c.Link != nil && isShared {
+		return c, domain.Invalidf("a shared channel can't link to another")
 	}
 	if err := prepareChannel(&c); err != nil {
 		return c, err
@@ -106,10 +108,10 @@ func (tx *library) writeChannel(ctx context.Context, c domain.Channel, old *doma
 		c.Revision = 0
 	}
 	var linkID any
-	seen := 0
 	if c.Link != nil {
-		linkID, seen = c.Link.SharedID, c.Link.SeenRevision
+		linkID = c.Link.SharedID
 	}
+	seen := 0
 	var backOn any
 	if c.BackOn != nil {
 		backOn = c.BackOn.Format(time.DateOnly)
@@ -306,14 +308,25 @@ func toneArgs(t domain.Tone) toneArg {
 }
 
 func (l *library) DeleteChannel(ctx context.Context, id string) error {
-	var links int
-	if err := l.q.QueryRowContext(ctx, `SELECT count(*) FROM channels WHERE link_id=?`, id).Scan(&links); err != nil {
+	isShared, err := l.shared(ctx)
+	if err != nil {
 		return err
 	}
-	if links > 0 {
-		return fmt.Errorf("channel %q is linked from %d libraries' channels; retire it instead: %w", id, links, store.ErrConflict)
+	if isShared {
+		var used int
+		if err := l.q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM channels WHERE link_id=?) + (SELECT count(*) FROM radio_channels WHERE channel_id=?)`, id, id).Scan(&used); err != nil {
+			return err
+		}
+		if used > 0 {
+			return fmt.Errorf("channel %q is on radios or annotated in libraries; retire it instead: %w", id, store.ErrConflict)
+		}
+	} else if r, err := l.q.ExecContext(ctx, `DELETE FROM channels WHERE link_id=? AND library_id=?`, id, l.id); err != nil {
+		return fmt.Errorf("delete annotation: %w", err)
+	} else if n, _ := r.RowsAffected(); n > 0 {
+		// A view of a shared channel: only the user's annotation goes.
+		return nil
 	}
-	r, err := l.q.ExecContext(ctx, `DELETE FROM channels WHERE id=? AND library_id=?`, id, l.id)
+	r, err := l.q.ExecContext(ctx, `DELETE FROM channels WHERE id=? AND library_id=? AND link_id IS NULL`, id, l.id)
 	if err != nil {
 		return fmt.Errorf("delete channel: %w", err)
 	}
@@ -323,15 +336,30 @@ func (l *library) DeleteChannel(ctx context.Context, id string) error {
 	return nil
 }
 
+// GetChannel returns one of the library's own channels, or, outside the
+// shared library, its view of a shared channel (see SharedViews).
 func (l *library) GetChannel(ctx context.Context, id string) (domain.Channel, error) {
-	chs, err := l.listChannels(ctx, `c.library_id=? AND c.id=?`, l.id, id)
+	chs, err := l.listChannels(ctx, `c.library_id=? AND c.id=? AND c.link_id IS NULL`, l.id, id)
 	if err != nil {
 		return domain.Channel{}, err
 	}
-	if len(chs) == 0 {
-		return domain.Channel{}, fmt.Errorf("channel %q: %w", id, store.ErrNotFound)
+	if len(chs) > 0 {
+		return chs[0], nil
 	}
-	return chs[0], nil
+	isShared, err := l.shared(ctx)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if !isShared {
+		views, err := l.SharedViews(ctx, []string{id})
+		if err != nil {
+			return domain.Channel{}, err
+		}
+		if v, ok := views[id]; ok {
+			return v, nil
+		}
+	}
+	return domain.Channel{}, fmt.Errorf("channel %q: %w", id, store.ErrNotFound)
 }
 
 func (l *library) ListChannels(ctx context.Context) ([]domain.Channel, error) {
@@ -390,12 +418,166 @@ func (l *library) resolveLinks(ctx context.Context, cs []domain.Channel) error {
 	for _, s := range shared {
 		byID[s.ID] = s
 	}
+	seen, err := l.seen(ctx, byID)
+	if err != nil {
+		return err
+	}
 	for i, c := range cs {
 		if c.Link != nil {
-			cs[i] = domain.Linked(c, byID[c.Link.SharedID])
+			cs[i] = domain.Linked(c, byID[c.Link.SharedID], seen[c.Link.SharedID])
 		}
 	}
 	return nil
+}
+
+// SharedViews returns the library's views of the given shared channels,
+// by ID: each shared channel with the library's annotation, if any, laid
+// over it (see domain.Linked). IDs that aren't shared channels are left
+// out.
+func (l *library) SharedViews(ctx context.Context, ids []string) (map[string]domain.Channel, error) {
+	out := map[string]domain.Channel{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	annotated, err := l.listChannels(ctx, `c.library_id=? AND c.link_id IN (`+marks+`)`, append([]any{l.id}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range annotated {
+		out[v.ID] = v
+	}
+	shared, err := l.listChannels(ctx, `c.link_id IS NULL AND c.library_id IN (SELECT id FROM libraries WHERE kind='`+sharedKind+`') AND c.id IN (`+marks+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]domain.Channel{}
+	for _, c := range shared {
+		if _, ok := out[c.ID]; !ok {
+			byID[c.ID] = c
+		}
+	}
+	seen, err := l.seen(ctx, byID)
+	if err != nil {
+		return nil, err
+	}
+	for id, c := range byID {
+		out[id] = domain.Linked(domain.Channel{}, c, seen[id])
+	}
+	return out, nil
+}
+
+// seen returns the revision the library last acknowledged for each shared
+// channel: its follow's, or the channel's current revision when it isn't
+// followed yet.
+func (l *library) seen(ctx context.Context, shared map[string]domain.Channel) (map[string]int, error) {
+	out := make(map[string]int, len(shared))
+	for id, c := range shared {
+		out[id] = c.Revision
+	}
+	if len(shared) == 0 {
+		return out, nil
+	}
+	rows, err := l.q.QueryContext(ctx, `SELECT shared_id, seen_revision FROM shared_follows WHERE library_id=?`, l.id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var rev int
+		if err := rows.Scan(&id, &rev); err != nil {
+			return nil, err
+		}
+		if _, ok := shared[id]; ok {
+			out[id] = rev
+		}
+	}
+	return out, rows.Err()
+}
+
+// SaveAnnotation saves the library's annotation of a shared channel
+// (c.Link.SharedID): c's tags, notes, and short names. Clearing them all
+// removes the annotation. It returns the library's view of the channel,
+// and the library follows it from then on.
+func (l *library) SaveAnnotation(ctx context.Context, c domain.Channel) (domain.Channel, error) {
+	var view domain.Channel
+	err := l.inTx(ctx, func(tx *library) error {
+		isShared, err := tx.shared(ctx)
+		if err != nil {
+			return err
+		}
+		if isShared {
+			return domain.Invalidf("a shared channel can't link to another")
+		}
+		target, err := tx.sharedChannel(ctx, c.Link.SharedID)
+		if err != nil {
+			return err
+		}
+		var rowID string
+		err = tx.q.QueryRowContext(ctx, `SELECT id FROM channels WHERE link_id=? AND library_id=?`, target.ID, tx.id).Scan(&rowID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		tags, notes := domain.NormalizeTags(c.Tags), strings.TrimSpace(c.Notes)
+		shortNames := domain.NormalizeShortNames(target.Name, c.ShortNames)
+		if err := tx.Follow(ctx, target.ID); err != nil {
+			return err
+		}
+		if len(tags) == 0 && notes == "" && len(shortNames) == 0 {
+			if rowID != "" {
+				if _, err := tx.q.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, rowID); err != nil {
+					return fmt.Errorf("delete annotation: %w", err)
+				}
+			}
+			views, err := tx.SharedViews(ctx, []string{target.ID})
+			view = views[target.ID]
+			return err
+		}
+		// The row keeps a copy of the shared fields, which reads ignore.
+		row := target
+		row.ID, row.Tags, row.Notes, row.ShortNames, row.Power, row.Skip = rowID, tags, c.Notes, shortNames, domain.PowerUnset, false
+		row.Link, row.Orgs, row.Networks, row.Revision, row.CopiedFrom = &domain.Link{SharedID: target.ID}, nil, nil, 0, ""
+		row.Status, row.StatusNote, row.BackOn, row.ReplacedBy = domain.StatusActive, "", nil, ""
+		var old *domain.Channel
+		if rowID == "" {
+			if err := freeID(ctx, tx.q, "channels", &row.ID); err != nil {
+				return err
+			}
+			if err := assignIdentity(&row.ID, &row.CreatedAt, &row.UpdatedAt); err != nil {
+				return err
+			}
+		} else {
+			row.UpdatedAt = time.Now().UTC()
+			old = &row
+		}
+		if _, err := tx.writeChannel(ctx, row, old); err != nil {
+			return err
+		}
+		views, err := tx.SharedViews(ctx, []string{target.ID})
+		view = views[target.ID]
+		return err
+	})
+	return view, err
+}
+
+// Follow makes the library follow a shared channel, as seen at its current
+// revision, unless it already does.
+func (l *library) Follow(ctx context.Context, sharedID string) error {
+	_, err := l.q.ExecContext(ctx, `INSERT INTO shared_follows (library_id, shared_id, seen_revision)
+		SELECT ?, id, revision FROM channels WHERE id=? AND link_id IS NULL ON CONFLICT DO NOTHING`, l.id, sharedID)
+	return err
+}
+
+// MarkSeen records the shared channel's revision the library has seen.
+func (l *library) MarkSeen(ctx context.Context, sharedID string, revision int) error {
+	_, err := l.q.ExecContext(ctx, `INSERT INTO shared_follows (library_id, shared_id, seen_revision) VALUES (?,?,?)
+		ON CONFLICT(library_id, shared_id) DO UPDATE SET seen_revision=excluded.seen_revision`, l.id, sharedID, revision)
+	return err
 }
 
 func scanChannel(r scanner) (domain.Channel, error) {
@@ -639,4 +821,3 @@ func (l *library) SetSeedChannel(ctx context.Context, sc domain.SeedChannel) err
 		ON CONFLICT(channel_id) DO UPDATE SET list=excluded.list, name=excluded.name, applied=excluded.applied`, sc.ChannelID, sc.List, sc.Name, string(data))
 	return err
 }
-

@@ -27,19 +27,20 @@ A database holds **your library**, your own channels, radios, and saved searches
 
 ## Shared channels
 
-The `shared` library holds channels shared with everyone: the built-in lists now, and channels from the hosted service later. Rather than copying them, your library **links** to them. A link shows the shared channel and follows its corrections, such as a repeater's new tone. Your own tags, notes, skip, power, and short names on a link stay yours.
+The `shared` library holds channels shared with everyone: the built-in lists, and the club's own. Your radios use shared channels directly, by their IDs, and follow their corrections, such as a repeater's new tone. Searches for radios (`radio channels add -q`, and radio sources) look at your own channels and the whole shared list.
 
 ```sh
-./rflib channel list in:shared band:noaa        # search the whole shared list
-./rflib channel link -q 'band:noaa' --tags wx   # link matches into your library
-./rflib shared link --dry-run                   # which of your channels match shared ones
-./rflib shared link                             # ...turn them into links
-./rflib channel copy --id <link-id>             # a private copy you can edit
+./rflib channel list in:shared band:noaa            # search the whole shared list
+./rflib radio channels add HT -q 'band:noaa'         # shared channels go straight on a radio
+./rflib channel update --id <id> --notes "home QTH"  # your notes, tags, short names on a shared channel
+./rflib shared link --dry-run                       # which of your channels match shared ones
+./rflib shared link                                 # ...replace them with the shared ones
+./rflib channel copy --id <id>                      # a private copy you can edit
 ```
 
-- **What's yours on a link:** tags, notes, skip, power, and short names. Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which keeps the channel's ID (so radios keep it) and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
-- **Names:** a link shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
-- **Converting:** `shared link` turns a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart. In the web interface, **Link to shared list** on the Channels page lists your matching channels and links the ones you pick.
+- **What's yours on a shared channel:** tags, notes, and short names, which put it in your library (`channel list`); clear them and it leaves again. Power and scan are set on each radio (`radio channels set`). Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which takes the shared channel's place on your radios and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
+- **Names:** a shared channel shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
+- **Converting:** `shared link` replaces a private channel with the shared one it matches on the air (the same frequencies, tones, and tone squelch, and the same service, or none; FRS and GMRS share frequencies, so the service keeps them apart). The shared channel takes its place on your radios, its tags, notes, and name become yours on the shared channel, and the private channel goes. In the web interface, **Link to shared list** on the Channels page lists your matching channels and replaces the ones you pick.
 - **Shared tags** come from a short list with agreed meanings: `rflib tag list`. None repeats a channel's fields (service, band, mode, or duplex), which search finds without a tag. Your own tags are free-form, and one with a shared tag's name means the same thing. Adding one of your own that repeats the channel's fields, such as `cb` on a CB channel, `ham` on an amateur one, or `repeater` on a repeater, is allowed but warns you that `service:cb` (and so on) already finds it.
 - **The shared library is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`.
 
@@ -48,7 +49,7 @@ The `shared` library holds channels shared with everyone: the built-in lists now
 A shared channel is `active`, `off-air` (temporarily, such as for maintenance, with an expected-back date if known), or `retired` (gone for good, possibly replaced by another channel). A small change, such as a new tone, is a correction to the same channel; a repeater that becomes a different system is a new channel, and the old one is retired and points to it.
 
 - **On your radios:** an off-air channel stays programmed, so it needs no reprogramming when it's back, but it isn't scanned. Retired channels warn on export.
-- **`rflib shared changes`** lists your links whose shared channel changed since you last looked: what changed, why, and the radios they're on, which need programming again. `rflib shared ack --all` marks them seen. `rflib shared relink --all` moves links to retired channels over to their replacements.
+- **`rflib shared changes`** lists the shared channels you use (on your radios, or with your notes and tags) that changed since you last looked: what changed, why, and the radios they're on, which need programming again. `rflib shared ack --all` marks them seen. `rflib shared relink --all` moves retired channels' places on your radios, and your notes and tags, over to their replacements.
 - **History:** every change to a shared channel is kept, with when and why: `rflib shared history --id <id>`.
 - **Searching:** `status:off-air` finds channels that are down.
 
@@ -400,7 +401,7 @@ A system is a set of interconnected channels, such as a club's linked repeaters,
 ./rflib channel list 'system:"SBARC Hub"'
 ```
 
-In a library, a link's ID stands for its shared channel. The map draws lines between a system's members, dashed for members linked on demand.
+The map draws lines between a system's members, dashed for members linked on demand.
 
 ### Plans
 
@@ -420,7 +421,7 @@ A plan is a communications plan: an ordered selection of shared channels, each w
 
 **On a radio**, a plan is a source: `rflib radio sources add HT --plan "Fair 2026" --section-start 50`. Its part of the radio follows the plan:
 
-- `radio sync` links the plan's channels into your library where they aren't yet, puts them in the plan's order with the plan's names, and numbers them as the plan does from the section start: plan channel 10 becomes memory 59 when the source starts at 50.
+- `radio sync` puts the plan's channels on the radio in the plan's order with the plan's names, and numbers them as the plan does from the section start: plan channel 10 becomes memory 59 when the source starts at 50.
 - Plans claim their channels before query sources, and a plan's channel that's elsewhere on the radio moves into the plan's part.
 - Channels the plan drops come off, and removing the source takes all of its channels off.
 - An archived plan's channels stay as they are.
@@ -461,7 +462,7 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 - **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and location. New columns are only ever added at the end; the group columns were removed when groups were.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
 - **`export profile NAME`** writes a radio programming tool's own CSV format, such as Yaesu ADMS. See [Export profiles](#export-profiles) below.
-- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out. Links are kept as links, with the shared channel as it was. `rflib shared export json` backs up the shared list, with its organizations, systems, and plans, and `rflib shared import json` restores it. The CSV writes a link's shared and own tags and notes together.
+- **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out. Your notes, tags, and short names on shared channels are kept, with the shared channel as it was; restored into a database without that shared channel, it becomes a private copy. `rflib shared export json` backs up the shared list, with its organizations, systems, and plans, and `rflib shared import json` restores it. The CSV writes a shared channel's tags and notes and yours together.
 
 ## Import
 
@@ -640,8 +641,8 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 
 `rflib serve` also serves a web interface at `http://127.0.0.1:8080/`, built into the binary:
 
-- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
-- **Shared list:** opened from its own item in the navigation. Select channels to link them into your library, optionally onto a radio in the same step. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who links the channel. Corrections are made one channel at a time.
+- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and switch on "Search the shared list" to find shared channels, tag them, or put them on a radio.
+- **Shared list:** opened from its own item in the navigation. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who uses the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
 - **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources, with a preview of what a new source would add before you add it; sync with a preview; and the programming file to download. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
 - **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
@@ -666,7 +667,7 @@ curl -H "Authorization: Bearer s3cret" 'localhost:8080/api/v1/libraries/default/
 
 - **The description:** `GET /api/v1/openapi.yaml` is the OpenAPI document, which lists every endpoint and shape. Its source is `internal/api/openapi.yaml`, and the tests hold every route and response to it.
 - **Authentication:** with `$RFLIB_API_TOKEN` set, every request but `/health` and the document needs `Authorization: Bearer TOKEN`. Serving on anything but a loopback address requires a token.
-- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-delete`, `link`, and `copy`), `radios` (memories, channels, overrides, sources, sync, and export), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), `seeds/{list}/install`, and `feed`. `organizations`, `systems`, and `plans` (each with `history`), which live in the shared list, and `models`, `profiles`, `seeds`, and `tags` sit beside `libraries`.
+- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-delete`, and `copy`; a shared channel's ID gives your view of it, and saving it saves your notes, tags, and short names), `radios` (memories, channels, overrides, sources, sync, and export), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), and `feed`. `organizations`, `systems`, and `plans` (each with `history`), which live in the shared list, and `models`, `profiles`, `seeds` (with `update`), and `tags` sit beside `libraries`.
 - **Values:** frequencies are exact integer Hz, and tones use the library's syntax (`ctcss:100.000`, `dcs:023`). Queries are the same as the CLI's, in a `q` parameter or a `query` field. Channel IDs can be shortened to a unique prefix.
 - **Changes:** `PATCH` changes only the fields given, and `null` clears `tx_hz` and `location`. Changes to the `shared` library, organizations, systems, and plans need a `reason`.
 - **Errors** are `{"error": {"code", "message"}}`: 400 for a request to fix, 401 without a valid token, 403 for everyday changes to the shared library, 404, 409 for a name in use, and 500 for anything else (the detail goes to the server's log).

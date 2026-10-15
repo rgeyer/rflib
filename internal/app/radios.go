@@ -140,11 +140,6 @@ func (r *AddResult) fit(m model.Model, cs []domain.Channel, anyBand, anyMode boo
 // skipped unless req.AnyBand, and channels in modes it lacks unless
 // req.AnyMode.
 func (s *Service) AddChannels(ctx context.Context, radio string, req AddRequest) (domain.Radio, AddResult, error) {
-	if req.Query != nil {
-		if err := localQuery(req.Query); err != nil {
-			return domain.Radio{}, AddResult{}, err
-		}
-	}
 	r, m, err := s.RadioModel(ctx, radio)
 	if err != nil {
 		return r, AddResult{}, err
@@ -163,8 +158,16 @@ func (s *Service) AddChannels(ctx context.Context, radio string, req AddRequest)
 			cs = append(cs, c)
 		}
 	} else {
-		if cs, err = s.Select(ctx, Selection{IDs: req.IDs, Query: req.Query}); err != nil {
+		// A query picks from the library's channels and the shared list.
+		if cs, err = s.FindForRadios(ctx, req.Query); err != nil {
 			return r, AddResult{}, err
+		}
+		if len(req.IDs) > 0 {
+			ids, err := s.ChannelIDs(ctx, req.IDs)
+			if err != nil {
+				return r, AddResult{}, err
+			}
+			cs = slices.DeleteFunc(cs, func(c domain.Channel) bool { return !slices.Contains(ids, c.ID) })
 		}
 		if err := domain.SortChannels(cs, orDefault(req.Sort, "name")); err != nil {
 			return r, AddResult{}, err
@@ -475,11 +478,9 @@ type SourceSync struct {
 	// plan's order.
 	Resorted int
 	// For a plan: Removed lists the channels taken off because the plan
-	// dropped them, Linked counts the shared channels linked into the
-	// library for it, and Note says why nothing changed, such as an
-	// archived plan.
+	// dropped them, and Note says why nothing changed, such as an archived
+	// plan.
 	Removed []domain.Channel
-	Linked  int
 	Note    string
 }
 
@@ -587,13 +588,10 @@ func (s *Service) syncSources(ctx context.Context, r domain.Radio, m model.Model
 			continue
 		}
 		n, err := query.Parse(src.Query)
-		if err == nil {
-			err = localQuery(n)
-		}
 		if err != nil {
 			return nil, fmt.Errorf("source %d: %w", src.Position+1, err)
 		}
-		cs, err := s.FindChannels(ctx, n)
+		cs, err := s.FindForRadios(ctx, n)
 		if err != nil {
 			return nil, fmt.Errorf("source %d: %w", src.Position+1, err)
 		}
@@ -724,34 +722,8 @@ func (s *Service) syncPlan(ctx context.Context, r domain.Radio, m model.Model, s
 	for _, c := range fit.Add {
 		fits[c.ID] = true
 	}
-	mine, err := s.lib.ListChannels(ctx)
-	if err != nil {
-		return ss, err
-	}
-	linkOf := map[string]string{}
-	for _, c := range mine {
-		if c.Link != nil {
-			linkOf[c.Link.SharedID] = c.ID
-		}
-	}
-	var toLink []string
-	for _, c := range fit.Add {
-		if linkOf[c.ID] == "" {
-			toLink = append(toLink, c.ID)
-		}
-	}
-	ss.Linked = len(toLink)
-	if !opts.DryRun && len(toLink) > 0 {
-		lr, err := s.LinkChannels(ctx, Selection{IDs: toLink}, nil)
-		if err != nil {
-			return ss, err
-		}
-		for _, c := range lr.Linked {
-			linkOf[c.Link.SharedID] = c.ID
-		}
-	}
-	// want is the source's part of the radio as the plan has it; a
-	// channel not linked yet (in a dry run) goes by its shared ID.
+	// want is the source's part of the radio as the plan has it: shared
+	// channels, by their IDs.
 	type want struct {
 		id   string
 		row  PlanRow
@@ -763,10 +735,7 @@ func (s *Service) syncPlan(ctx context.Context, r domain.Radio, m model.Model, s
 		if !fits[row.Channel.ID] {
 			continue
 		}
-		id := linkOf[row.Channel.ID]
-		if id == "" {
-			id = row.Channel.ID
-		}
+		id := row.Channel.ID
 		name := ""
 		if p.Entries[row.Entry].Name != "" {
 			name = row.Name

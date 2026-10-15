@@ -96,6 +96,25 @@ type Library interface {
 	// ChannelRevisions returns a shared channel's revisions, oldest
 	// first; for a link, its shared channel's. Private channels have none.
 	ChannelRevisions(ctx context.Context, id string) ([]domain.Revision, error)
+	// SharedViews returns the library's views of shared channels, by ID:
+	// each shared channel, under its own ID, with the library's annotation
+	// (its tags, notes, and short names) laid over it. GetChannel returns
+	// a view too, for a shared channel's ID, and UpdateChannel and
+	// DeleteChannel save or delete the annotation. Radios hold shared
+	// channels by their IDs.
+	SharedViews(ctx context.Context, ids []string) (map[string]domain.Channel, error)
+	// SaveAnnotation saves the library's annotation of c.Link.SharedID from
+	// c's tags, notes, and short names; clearing them all removes it. It
+	// returns the view.
+	SaveAnnotation(ctx context.Context, c domain.Channel) (domain.Channel, error)
+	// Follow makes the library follow a shared channel, seen at its current
+	// revision, unless it already does; MarkSeen records a revision seen.
+	// Annotating a shared channel or putting it on a radio follows it.
+	Follow(ctx context.Context, sharedID string) error
+	MarkSeen(ctx context.Context, sharedID string, revision int) error
+	// ReplaceOnRadios puts newID in oldID's place on the library's radios,
+	// keeping each entry's overrides; a radio holding both keeps newID's.
+	ReplaceOnRadios(ctx context.Context, oldID, newID string) error
 	// SeedChannels returns the library's channels that came from built-in
 	// lists (see domain.SeedChannel); SetSeedChannel records or replaces
 	// one. A record goes when its channel is deleted.
