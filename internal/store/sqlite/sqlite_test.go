@@ -312,3 +312,25 @@ INSERT INTO searches (id, library_id, name, query, created_at, updated_at) VALUE
 		t.Errorf("groups table left: %d, %v", n, err)
 	}
 }
+
+// v14 takes simplex off shared channels, since is:simplex finds them, and
+// leaves personal tags alone.
+func TestMigrateV14SimplexTag(t *testing.T) {
+	ctx := context.Background()
+	d := openAt(t, 13, `
+INSERT INTO channels (id, library_id, name, receive_hz, mode, receive_tone_kind, transmit_tone_kind, created_at, updated_at) VALUES
+	('s1', (SELECT id FROM libraries WHERE kind = 'shared'), 'Simplex', 146520000, 'FM', 'none', 'none', '', ''),
+	('p1', (SELECT id FROM libraries WHERE is_default = 1), 'Mine', 146520000, 'FM', 'none', 'none', '', '');
+INSERT INTO channel_tags VALUES ('s1', 'simplex'), ('s1', 'calling'), ('p1', 'simplex');`)
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sh, _ := d.GetLibrary(ctx, domain.SharedLibrary)
+	def, _ := d.GetLibrary(ctx, "")
+	if c, err := d.Library(sh.ID).GetChannel(ctx, "s1"); err != nil || strings.Join(c.Tags, ",") != "calling" {
+		t.Errorf("shared tags = %v, %v", c.Tags, err)
+	}
+	if c, err := d.Library(def.ID).GetChannel(ctx, "p1"); err != nil || strings.Join(c.Tags, ",") != "simplex" {
+		t.Errorf("personal tags = %v, %v", c.Tags, err)
+	}
+}

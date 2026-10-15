@@ -59,7 +59,7 @@ The `shared` library holds channels shared with everyone: the built-in lists now
 - **What's yours on a link:** tags, notes, skip, power, and short names. Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which keeps the channel's ID (so radios keep it) and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
 - **Names:** a link shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
 - **Converting:** `shared link` and `seed install` turn a private channel into a link when it matches a shared one on the air (the same frequencies, tones, and tone squelch) and has the same service, or none. FRS and GMRS share frequencies, so the service keeps them apart. In the web interface, **Link to shared list** on the Channels page lists your matching channels and links the ones you pick.
-- **Shared tags** come from a short list with agreed meanings: `rflib tag list`. Your own tags are free-form, and one with a shared tag's name means the same thing.
+- **Shared tags** come from a short list with agreed meanings: `rflib tag list`. None repeats a channel's fields (service, band, mode, or duplex), which search finds without a tag. Your own tags are free-form, and one with a shared tag's name means the same thing. Adding one of your own that repeats the channel's fields, such as `cb` on a CB channel, `ham` on an amateur one, or `repeater` on a repeater, is allowed but warns you that `service:cb` (and so on) already finds it.
 - **The shared library is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`.
 
 ### Status and changes
@@ -84,7 +84,7 @@ Channels record a receive frequency plus an optional transmit frequency. Use mat
 
 ```sh
 ./rflib channel add --name "National Calling" \
-  --rx 146.520 --tx 146.520 --mode FM --tags "ham,simplex"
+  --rx 146.520 --tx 146.520 --mode FM --service amateur --tags "calling,mobile"
 
 ./rflib channel add --name "Local Repeater" \
   --rx 146.940 --tx 146.340 --mode FM --lat 45.5152 --lon -122.6784 --radius-km 40 \
@@ -391,7 +391,7 @@ A channel can carry its nodes on linking networks: AllStar, EchoLink, IRLP, and 
 ./rflib shared update --id <id> --networks allstar:43761 --reason "node numbers"
 ```
 
-The shared tags `linked`, `allstar`, `echolink`, and `wires-x` are gone: network nodes and systems say it better. Upgrading (`rflib init`) takes them off shared channels; your own tags stay.
+The shared tags `linked`, `allstar`, `echolink`, and `wires-x` are gone: network nodes and systems say it better. So is `simplex`, which `is:simplex` finds. Upgrading (`rflib init`) takes them off shared channels; your own tags stay.
 
 ### Organizations
 

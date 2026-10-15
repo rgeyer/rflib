@@ -940,7 +940,9 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 	if c.ok("channel", "list", "tag:wx") != "" {
 		t.Error("dry run changed channels")
 	}
-	if got := c.status("channel", "update", "-q", "band:noaa", "--tags", "+wx,+weather", "--skip"); got != "Updated 7 channels" {
+	// The tags repeat the band, so the update warns, once per tag.
+	if got := c.status("channel", "update", "-q", "band:noaa", "--tags", "+wx,+weather", "--skip"); !strings.HasSuffix(got, "\nUpdated 7 channels") ||
+		!strings.Contains(got, `warning: tag "wx" repeats one of the channel's fields: band:wx finds it without the tag (on 7 channels)`) {
 		t.Errorf("bulk update = %q", got)
 	}
 	if got := c.ok("channel", "list", "tag:wx tag:weather skip:yes", "--fields", "name"); strings.Count(got, "\n") != 6 {
@@ -982,7 +984,7 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 
 func TestSharedChannels(t *testing.T) {
 	c := newCLI(t)
-	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 7 {
+	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 6 {
 		t.Errorf("tag list = %q", got)
 	}
 	// A private copy of GMRS 20 from before, named differently.

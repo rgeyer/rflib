@@ -247,6 +247,7 @@ function TagModal(props: { action: "add" | "remove" | null; ids: string[]; onClo
     onSuccess: (r) => {
       props.onClose();
       setTags([]);
+      warn(r.warnings);
       props.onDone(`Updated ${r.channels.length} channels`);
     },
     onError: failed,

@@ -1,6 +1,6 @@
 name,receive_mhz,transmit_mhz,mode,service,rx_only,tags,notes
-MURS 1,151.820,151.820,NFM,murs,false,murs,2 W max
-MURS 2,151.880,151.880,NFM,murs,false,murs,2 W max
-MURS 3,151.940,151.940,NFM,murs,false,murs,2 W max
-MURS 4,154.570,154.570,FM,murs,false,murs,2 W max
-MURS 5,154.600,154.600,FM,murs,false,murs,2 W max
+MURS 1,151.820,151.820,NFM,murs,false,,2 W max
+MURS 2,151.880,151.880,NFM,murs,false,,2 W max
+MURS 3,151.940,151.940,NFM,murs,false,,2 W max
+MURS 4,154.570,154.570,FM,murs,false,,2 W max
+MURS 5,154.600,154.600,FM,murs,false,,2 W max

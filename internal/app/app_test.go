@@ -70,6 +70,32 @@ func TestCreateChannelReturnsBandPlanWarnings(t *testing.T) {
 	}
 }
 
+// Personal tags that repeat a channel's fields are allowed but warned
+// about, once: when they're added.
+func TestTagRepeatWarnings(t *testing.T) {
+	s, _ := newService(t)
+	ctx := context.Background()
+	cb := func(name string, hz int64) domain.Channel {
+		return domain.Channel{Name: name, ReceiveHz: hz, TransmitHz: &hz, Mode: "AM", Service: domain.ServiceCB, ReceiveTone: none, TransmitTone: none, Tags: []string{"cb", "mobile"}}
+	}
+	c, warnings, err := s.CreateChannel(ctx, cb("CB 19", 27_185_000))
+	if err != nil || len(warnings) != 1 || !strings.Contains(warnings[0], `tag "cb" repeats one of the channel's fields: service:cb`) {
+		t.Fatalf("create warnings = %v, %v", warnings, err)
+	}
+	c.Notes = "trucker channel"
+	if _, warnings, err = s.UpdateChannel(ctx, c); err != nil || len(warnings) != 0 {
+		t.Fatalf("a kept tag warned again: %v, %v", warnings, err)
+	}
+	other, _, err := s.CreateChannel(ctx, domain.Channel{Name: "CB 9", ReceiveHz: 27_065_000, Mode: "AM", Service: domain.ServiceCB, ReceiveTone: none, TransmitTone: none})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, warnings, err = s.UpdateChannels(ctx, Selection{IDs: []string{c.ID, other.ID}}, ChannelEdit{Tags: &TagEdit{Add: []string{"am", "cb"}}})
+	if err != nil || len(warnings) != 2 || !strings.HasSuffix(warnings[0], "(on 2 channels)") || strings.HasSuffix(warnings[1], "channels)") {
+		t.Fatalf("bulk warnings = %q, %v", warnings, err)
+	}
+}
+
 func TestQueriesResolveInTheLibrary(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newService(t)
