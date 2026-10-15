@@ -19,7 +19,8 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.getByRole("link", { name: "Built-in lists" }).click();
   const noaa = page.locator(".mantine-Card-root", { hasText: "us-noaa" });
   await noaa.getByRole("button", { name: "Install" }).click();
-  await expect(page.getByText("Links 7 new channels")).toBeVisible();
+  await expect(page.getByText("The shared list gains 7 channels")).toBeVisible();
+  await expect(page.getByText("My library gains 7 new links")).toBeVisible();
   await page.getByRole("dialog").getByRole("button", { name: "Install" }).click();
   await expect(page.getByText("us-noaa: linked 7")).toBeVisible();
 
@@ -48,6 +49,17 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await expect(page.getByLabel("Search", { exact: true })).toHaveValue("band:noaa");
   await expect(page.getByText("7 channels")).toBeVisible();
   await page.getByLabel("Search", { exact: true }).fill("");
+
+  // Set the service on several channels; the links among them are left out.
+  await page.getByRole("checkbox", { name: "Select Marian" }).click();
+  await page.getByRole("checkbox", { name: "Select NOAA WX1" }).click();
+  await page.getByRole("button", { name: "Set service" }).click();
+  await page.getByRole("dialog").getByRole("combobox", { name: "Service" }).click();
+  await page.getByRole("option", { name: "amateur" }).click();
+  await expect(page.getByText("1 of them are linked")).toBeVisible();
+  await page.getByRole("button", { name: "Set on 1 channels" }).click();
+  await expect(page.getByText("Set the service on 1 channels")).toBeVisible();
+  await expect(page.getByRole("row", { name: /Marian/ })).toContainText("amateur");
 
   // A linked channel's shared fields can't be edited.
   await page.getByRole("row", { name: /WX1/ }).getByText(/WX1/).click();
@@ -172,4 +184,38 @@ test("organizations, systems, and plans", async ({ page, request }) => {
   await page.getByRole("tab", { name: "Memories" }).click();
   await expect(page.getByRole("row", { name: /FAIR TAC1/ })).toContainText("50");
   await expect(page.getByRole("row", { name: /70cm FM Call/ })).toContainText("59");
+});
+
+// Runs after the first test: from the shared list, link a channel onto a
+// radio, then correct it as the maintainer.
+test("the shared list: link, correct, and take off the air", async ({ page }) => {
+  const saveWithReason = async (reason: string) => {
+    await page.getByRole("textbox", { name: "Reason" }).fill(reason);
+    await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click();
+  };
+  await page.goto("/l/shared/channels");
+  await page.getByLabel("Search", { exact: true }).fill("name:wx1");
+  await expect(page.getByText("1 channels")).toBeVisible();
+
+  // Already linked, so linking only puts its link on the radio.
+  await page.getByRole("checkbox", { name: "Select NOAA WX1" }).click();
+  await page.getByRole("button", { name: "Link into my library" }).click();
+  await page.getByRole("combobox", { name: "Also add to a radio" }).click();
+  await page.getByRole("option", { name: "HT" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Link 1 channels" }).click();
+  await expect(page.getByText("Linked 0 channels; 1 already linked. Added 1 to HT")).toBeVisible();
+
+  // A correction of a shared field, then a status, each with a reason.
+  await page.getByRole("row", { name: /WX1/ }).getByText(/WX1/).click();
+  await page.getByRole("textbox", { name: "Notes" }).fill("Mt. Example transmitter");
+  await page.getByRole("button", { name: "Save correction" }).click();
+  await saveWithReason("site name");
+  await expect(page.getByText("Corrected; links follow")).toBeVisible();
+  await page.getByRole("row", { name: /WX1/ }).getByText(/WX1/).click();
+  await page.getByText("Off the air", { exact: true }).click();
+  await page.getByRole("textbox", { name: "Status note" }).fill("antenna work");
+  await page.getByRole("button", { name: "Change status" }).click();
+  await saveWithReason("club notice");
+  await expect(page.getByText("NOAA WX1 is off-air; links follow")).toBeVisible();
+  await expect(page.getByRole("row", { name: /WX1/ })).toContainText("off-air");
 });

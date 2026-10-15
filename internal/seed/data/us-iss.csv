@@ -1,0 +1,3 @@
+name,receive_mhz,transmit_mhz,transmit_tone,mode,service,rx_only,tags,notes
+ISS Voice,145.800,144.490,,FM,amateur,false,,ISS voice and SSTV downlink; 144.490 is the Region 2 voice uplink; expect Doppler shift
+ISS Repeater,437.800,145.990,ctcss:67.0,FM,amateur,false,,ISS cross-band repeater (uplink 145.990 with 67.0 Hz); on the air only when ARISS enables it

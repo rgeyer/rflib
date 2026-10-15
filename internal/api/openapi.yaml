@@ -269,15 +269,18 @@ paths:
                 tags: {type: array, items: {type: string}}
       responses:
         "200":
-          description: New links, and shared channels already linked
+          description: >-
+            New links, shared channels already linked, and the library's link
+            to each selected channel (new or not), in order, to put on a radio
           content:
             application/json:
               schema:
                 type: object
-                required: [linked, already]
+                required: [linked, already, link_ids]
                 properties:
                   linked: {type: array, items: {$ref: "#/components/schemas/Channel"}}
                   already: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                  link_ids: {type: array, items: {type: string}}
         default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/channels/copy:
     parameters: [{$ref: "#/components/parameters/lib"}]

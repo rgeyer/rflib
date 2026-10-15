@@ -25,7 +25,8 @@ func TestEveryListIsDescribed(t *testing.T) {
 
 // Every built-in channel must parse and fit its own service's band plan.
 func TestListsAreValidAndFitTheirBandPlans(t *testing.T) {
-	want := map[string]int{"us-cb": 40, "us-frs": 22, "us-gmrs": 30, "us-ham-calling": 8, "us-murs": 5, "us-noaa": 7}
+	want := map[string]int{"us-cb": 40, "us-frs": 22, "us-gmrs": 30, "us-ham-calling": 8, "us-murs": 5, "us-noaa": 7,
+		"us-60m": 5, "us-aprs": 2, "us-ft8": 11, "us-interop": 9, "us-iss": 2, "us-time": 9}
 	for _, l := range Lists() {
 		b, err := l.Batch()
 		if err != nil {
@@ -40,6 +41,30 @@ func TestListsAreValidAndFitTheirBandPlans(t *testing.T) {
 			}
 			if w := domain.CheckBandPlan(r.Channel); len(w) > 0 {
 				t.Errorf("%s: %s: %v", l.ID, r.Channel.Name, w)
+			}
+		}
+	}
+}
+
+// No channel is in two lists, so installing several never puts the same
+// channel on the shared list twice. FRS and GMRS share their channels by
+// rule, so that pair is allowed.
+func TestListsDontOverlap(t *testing.T) {
+	seen := map[string]string{}
+	for _, l := range Lists() {
+		b, err := l.Batch()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range b.Records {
+			key := domain.ProgrammedKey(r.Channel)
+			other, ok := seen[key]
+			switch {
+			case !ok:
+				seen[key] = l.ID
+			case other == "us-frs" && l.ID == "us-gmrs":
+			default:
+				t.Errorf("%s: %s is also in %s", l.ID, r.Channel.Name, other)
 			}
 		}
 	}

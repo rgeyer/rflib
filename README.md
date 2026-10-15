@@ -240,6 +240,12 @@ Saving or importing a channel warns, without failing, when it doesn't fit its se
 | `us-cb` | CB 1-40, AM |
 | `us-noaa` | NOAA Weather Radio WX1-WX7, receive only |
 | `us-ham-calling` | Amateur FM and SSB simplex calling frequencies, 10 m through 70 cm |
+| `us-aprs` | APRS on 144.390, and the ISS and satellite digipeater on 145.825 |
+| `us-iss` | ISS voice (145.800 down, 144.490 up) and its cross-band repeater |
+| `us-ft8` | FT8 dial frequencies, 160 m through 2 m, USB (60 m FT8 is channel 3 in `us-60m`) |
+| `us-60m` | Amateur 60 m channels 1-5, USB dial frequencies |
+| `us-time` | WWV and CHU time signals, receive only |
+| `us-interop` | National public-safety interoperability calling and tactical channels, receive only |
 
 Installing a list puts its channels in the shared library and links them into yours (see [Shared channels](#shared-channels)). Channels you already have that match one become links. Installing again changes nothing. `--tags` adds tags of your own to the new links, and `--dry-run` reports what would change. On shared channels the lists carry only shared tags, such as `calling`; the old `gmrs`, `noaa`, and similar tags repeated the service and band.
 
@@ -613,12 +619,13 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 
 `rflib serve` also serves a web interface at `http://127.0.0.1:8080/`, built into the binary:
 
-- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
+- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and switch on "Search the shared list" to find shared channels and link them.
+- **Shared list:** select channels to link them into your library, optionally onto a radio in the same step. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who links the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
 - **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources; sync with a preview; and the programming file to download.
 - **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
 - **Import:** a file, its options, a dry-run preview, then the import.
-- **Built-in lists** and **shared changes**, as `rflib seed install` and `rflib shared changes` do.
+- **Built-in lists** and **shared changes**, as `rflib seed install` and `rflib shared changes` do. An install's preview shows what the shared list gains and names your channels that will become links.
 
 The switch at the top moves between **My library** (the default library) and the **Shared list**. Once you have more than one library of your own, it becomes a list of their names.
 
