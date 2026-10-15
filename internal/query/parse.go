@@ -230,11 +230,11 @@ func wordNode(t token) (Node, error) {
 	return term, nil
 }
 
-// Refs returns the saved searches a query uses directly, in order, without
-// repeats.
 // Scopes are the values of in:, which chooses the channels a query
-// searches: the library's own (mine, the default) or the whole shared list.
-var Scopes = []string{"mine", "shared"}
+// searches: those in use (use, the default: the library's own channels and
+// the shared channels it annotates or has on a radio), only the library's
+// own (mine), the whole shared list (shared), or both (all).
+var Scopes = []string{"use", "mine", "shared", "all"}
 
 // SplitScope takes in: terms off the top level of n and returns the scope
 // they choose (empty when there are none) and the rest of the query. An in:
@@ -247,10 +247,10 @@ func SplitScope(n Node) (string, Node, error) {
 		}
 		v := strings.ToLower(strings.TrimSpace(t.Value))
 		if !slices.Contains(Scopes, v) {
-			return false, &Error{Pos: t.Pos, Msg: fmt.Sprintf("in:%s: use in:mine or in:shared", t.Value)}
+			return false, &Error{Pos: t.Pos, Msg: fmt.Sprintf("in:%s: use in:use, in:mine, in:shared, or in:all", t.Value)}
 		}
 		if scope != "" && scope != v {
-			return false, &Error{Pos: t.Pos, Msg: "a query can search only one of in:mine and in:shared"}
+			return false, &Error{Pos: t.Pos, Msg: "a query can search only one in: scope"}
 		}
 		scope = v
 		return true, nil
@@ -302,6 +302,8 @@ func MapTerms(n Node, fn func(Term) Term) Node {
 	return n
 }
 
+// Refs returns the saved searches a query uses directly, in order, without
+// repeats.
 func Refs(n Node) []string {
 	var out []string
 	var walk func(Node)

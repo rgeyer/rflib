@@ -32,8 +32,10 @@ a saved search.
   org:NAME                  operated by an organization
   system:NAME               a member of a system
   allstar:N echolink:N irlp:N wires-x:N       a node on a linking network
-  in:mine|shared            search the library (default) or the whole
-                            shared list; only at the top level
+  in:use|mine|shared|all    channels in use (default: yours, and shared
+                            ones you annotate or have on a radio), only
+                            yours, the whole shared list, or both; only at
+                            the top level
   created: updated:         YYYY-MM-DD, >=, <, ranges
   id:ID
 

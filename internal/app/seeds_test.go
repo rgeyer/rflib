@@ -255,3 +255,51 @@ func TestNoAnnotationIDsLeak(t *testing.T) {
 		check("changes", ch.Channel)
 	}
 }
+
+// The in: scopes: use (the default) is the library's own channels and the
+// shared ones it annotates or has on a radio; mine, shared, and all as named.
+// Radio searches default to all, without shared channels the library copied.
+func TestScopes(t *testing.T) {
+	ctx := context.Background()
+	s, d := newService(t)
+	sh := openShared(t, d)
+	tagged := sharedChannel(t, sh, "Tagged", 146.52)
+	onRadio := sharedChannel(t, sh, "On Radio", 146.55)
+	unused := sharedChannel(t, sh, "Unused", 146.58)
+	copiedFrom := sharedChannel(t, sh, "Copied", 146.61)
+	add(t, s, "Mine", 147.0, domain.ServiceAmateur)
+	if _, _, err := s.UpdateChannels(ctx, Selection{IDs: []string{tagged.ID}}, ChannelEdit{Tags: &TagEdit{Add: []string{"home"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{onRadio.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CopyChannels(ctx, Selection{IDs: []string{copiedFrom.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ q, want string }{
+		{"", "Copied, Mine, On Radio, Tagged"},
+		{"in:use", "Copied, Mine, On Radio, Tagged"},
+		{"in:mine", "Copied, Mine"},
+		{"in:shared", "Copied, On Radio, Tagged, Unused"},
+		{"in:all", "Copied, Copied, Mine, On Radio, Tagged, Unused"},
+	} {
+		cs, err := s.Find(ctx, tc.q)
+		if got := strings.ReplaceAll(names(cs), ",", ", "); err != nil || got != tc.want {
+			t.Errorf("%q = %s, %v; want %s", tc.q, got, err, tc.want)
+		}
+	}
+	forRadios, err := s.FindForRadios(ctx, mustParse(t, ""))
+	if got := strings.ReplaceAll(names(forRadios), ",", ", "); err != nil || got != "Copied, Mine, On Radio, Tagged, Unused" {
+		t.Errorf("for radios = %s, %v", got, err)
+	}
+	for _, c := range forRadios {
+		if c.ID == copiedFrom.ID {
+			t.Error("a copied shared channel is offered to radios")
+		}
+	}
+	_ = unused
+}

@@ -64,13 +64,26 @@ const FILTERS: { field: string; label: string; options: Option[] }[] = [
   { field: "status", label: "Status", options: opts(["active", "off-air", "retired"]) },
 ];
 
+/** SOURCE chooses which channels a library's search covers (the in: term). */
+const SOURCE = {
+  field: "in",
+  label: "Source",
+  options: [
+    { value: "use", label: "in use (default)" },
+    { value: "mine", label: "mine only" },
+    { value: "shared", label: "the shared list" },
+    { value: "all", label: "mine and the shared list" },
+  ],
+};
+
 /**
  * QueryBar is the search box with guided filters. The text is always the
  * search: each filter adds, changes, or removes its own term in it, and
  * anything typed by hand is kept.
  */
-export function QueryBar(props: { value: string; onChange: (v: string) => void; tags?: string[]; placeholder?: string }) {
-  const filters = props.tags?.length ? [...FILTERS, { field: "tag", label: "Tag", options: opts(props.tags) }] : FILTERS;
+export function QueryBar(props: { value: string; onChange: (v: string) => void; tags?: string[]; placeholder?: string; source?: boolean }) {
+  let filters = props.source ? [SOURCE, ...FILTERS] : FILTERS;
+  if (props.tags?.length) filters = [...filters, { field: "tag", label: "Tag", options: opts(props.tags) }];
   return (
     <div style={{ flex: 1 }}>
       <TextInput
