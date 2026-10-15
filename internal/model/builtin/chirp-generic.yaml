@@ -1,0 +1,18 @@
+name: chirp-generic
+description: Any radio CHIRP supports; you check the channels suit it
+format: chirp
+chirp_model: your radio (import the file into its image)
+memories: {first: 1, last: 999}
+names: {max_length: 0}
+power: []
+bands_mhz: []
+modes: []
+notes: >-
+  Nothing is checked against the radio: rflib doesn't know its bands, modes,
+  memory count, or name limits, so check the channels suit it. On import, CHIRP
+  shortens names to the radio's limit and drops characters it can't show; set
+  the radio's name length (rflib radio update --name-length) for rflib's
+  readable shortening instead. Power is left blank, so CHIRP picks the radio's
+  middle or highest level. For per-memory power and checks, make a model of
+  your own with rflib model new.
+source: CHIRP's CSV import, kk7ds/chirp chirp/import_logic.py (_import_name filters names to the radio; _import_power picks the closest level by watts, or the middle or highest level when power is blank)

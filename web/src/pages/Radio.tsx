@@ -138,6 +138,7 @@ export function RadioPage() {
           {r && (
             <Text size="sm" c="dimmed">
               {r.model} · {r.channels} channels · default power {r.default_power || "unset"}
+              {r.name_length > 0 && ` · names up to ${r.name_length}`}
             </Text>
           )}
         </div>

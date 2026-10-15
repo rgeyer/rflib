@@ -1384,13 +1384,14 @@ components:
 
     Radio:
       type: object
-      required: [id, name, model, default_power, dedupe, notes, channels, created_at, updated_at]
+      required: [id, name, model, default_power, dedupe, name_length, notes, channels, created_at, updated_at]
       properties:
         id: {type: string}
         name: {type: string}
         model: {type: string}
         default_power: {type: string}
         dedupe: {type: string, enum: [none, index, freq]}
+        name_length: {type: integer, description: "The radio's longest name, overriding the model's; 0 uses the model's"}
         notes: {type: string}
         channels: {type: integer}
         created_at: {type: string, format: date-time}
@@ -1403,6 +1404,7 @@ components:
         model: {type: string}
         default_power: {type: string}
         dedupe: {type: string}
+        name_length: {type: integer, minimum: 0, maximum: 64}
         notes: {type: string}
     Memory:
       type: object
