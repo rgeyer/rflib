@@ -23,15 +23,19 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await expect(noaa.getByText("Up to date")).toBeVisible();
   await expect(noaa.getByRole("button")).toHaveCount(0);
 
-  // Link NOAA weather radio from the shared list: seven links appear.
+  // Tag NOAA weather radio in the shared list: the tags are the user's own,
+  // and put the seven channels in My library.
   await page.getByRole("link", { name: "Channels", exact: true }).click();
   await page.getByRole("switch", { name: "Search the shared list" }).click();
   await page.getByLabel("Search", { exact: true }).fill("service:noaa");
   await expect(page.getByText("7 channels")).toBeVisible();
   await page.getByRole("checkbox", { name: "Select all" }).click();
-  await page.getByRole("button", { name: "Link into my library" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Link 7 channels" }).click();
-  await expect(page.getByText("Linked 7 channels")).toBeVisible();
+  await page.getByRole("button", { name: "Add tags" }).click();
+  await page.getByRole("combobox", { name: "Tags" }).fill("home");
+  await page.getByRole("combobox", { name: "Tags" }).press("Enter");
+  await page.getByRole("combobox", { name: "Tags" }).press("Tab");
+  await page.getByRole("dialog").getByRole("button", { name: "Add on 7 channels" }).click();
+  await expect(page.getByText("Updated 7 channels")).toBeVisible();
   await page.getByRole("switch", { name: "Search the shared list" }).click();
   await page.getByLabel("Search", { exact: true }).fill("");
 
@@ -66,15 +70,16 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.getByRole("button", { name: "Set service" }).click();
   await page.getByRole("dialog").getByRole("combobox", { name: "Service" }).click();
   await page.getByRole("option", { name: "amateur" }).click();
-  await expect(page.getByText("1 of them are linked")).toBeVisible();
+  await expect(page.getByText("1 of them are shared channels")).toBeVisible();
   await page.getByRole("button", { name: "Set on 1 channels" }).click();
   await expect(page.getByText("Set the service on 1 channels")).toBeVisible();
   await expect(page.getByRole("row", { name: /Marian/ })).toContainText("amateur");
 
-  // A linked channel's shared fields can't be edited.
+  // A shared channel's shared fields can't be edited; power and scan are per radio.
   await page.getByRole("row", { name: /WX1/ }).getByText(/WX1/).click();
-  await expect(page.getByRole("dialog").getByText("Linked to a shared channel")).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("A shared channel", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Receive MHz" })).toBeDisabled();
+  await expect(page.getByRole("dialog").getByRole("textbox", { name: "Power" })).toHaveCount(0);
   await page.keyboard.press("Escape");
 
   // A radio with a source; sync adds the matches.
@@ -197,22 +202,27 @@ test("organizations, systems, and plans", async ({ page, request }) => {
 
 // Runs after the first test: from the shared list, link a channel onto a
 // radio, then correct it as the maintainer.
-test("the shared list: link, correct, and take off the air", async ({ page }) => {
+test("the shared list: add to a radio, correct, and take off the air", async ({ page }) => {
   const saveWithReason = async (reason: string) => {
     await page.getByRole("textbox", { name: "Reason" }).fill(reason);
     await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click();
   };
+  // A shared channel goes straight onto a radio, with nothing to link.
+  await page.goto("/l/default/channels");
+  await page.getByRole("switch", { name: "Search the shared list" }).click();
+  await page.getByLabel("Search", { exact: true }).fill("name:wx7");
+  await expect(page.getByText("1 channels", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "Select NOAA WX7" }).click();
+  await page.getByRole("button", { name: "Add to radio" }).click();
+  await page.getByRole("dialog").getByRole("combobox").click();
+  await page.getByRole("option", { name: "HT" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /^Add/ }).click();
+  await expect(page.getByText(/Added [01] channels to HT/)).toBeVisible();
+
+  // The maintainer corrects it in the shared list.
   await page.goto("/l/shared/channels");
   await page.getByLabel("Search", { exact: true }).fill("name:wx1");
   await expect(page.getByText("1 channels")).toBeVisible();
-
-  // Already linked, so linking only puts its link on the radio.
-  await page.getByRole("checkbox", { name: "Select NOAA WX1" }).click();
-  await page.getByRole("button", { name: "Link into my library" }).click();
-  await page.getByRole("combobox", { name: "Also add to a radio" }).click();
-  await page.getByRole("option", { name: "HT" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Link 1 channels" }).click();
-  await expect(page.getByText("Linked 0 channels; 1 already linked. Added 1 to HT")).toBeVisible();
 
   // A correction of a shared field, then a status, each with a reason.
   await page.getByRole("row", { name: /WX1/ }).getByText(/WX1/).click();

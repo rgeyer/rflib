@@ -150,7 +150,7 @@ paths:
   /libraries/{lib}/channels/{id}/history:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/id"}]
     get:
-      summary: A shared channel's revisions, or a link's shared channel's
+      summary: A shared channel's revisions
       responses:
         "200":
           description: Revisions, oldest first
@@ -218,41 +218,10 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/ChannelsResult"}
         default: {$ref: "#/components/responses/Error"}
-  /libraries/{lib}/channels/link:
-    parameters: [{$ref: "#/components/parameters/lib"}]
-    post:
-      summary: Link shared channels into the library
-      description: The selection refers to the shared list.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [select]
-              properties:
-                select: {$ref: "#/components/schemas/Selection"}
-                tags: {type: array, items: {type: string}}
-      responses:
-        "200":
-          description: >-
-            New links, shared channels already linked, and the library's link
-            to each selected channel (new or not), in order, to put on a radio
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [linked, already, link_ids]
-                properties:
-                  linked: {type: array, items: {$ref: "#/components/schemas/Channel"}}
-                  already: {type: array, items: {$ref: "#/components/schemas/Channel"}}
-                  link_ids: {type: array, items: {type: string}}
-        default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/channels/copy:
     parameters: [{$ref: "#/components/parameters/lib"}]
     post:
-      summary: Make links into private channels that can be edited
+      summary: Make private channels you can edit from shared ones; each takes its shared channel's place on radios
       requestBody:
         required: true
         content:
@@ -269,7 +238,7 @@ paths:
   /libraries/{lib}/shared/convert:
     parameters: [{$ref: "#/components/parameters/lib"}]
     post:
-      summary: Turn private channels that match shared ones into links
+      summary: Replace private channels with the shared channels they match; each shared channel takes its place on radios
       requestBody:
         content:
           application/json:
@@ -281,7 +250,7 @@ paths:
                 ids: {type: array, items: {type: string}, description: "Only these private channels (by full ID); default all"}
       responses:
         "200":
-          description: What became links (or would)
+          description: What was replaced (or would be)
           content:
             application/json:
               schema:
@@ -293,7 +262,7 @@ paths:
   /libraries/{lib}/shared/changes:
     parameters: [{$ref: "#/components/parameters/lib"}]
     get:
-      summary: Links whose shared channel changed since acknowledged
+      summary: Shared channels in use (on radios, or annotated) that changed since acknowledged
       responses:
         "200":
           description: Changes
@@ -308,7 +277,7 @@ paths:
   /libraries/{lib}/shared/ack:
     parameters: [{$ref: "#/components/parameters/lib"}]
     post:
-      summary: Mark links' shared changes as seen
+      summary: Mark shared channels' changes as seen
       requestBody:
         required: true
         content:
@@ -316,7 +285,7 @@ paths:
             schema: {$ref: "#/components/schemas/SelectInput"}
       responses:
         "200":
-          description: Links acknowledged
+          description: Shared channels acknowledged
           content:
             application/json:
               schema: {$ref: "#/components/schemas/ChannelsResult"}
@@ -324,7 +293,7 @@ paths:
   /libraries/{lib}/shared/relink:
     parameters: [{$ref: "#/components/parameters/lib"}]
     post:
-      summary: Move links to retired channels over to their replacements
+      summary: Move retired shared channels' places on radios, and annotations, over to their replacements
       requestBody:
         required: true
         content:
@@ -332,7 +301,7 @@ paths:
             schema: {$ref: "#/components/schemas/SelectInput"}
       responses:
         "200":
-          description: Links moved
+          description: The replacements, as the library now sees them
           content:
             application/json:
               schema: {$ref: "#/components/schemas/ChannelsResult"}
@@ -1180,7 +1149,10 @@ components:
         radius_km: {type: number, nullable: true}
     Link:
       type: object
-      description: A link's tie to its shared channel, whose tags and notes these are
+      description: >-
+        Set on a library's view of a shared channel: the shared channel's own
+        tags and notes (the channel's tags, notes, and short names are the
+        user's). shared_id is the channel's own id.
       required: [shared_id, tags, notes, seen_revision, changed]
       properties:
         shared_id: {type: string}
@@ -1458,12 +1430,11 @@ components:
             allOf:
               - {$ref: "#/components/schemas/AddResult"}
               - type: object
-                required: [source, resorted, removed, linked, note]
+                required: [source, resorted, removed, note]
                 properties:
                   source: {$ref: "#/components/schemas/Source"}
                   resorted: {type: integer}
                   removed: {type: array, items: {$ref: "#/components/schemas/Channel"}, description: "A plan's channels taken off because the plan dropped them"}
-                  linked: {type: integer, description: Shared channels linked into the library for a plan}
                   note: {type: string, description: "Why a plan source didn't change, such as an archived plan"}
         added: {type: integer}
         resorted: {type: integer}

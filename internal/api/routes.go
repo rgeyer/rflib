@@ -41,7 +41,6 @@ func (s *server) routes() []route {
 		{"POST", L + "/channels/{id}/status", s.lib(s.setStatus), false},
 		{"POST", L + "/channels/bulk-update", s.lib(s.bulkUpdate), false},
 		{"POST", L + "/channels/bulk-delete", s.lib(s.bulkDelete), false},
-		{"POST", L + "/channels/link", s.lib(s.linkChannels), false},
 		{"POST", L + "/channels/copy", s.lib(s.copyChannels), false},
 
 		{"POST", L + "/shared/convert", s.lib(s.convert), false},
@@ -369,28 +368,6 @@ func (s *server) bulkDelete(w http.ResponseWriter, r *http.Request, a *app.Servi
 		return err
 	}
 	writeJSON(w, http.StatusOK, channelsResult{newChannels(cs), []string{}})
-	return nil
-}
-
-type linkInput struct {
-	Select Selection `json:"select"`
-	Tags   []string  `json:"tags"`
-}
-
-func (s *server) linkChannels(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	var in linkInput
-	if err := readJSON(r, &in); err != nil {
-		return err
-	}
-	sel, err := in.Select.app()
-	if err != nil {
-		return err
-	}
-	res, err := a.LinkChannels(ctx(r), sel, in.Tags)
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"linked": newChannels(res.Linked), "already": newChannels(res.Already), "link_ids": nonNil(res.LinkIDs)})
 	return nil
 }
 
@@ -1270,7 +1247,6 @@ type SourceSync struct {
 	AddResult
 	Resorted int       `json:"resorted"`
 	Removed  []Channel `json:"removed"`
-	Linked   int       `json:"linked"`
 	Note     string    `json:"note"`
 }
 
@@ -1294,7 +1270,7 @@ func (s *server) syncRadio(w http.ResponseWriter, r *http.Request, a *app.Servic
 		if in.DryRun {
 			added.Added = len(added.Add)
 		}
-		out[i] = SourceSync{newSources([]domain.RadioSource{ss.Source}, nil)[0], newAddResult(added), ss.Resorted, newChannels(ss.Removed), ss.Linked, ss.Note}
+		out[i] = SourceSync{newSources([]domain.RadioSource{ss.Source}, nil)[0], newAddResult(added), ss.Resorted, newChannels(ss.Removed), ss.Note}
 	}
 	var layoutErr *string
 	if res.LayoutErr != nil {

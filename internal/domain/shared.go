@@ -37,8 +37,9 @@ func ParseStatus(v string) (Status, error) {
 // OrActive is the status, with empty read as active.
 func (s Status) OrActive() Status { return cmp.Or(s, StatusActive) }
 
-// Link ties a library's channel to a shared channel. The channel's own
-// Tags and Notes are the user's; the shared channel's are kept here.
+// Link marks a library's view of a shared channel. The channel's own Tags,
+// Notes, and ShortNames are the user's annotation; the shared channel's
+// tags and notes are kept here. The view has the shared channel's ID.
 type Link struct {
 	SharedID string
 	Tags     []string
@@ -48,18 +49,24 @@ type Link struct {
 	SeenRevision int
 }
 
-// Linked returns own, a link row, with the shared channel's fields filled
-// in from shared.
-func Linked(own, shared Channel) Channel {
+// Linked returns a library's view of shared: the shared channel, under its
+// own ID, with the user's annotation (own's tags, notes, and short names)
+// laid over it. Power and skip are the shared channel's; radios choose
+// their own. Seen is the revision the user last acknowledged.
+func Linked(own, shared Channel, seen int) Channel {
 	c := shared
-	c.ID, c.Tags, c.Notes, c.Skip, c.Power, c.ShortNames = own.ID, own.Tags, own.Notes, own.Skip, own.Power, own.ShortNames
-	c.CreatedAt, c.UpdatedAt, c.CopiedFrom = own.CreatedAt, own.UpdatedAt, ""
-	seen := 0
-	if own.Link != nil {
-		seen = own.Link.SeenRevision
+	c.Tags, c.Notes, c.ShortNames, c.CopiedFrom = own.Tags, own.Notes, own.ShortNames, ""
+	if !own.CreatedAt.IsZero() {
+		c.CreatedAt, c.UpdatedAt = own.CreatedAt, own.UpdatedAt
 	}
 	c.Link = &Link{SharedID: shared.ID, Tags: shared.Tags, Notes: shared.Notes, SeenRevision: seen}
 	return c
+}
+
+// Annotated reports whether a view of a shared channel carries the user's
+// own tags, notes, or short names.
+func (c Channel) Annotated() bool {
+	return c.Link != nil && (len(c.Tags) > 0 || strings.TrimSpace(c.Notes) != "" || len(c.ShortNames) > 0)
 }
 
 // AllTags is the channel's tags with a link's shared tags, sorted.

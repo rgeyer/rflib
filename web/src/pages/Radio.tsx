@@ -22,7 +22,6 @@ type SyncResult = {
     wrong_mode: unknown[];
     resorted: number;
     removed: unknown[];
-    linked: number;
     note: string;
   }[];
   added: number;
@@ -317,7 +316,6 @@ export function RadioPage() {
               <Text key={s.source.id} size="sm">
                 Source {s.source.number} ({s.source.plan ? `plan ${s.source.plan}` : s.source.query}):{" "}
                 {s.note || `${s.channels.length} to add`}
-                {s.linked > 0 && `, ${s.linked} to link from the shared list`}
                 {s.removed.length > 0 && `, ${s.removed.length} to take off`}
                 {s.skipped.length + s.wrong_mode.length > 0 && `, ${s.skipped.length + s.wrong_mode.length} skipped`}
                 {s.resorted > 0 && `, ${s.resorted} to re-sort`}

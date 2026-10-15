@@ -673,9 +673,6 @@ or moved by hand keep their places, and section starts stay put.`}
 					for _, c := range ss.Removed {
 						fmt.Fprintf(out, "would remove\tsource %d\t%s\t%s\tno longer in the plan\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
 					}
-					if ss.Linked > 0 {
-						fmt.Fprintf(out, "would link\tsource %d\t%d shared channels\n", n, ss.Linked)
-					}
 					if ss.Resorted > 0 {
 						fmt.Fprintf(out, "would re-sort\tsource %d\t%d channels\n", n, ss.Resorted)
 					}
@@ -686,9 +683,6 @@ or moved by hand keep their places, and section starts stay put.`}
 				}
 				if ss.Note != "" {
 					fmt.Fprintf(status, "%s: %s\n", app.SourceLabel(ss.Source), ss.Note)
-				}
-				if ss.Linked > 0 {
-					fmt.Fprintf(status, "%s: linked %d shared channels into the library\n", app.SourceLabel(ss.Source), ss.Linked)
 				}
 				if len(ss.Removed) > 0 {
 					fmt.Fprintf(status, "%s: removed %d no longer in the plan\n", app.SourceLabel(ss.Source), len(ss.Removed))

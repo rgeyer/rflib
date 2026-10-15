@@ -132,18 +132,52 @@ func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.Ra
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	channels, err := l.listChannels(ctx, `c.library_id=? AND c.id IN (SELECT channel_id FROM radio_channels WHERE radio_id=?)`, l.id, radioID)
+	// A radio holds the library's own channels and shared ones, seen
+	// through the library's annotations.
+	channels, err := l.listChannels(ctx, `c.library_id=? AND c.link_id IS NULL AND c.id IN (SELECT channel_id FROM radio_channels WHERE radio_id=?)`, l.id, radioID)
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[string]domain.Channel, len(channels))
+	byID := make(map[string]domain.Channel, len(ids))
 	for _, c := range channels {
 		byID[c.ID] = c
+	}
+	var shared []string
+	for _, id := range ids {
+		if _, ok := byID[id]; !ok {
+			shared = append(shared, id)
+		}
+	}
+	views, err := l.SharedViews(ctx, shared)
+	if err != nil {
+		return nil, err
+	}
+	for id, v := range views {
+		byID[id] = v
 	}
 	for i, id := range ids {
 		entries[i].Channel = byID[id]
 	}
 	return entries, nil
+}
+
+// canHold checks a channel can go on the library's radios: one of its own
+// (not an annotation), or a shared channel, which the library then follows.
+func (l *library) canHold(ctx context.Context, id string) error {
+	var own, shared int
+	if err := l.q.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM channels WHERE id=? AND library_id=? AND link_id IS NULL),
+		(SELECT count(*) FROM channels WHERE id=? AND link_id IS NULL AND library_id IN (SELECT id FROM libraries WHERE kind='`+sharedKind+`'))`,
+		id, l.id, id).Scan(&own, &shared); err != nil {
+		return err
+	}
+	switch {
+	case own > 0:
+		return nil
+	case shared > 0:
+		return l.Follow(ctx, id)
+	}
+	return fmt.Errorf("channel %q: %w", id, store.ErrNotFound)
 }
 
 // radioOrder returns a radio's channel IDs in memory order.
@@ -203,7 +237,7 @@ func (l *library) insertRadioChannels(ctx context.Context, radioID string, src *
 		var add []orderRow
 		for _, id := range channelIDs {
 			if !have[id] {
-				if err := tx.owns(ctx, "channels", "channel", id); err != nil {
+				if err := tx.canHold(ctx, id); err != nil {
 					return err
 				}
 				have[id] = true
@@ -602,4 +636,54 @@ func intOrNil(v *int) any {
 		return nil
 	}
 	return *v
+}
+
+// ReplaceOnRadios puts newID in oldID's place on every radio of the library
+// that holds oldID, keeping its overrides and section start; a radio that
+// holds newID already just drops oldID.
+func (l *library) ReplaceOnRadios(ctx context.Context, oldID, newID string) error {
+	return l.inTx(ctx, func(tx *library) error {
+		if err := tx.canHold(ctx, newID); err != nil {
+			return err
+		}
+		rows, err := tx.q.QueryContext(ctx, `SELECT radio_id FROM radio_channels WHERE channel_id=? AND radio_id IN (SELECT id FROM radios WHERE library_id=?)`, oldID, tx.id)
+		if err != nil {
+			return err
+		}
+		var radios []string
+		for rows.Next() {
+			var r string
+			if err := rows.Scan(&r); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			radios = append(radios, r)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for _, r := range radios {
+			var has int
+			if err := tx.q.QueryRowContext(ctx, `SELECT count(*) FROM radio_channels WHERE radio_id=? AND channel_id=?`, r, newID).Scan(&has); err != nil {
+				return err
+			}
+			if has == 0 {
+				if _, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET channel_id=? WHERE radio_id=? AND channel_id=?`, newID, r, oldID); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := tx.q.ExecContext(ctx, `DELETE FROM radio_channels WHERE radio_id=? AND channel_id=?`, r, oldID); err != nil {
+				return err
+			}
+			order, err := radioOrder(ctx, tx.q, r)
+			if err != nil {
+				return err
+			}
+			if err := renumber(ctx, tx.q, r, order); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

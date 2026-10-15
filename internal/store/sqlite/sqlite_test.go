@@ -334,3 +334,44 @@ INSERT INTO channel_tags VALUES ('s1', 'simplex'), ('s1', 'calling'), ('p1', 'si
 		t.Errorf("personal tags = %v, %v", c.Tags, err)
 	}
 }
+
+// v16 folds links back: radios hold the shared channels, a link's power and
+// skip move to the radios that had none, its seen revision becomes a
+// follow, and only links with tags, notes, or short names stay, as
+// annotations.
+func TestMigrateV16FoldLinks(t *testing.T) {
+	ctx := context.Background()
+	d := openAt(t, 15, `
+INSERT INTO channels (id, library_id, name, receive_hz, mode, receive_tone_kind, transmit_tone_kind, revision, created_at, updated_at) VALUES
+	('wx1', (SELECT id FROM libraries WHERE kind = 'shared'), 'WX1', 162550000, 'FM', 'none', 'none', 3, '', ''),
+	('wx2', (SELECT id FROM libraries WHERE kind = 'shared'), 'WX2', 162400000, 'FM', 'none', 'none', 1, '', '');
+INSERT INTO channels (id, library_id, name, receive_hz, mode, receive_tone_kind, transmit_tone_kind, link_id, seen_revision, power, skip, notes, created_at, updated_at) VALUES
+	('l1', (SELECT id FROM libraries WHERE is_default = 1), 'WX1', 162550000, 'FM', 'none', 'none', 'wx1', 2, 'low', 1, '', '', ''),
+	('l2', (SELECT id FROM libraries WHERE is_default = 1), 'WX2', 162400000, 'FM', 'none', 'none', 'wx2', 1, '', 0, 'by the coast', '', '');
+INSERT INTO radios (id, library_id, name, model, created_at, updated_at) VALUES
+	('ht', (SELECT id FROM libraries WHERE is_default = 1), 'HT', 'baofeng-uv5rm', '', ''),
+	('car', (SELECT id FROM libraries WHERE is_default = 1), 'Car', 'baofeng-uv5rm', '', '');
+INSERT INTO radio_channels (radio_id, channel_id, position, power, skip) VALUES
+	('ht', 'l1', 0, '', NULL), ('ht', 'l2', 1, 'high', NULL),
+	('car', 'wx1', 0, '', NULL), ('car', 'l1', 1, '', NULL), ('car', 'l2', 2, '', NULL);`)
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	def, _ := d.GetLibrary(ctx, "")
+	lib := d.Library(def.ID)
+	all, err := lib.ListChannels(ctx)
+	if err != nil || len(all) != 1 || all[0].ID != "wx2" || all[0].Notes != "by the coast" {
+		t.Fatalf("annotations = %+v, %v", all, err)
+	}
+	ht, err := lib.RadioEntries(ctx, "ht")
+	if err != nil || len(ht) != 2 || ht[0].Channel.ID != "wx1" || ht[0].Power != domain.PowerLow || ht[0].Skip == nil || !*ht[0].Skip || ht[1].Channel.ID != "wx2" || ht[1].Power != domain.PowerHigh {
+		t.Fatalf("HT = %+v, %v", ht, err)
+	}
+	car, err := lib.RadioEntries(ctx, "car")
+	if err != nil || len(car) != 2 || car[0].Channel.ID != "wx1" || car[1].Channel.ID != "wx2" || car[1].Position != 1 {
+		t.Fatalf("Car = %+v, %v", car, err)
+	}
+	if v, _ := lib.GetChannel(ctx, "wx1"); !v.Changed() || v.Link.SeenRevision != 2 {
+		t.Errorf("wx1 follow = %+v", v.Link)
+	}
+}

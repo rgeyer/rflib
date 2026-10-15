@@ -18,11 +18,11 @@ type cli struct {
 	db string
 }
 
-// linkLists links built-in lists' channels, which init put in the shared
-// list, into the library, as a user would from the shared list.
-func (c *cli) linkLists(lists ...string) {
+// sharedIDs maps built-in lists' channel names to their shared IDs; init
+// put them in the shared list, and radios take them directly.
+func (c *cli) sharedIDs(lists ...string) map[string]string {
 	c.t.Helper()
-	var ids []string
+	out := map[string]string{}
 	for _, id := range lists {
 		l, err := seed.Get(id)
 		if err != nil {
@@ -33,10 +33,21 @@ func (c *cli) linkLists(lists ...string) {
 			c.t.Fatal(err)
 		}
 		for _, r := range b.Records {
-			ids = append(ids, app.SeedID(id, r.Channel.Name))
+			out[r.Channel.Name] = app.SeedID(id, r.Channel.Name)
 		}
 	}
-	c.ok("channel", "link", "--id", strings.Join(ids, ","))
+	return out
+}
+
+// privateCopies copies built-in lists' channels into the library as
+// private channels, for tests whose subject is the library's own channels.
+func (c *cli) privateCopies(lists ...string) {
+	c.t.Helper()
+	var ids []string
+	for _, id := range c.sharedIDs(lists...) {
+		ids = append(ids, id)
+	}
+	c.ok("channel", "copy", "--id", strings.Join(ids, ","))
 }
 
 func newCLI(t *testing.T, initArgs ...string) *cli {
@@ -368,7 +379,7 @@ func TestSeedListAndUpdate(t *testing.T) {
 		t.Fatalf("shared noaa channels = %q", out)
 	}
 	c.fails("unknown list", "seed", "update", "us-pmr446")
-	c.linkLists("us-gmrs", "us-noaa")
+	c.sharedIDs("us-gmrs", "us-noaa")
 	c.ok("check") // built-in lists fit their own band plans
 
 	// --no-seed starts with an empty shared list; an update installs.
@@ -506,12 +517,7 @@ func TestNamesAndShortNames(t *testing.T) {
 
 func TestRadioWorkflow(t *testing.T) {
 	c := newCLI(t)
-	c.linkLists("us-gmrs", "us-noaa")
-	ids := map[string]string{}
-	for _, line := range strings.Split(c.ok("channel", "list"), "\n") {
-		f := strings.Split(line, "\t")
-		ids[f[1]] = f[0]
-	}
+	ids := c.sharedIDs("us-gmrs", "us-noaa")
 	if out := c.ok("model", "list"); !strings.Contains(out, "radioddity-uv5g\t") || !strings.Contains(out, "CHIRP: Radioddity UV-5G") {
 		t.Fatalf("model list = %q", out)
 	}
@@ -519,7 +525,7 @@ func TestRadioWorkflow(t *testing.T) {
 	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g", "--default-power", "high")
 	c.ok("radio", "sources", "add", "HT", "service:noaa")
 
-	if out := c.status("radio", "channels", "add", "HT", "-q", "is:repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
+	if out := c.status("radio", "channels", "add", "HT", "-q", "service:gmrs is:repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
 		t.Fatalf("add by filter = %q", out)
 	}
 	c.ok("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]+","+ids["GMRS 8"])
@@ -577,11 +583,15 @@ func TestRadioWorkflow(t *testing.T) {
 		t.Errorf("radio list = %q", c.ok("radio", "list"))
 	}
 
-	// Deleting a channel takes it off the radio.
-	c.ok("channel", "delete", "--id", ids["GMRS 1"], "--yes")
-	if strings.Contains(c.ok("radio", "channels", "list", "HT"), "\tGMRS 1\t") {
+	// Deleting a private channel takes it off the radio; a shared one isn't
+	// the library's to delete.
+	mine := c.ok("channel", "add", "--name", "Kids Simplex", "--rx", "462.6875", "--tx", "462.6875", "--service", "frs")
+	c.ok("radio", "channels", "add", "HT", "--id", mine)
+	c.ok("channel", "delete", "--id", mine, "--yes")
+	if strings.Contains(c.ok("radio", "channels", "list", "HT"), "\tKids Simplex\t") {
 		t.Error("deleted channel still on the radio")
 	}
+	c.fails("not found", "channel", "delete", "--id", ids["GMRS 1"], "--yes")
 	c.fails("requires --yes", "radio", "delete", "HT")
 	c.ok("radio", "delete", "HT", "--yes")
 	c.fails("not found", "radio", "show", "HT")
@@ -621,7 +631,7 @@ func TestRadioMoveBeforeAfter(t *testing.T) {
 
 func TestSearchAndSavedSearches(t *testing.T) {
 	c := newCLI(t)
-	c.linkLists("us-gmrs", "us-noaa", "us-ham-calling")
+	c.privateCopies("us-gmrs", "us-noaa", "us-ham-calling")
 	count := func(args ...string) int {
 		out := c.ok(append([]string{"channel", "list"}, args...)...)
 		if out == "" {
@@ -684,16 +694,16 @@ func TestSearchAndSavedSearches(t *testing.T) {
 
 func TestRadioSources(t *testing.T) {
 	c := newCLI(t)
-	c.linkLists("us-gmrs", "us-noaa")
+	c.sharedIDs("us-gmrs", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
 	c.fails("no sources", "radio", "sync", "HT")
 	c.ok("radio", "sources", "add", "HT", "band:noaa", "--sort", "freq", "--section-start", "100")
-	c.ok("radio", "sources", "add", "HT", "band:gmrs -is:repeater", "--sort", "freq")
+	c.ok("radio", "sources", "add", "HT", "service:gmrs -is:repeater", "--sort", "freq")
 	c.fails("unknown field", "radio", "sources", "add", "HT", "frq:1")
 	c.fails("unknown sort", "radio", "sources", "add", "HT", "tag:x", "--sort", "size")
 	// Make GMRS first: it claims its channels first and goes at the top.
 	c.ok("radio", "sources", "move", "HT", "2", "--to", "1")
-	if got := c.status("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (band:gmrs -is:repeater): added 22") || !strings.HasSuffix(got, "Added 29 channels to HT") {
+	if got := c.status("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (service:gmrs -is:repeater): added 22") || !strings.HasSuffix(got, "Added 29 channels to HT") {
 		t.Fatalf("sync = %q", got)
 	}
 	// A hand-added channel goes at the end and stays there.
@@ -730,7 +740,7 @@ func TestRadioSources(t *testing.T) {
 		t.Errorf("hand-added = %+v", rows[30])
 	}
 
-	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t\tfreq\tno\t23\tband:gmrs -is:repeater") ||
+	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t\tfreq\tno\t23\tservice:gmrs -is:repeater") ||
 		!strings.Contains(out, "2\t100\tfreq\tno\t7\tband:noaa") {
 		t.Errorf("sources list = %q", out)
 	}
@@ -746,7 +756,7 @@ func TestRadioSources(t *testing.T) {
 	if got := c.ok("radio", "sync", "HT", "--dry-run"); !strings.Contains(got, "would re-sort\tsource 1\t") || strings.Contains(got, "source 2\t") {
 		t.Errorf("dry run = %q", got)
 	}
-	if got := c.status("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (band:gmrs -is:repeater): re-sorted") || !strings.HasSuffix(got, "program the radio again") {
+	if got := c.status("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (service:gmrs -is:repeater): re-sorted") || !strings.HasSuffix(got, "program the radio again") {
 		t.Errorf("sync = %q", got)
 	}
 	rows = nil
@@ -784,7 +794,7 @@ func TestRadioSources(t *testing.T) {
 
 func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	c := newCLI(t)
-	c.linkLists("us-cb", "us-noaa")
+	c.privateCopies("us-cb", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g") // 130-176 and 400-520 MHz
 	if n := len(strings.Split(c.ok("channel", "list", "tunes:HT"), "\n")); n != 7 {
 		t.Errorf("tunes:HT = %d channels", n)
@@ -844,7 +854,7 @@ func TestOneLibrary(t *testing.T) {
 
 func TestTablesAndFields(t *testing.T) {
 	c := newCLI(t)
-	c.linkLists("us-gmrs")
+	c.privateCopies("us-gmrs")
 	id := c.ok("channel", "add", "--name", "A very long repeater name", "--rx", "146.94", "--tx", "146.34", "--tx-tone", "ctcss:100", "--tags", "ham")
 
 	// Piped text: no header, full IDs, the default columns.
@@ -882,7 +892,7 @@ func TestTablesAndFields(t *testing.T) {
 
 func TestPipedIDsAndBulkChanges(t *testing.T) {
 	c := newCLI(t)
-	c.linkLists("us-gmrs", "us-noaa")
+	c.privateCopies("us-gmrs", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
 
 	// A list pipes straight into --id -, header or not, and --id narrows a
@@ -956,31 +966,29 @@ func TestSharedChannels(t *testing.T) {
 	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 7 {
 		t.Errorf("tag list = %q", got)
 	}
-	// A private copy of GMRS 20 from before, named differently.
+	// A private channel matching GMRS 20, named differently, gives way to
+	// the shared channel, which keeps its name and tags as the annotation.
 	mine := c.ok("channel", "add", "--name", "Family 20", "--rx", "462.675", "--tx", "462.675", "--service", "gmrs", "--tags", "family")
-	if got := c.ok("shared", "link"); !strings.Contains(got, "\tFamily 20\tGMRS 20\t") {
-		t.Fatalf("shared link = %q", got)
-	}
-	ch := c.channel(mine[:8])
-	if ch.Link == nil || ch.Name != "GMRS 20" || strings.Join(ch.ShortNames, ",") != "Family 20" || strings.Join(ch.Tags, ",") != "family" {
+	sharedID := strings.TrimSpace(c.ok("shared", "link", "--fields", "shared_id"))
+	c.fails("not found", "channel", "show", "--id", mine)
+	ch := c.channel(sharedID)
+	if ch.Link == nil || ch.Name != "GMRS 20" || strings.Join(ch.ShortNames, ",") != "Family 20" || strings.Join(ch.Tags, ",") != "family" || ch.Revision != 1 {
 		t.Fatalf("converted channel = %+v", ch)
 	}
-	sharedID := ch.Link.SharedID
 
-	// The shared list is searchable and read-only.
+	// The shared list is searchable; only the annotation is the user's.
 	if got := c.ok("channel", "list", "in:shared", "band:noaa", "--fields", "name"); strings.Count(got, "\n") != 6 {
 		t.Errorf("in:shared = %q", got)
 	}
-	if got := c.channel(sharedID); got.Name != "GMRS 20" || got.Link != nil || got.Revision != 1 {
-		t.Errorf("show a shared channel = %+v", got)
-	}
-	c.fails("its rx can't change here", "channel", "update", "--id", mine, "--rx", "462.7")
-	c.ok("channel", "update", "--id", mine, "--power", "low", "--notes", "kids use this")
+	c.fails("its rx can't change here", "channel", "update", "--id", sharedID, "--rx", "462.7")
+	c.fails("set on each radio", "channel", "update", "--id", sharedID, "--power", "low")
+	c.ok("channel", "update", "--id", sharedID, "--notes", "kids use this")
 
-	// The maintainer takes it off the air; the link follows and shows up in
-	// changes with the radio it's on.
+	// On a radio, with the radio's own power. The maintainer takes it off
+	// the air; it shows up in changes with the radio it's on.
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
-	c.ok("radio", "channels", "add", "HT", "--id", mine)
+	c.ok("radio", "channels", "add", "HT", "--id", sharedID)
+	c.ok("radio", "channels", "set", "HT", "--id", sharedID, "--power", "low")
 	c.fails(`"reason" not set`, "shared", "status", "--id", sharedID, "--set", "off-air")
 	c.ok("shared", "status", "--id", sharedID[:8], "--set", "off-air", "--note", "antenna work", "--back", "2026-12-01", "--reason", "owner says")
 	if got := c.ok("shared", "changes", "--fields", "name,status,changes,reasons,radios"); got != "GMRS 20\toff-air\tstatus: active → off-air; status note: (none) → antenna work; back on: (none) → 2026-12-01\towner says\tHT" {
@@ -997,7 +1005,8 @@ func TestSharedChannels(t *testing.T) {
 		t.Errorf("changes after ack = %q", got)
 	}
 
-	// Retired and replaced: relink moves the link, and history shows why.
+	// Retired and replaced: relink moves its place on the radio and the
+	// annotation, and history shows why.
 	next := strings.TrimSpace(c.ok("channel", "list", "in:shared", "service:gmrs", "freq:462.7", "duplex:simplex", "--fields", "id"))
 	c.ok("shared", "status", "--id", sharedID, "--set", "retired", "--replaced-by", next, "--reason", "moved up a channel")
 	if got := c.ok("shared", "changes", "--fields", "replacement"); !strings.HasPrefix(got, "GMRS 21 (") {
@@ -1006,39 +1015,42 @@ func TestSharedChannels(t *testing.T) {
 	if got := c.status("shared", "relink", "--all"); got != "Relinked 1 channels to their replacements" {
 		t.Errorf("relink = %q", got)
 	}
-	if ch := c.channel(mine); ch.Name != "GMRS 21" || ch.Power != "low" || ch.Notes != "kids use this" {
+	if ch := c.channel(next); ch.Name != "GMRS 21" || ch.Notes != "kids use this" {
 		t.Errorf("relinked channel = %+v", ch)
+	}
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "name,power"); got != "GMRS 21\tLow*" {
+		t.Errorf("relinked on the radio = %q", got)
 	}
 	if got := c.ok("shared", "history", "--id", sharedID, "--fields", "revision,reason"); got != "1\tbuilt-in list us-gmrs\n2\towner says\n3\tmoved up a channel" {
 		t.Errorf("history = %q", got)
 	}
 
-	// A backup keeps links; restored where the shared channel is missing,
-	// a link becomes a private copy.
+	// A backup keeps annotations; restored where the shared channel is
+	// missing, it becomes a private copy.
 	backup := c.ok("export", "json")
 	other := newCLI(t, "--no-seed")
 	out, stderr, err := other.execIn(backup, "import", "json")
 	if err != nil || !strings.Contains(stderr, "its shared channel isn't in this database's shared list, so it's a private copy") {
 		t.Fatalf("restore elsewhere: %v\n%s%s", err, out, stderr)
 	}
-	if ch := other.channel(mine); ch.Link != nil || ch.CopiedFrom != next || !strings.Contains(ch.Notes, "kids use this") {
+	if ch := other.channel(next); ch.Link != nil || ch.CopiedFrom != next || !strings.Contains(ch.Notes, "kids use this") {
 		t.Errorf("restored copy = %+v", ch)
 	}
 	again := newCLI(t)
-	again.linkLists("us-gmrs")
-	again.ok("channel", "delete", "-q", "freq:462.7 duplex:simplex", "--yes")
 	if _, stderr, err := again.execIn(backup, "import", "json", "--on-duplicate", "skip"); err != nil {
 		t.Fatalf("restore with the shared list: %v %s", err, stderr)
 	}
-	if ch := again.channel(mine); ch.Link == nil || ch.Link.SharedID != next {
-		t.Errorf("restored link = %+v", ch)
+	if ch := again.channel(next); ch.Link == nil || ch.ID != next || ch.Notes != "kids use this" {
+		t.Errorf("restored annotation = %+v", ch)
 	}
 
-	// A copy can be edited.
-	if got := c.status("channel", "copy", "--id", mine); got != "Copied 1 links to private channels" {
-		t.Errorf("copy = %q", got)
+	// A copy takes the shared channel's place on the radio and can be
+	// edited.
+	copied := strings.TrimSpace(c.ok("channel", "copy", "--id", next))
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "id,power"); got != copied+"\tLow*" {
+		t.Errorf("radio after copy = %q, want %s", got, copied)
 	}
-	c.ok("channel", "update", "--id", mine, "--rx", "462.7125")
+	c.ok("channel", "update", "--id", copied, "--rx", "462.7125")
 
 	// The maintainer adds a channel from a file; tags must be shared ones.
 	file := writeFile(t, "name,receive_mhz,transmit_mhz,tags\nMarian,147.300,147.900,net;mine\n")
@@ -1050,8 +1062,11 @@ func TestSharedChannels(t *testing.T) {
 	if got := c.ok("channel", "list", "in:shared", "name:Marian", "--fields", "name,tags"); got != "Marian\tnet" {
 		t.Errorf("imported shared channel = %q", got)
 	}
-	if got := c.ok("channel", "link", "-q", "name:Marian"); len(got) != 36 {
-		t.Errorf("link printed %q", got)
+	// Annotating it puts it in the library, by its shared ID.
+	marian := strings.TrimSpace(c.ok("channel", "list", "in:shared", "name:Marian", "--fields", "id"))
+	c.ok("channel", "update", "--id", marian, "--notes", "club net")
+	if got := c.ok("channel", "list", "name:Marian", "--fields", "id,notes"); got != marian+"\tclub net" {
+		t.Errorf("annotated = %q", got)
 	}
 }
 

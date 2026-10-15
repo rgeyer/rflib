@@ -15,16 +15,17 @@ import (
 )
 
 const sharedHelp = `The shared library holds channels shared with everyone, such as the built-in
-lists and, later, channels from the hosted service. Your library links to
-them: a link shows the shared channel and follows its corrections, and keeps
-your own tags, notes, skip, power, and short names. Find shared channels with
-in:shared (rflib channel list in:shared band:2m), link them with rflib
-channel link, and make a private copy you can edit with rflib channel copy.
+lists and the club's own. Your radios use them directly and follow their
+corrections. Find them with in:shared (rflib channel list in:shared band:2m)
+and put them on a radio with rflib radio channels add. Your own tags, notes,
+and short names on a shared channel (rflib channel update) put it in your
+library; power and scan are set on each radio. rflib channel copy makes a
+private copy you can edit.
 
 A shared channel has a status: active, off-air (temporarily, with an
 expected-back date if known), or retired (possibly replaced by another).
-Off-air channels stay on your radios but aren't scanned. rflib shared
-changes lists links whose shared channel changed, with the radios they're on.`
+Off-air channels stay on your radios but aren't scanned. rflib shared changes
+lists the shared channels you use that changed, with the radios they're on.`
 
 // withShared opens the shared library's operations.
 func withShared(cmd *cobra.Command, fn func(*app.Service) error) error {
@@ -38,7 +39,7 @@ func withShared(cmd *cobra.Command, fn func(*app.Service) error) error {
 }
 
 func newSharedCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "shared", Short: "Link to shared channels and follow their changes", Long: sharedHelp}
+	cmd := &cobra.Command{Use: "shared", Short: "Use shared channels and follow their changes", Long: sharedHelp}
 	cmd.AddCommand(newSharedLinkCommand(), newSharedChangesCommand(), newSharedAckCommand(), newSharedRelinkCommand(), newSharedHistoryCommand(),
 		newSharedImportCommand(), newSharedExportCommand(), newSharedUpdateCommand(), newSharedStatusCommand())
 	return cmd
@@ -46,54 +47,17 @@ func newSharedCommand() *cobra.Command {
 
 // --- in a library ---
 
-func newChannelLinkCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "link", Short: "Link shared channels into the library", Args: cobra.NoArgs,
-		Long: `Link shared channels into the library, chosen by --id or --query from the shared
-list. A link shows the shared channel and follows its changes; your own tags,
-notes, skip, power, and short names stay yours. The new links' IDs go to
-stdout.
-
-  rflib channel list in:shared band:noaa
-  rflib channel link -q 'band:noaa' --tags weather
-
-` + stdinIDHelp}
-	idsFlag(cmd, "Shared channel IDs")
-	cmd.Flags().StringP("query", "q", "", "Link the shared channels matching this query")
-	cmd.Flags().String("tags", "", "Comma-separated tags of your own for the new links")
-	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		sel, err := selection(cmd)
-		if err != nil {
-			return err
-		}
-		return withApp(cmd, func(a *app.Service) error {
-			res, err := a.LinkChannels(ctx(cmd), sel, splitTags(getString(cmd, "tags")))
-			if err != nil {
-				return err
-			}
-			for _, c := range res.Linked {
-				fmt.Fprintln(cmd.OutOrStdout(), c.ID)
-			}
-			fmt.Fprintf(cmd.ErrOrStderr(), "Linked %d channels", len(res.Linked))
-			if n := len(res.Already); n > 0 {
-				fmt.Fprintf(cmd.ErrOrStderr(), "; %d already linked", n)
-			}
-			fmt.Fprintln(cmd.ErrOrStderr())
-			return nil
-		})
-	}
-	return cmd
-}
-
 func newChannelCopyCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "copy", Short: "Make links into private channels you can edit", Args: cobra.NoArgs,
-		Long: `Make links into private channels showing what they showed, with the shared
-tags and notes made your own. They keep their IDs, so radios keep them, but
-stop following the shared channel's changes. Private channels in the selection
-are left alone.
+	cmd := &cobra.Command{Use: "copy", Short: "Make private channels you can edit from shared ones", Args: cobra.NoArgs,
+		Long: `Make a private channel from each selected shared channel, showing what it
+showed, with the shared tags and notes made your own. The copy takes the shared
+channel's place on your radios, keeping their settings, and stops following the
+shared channel's changes; your notes and tags on the shared channel go with it.
+The copies' IDs go to stdout. Private channels in the selection are left alone.
 
 ` + stdinIDHelp}
 	idsFlag(cmd, "Channel IDs")
-	cmd.Flags().StringP("query", "q", "", "Copy the links matching this query")
+	cmd.Flags().StringP("query", "q", "", "Copy the shared channels in your library matching this query")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		sel, err := selection(cmd)
 		if err != nil {
@@ -101,22 +65,28 @@ are left alone.
 		}
 		return withApp(cmd, func(a *app.Service) error {
 			cs, err := a.CopyChannels(ctx(cmd), sel)
-			if err == nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Copied %d links to private channels\n", len(cs))
+			if err != nil {
+				return err
 			}
-			return err
+			for _, c := range cs {
+				fmt.Fprintln(cmd.OutOrStdout(), c.ID)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "Copied %d shared channels to private channels\n", len(cs))
+			return nil
 		})
 	}
 	return cmd
 }
 
 func newSharedLinkCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "link", Short: "Turn private channels that match shared ones into links", Args: cobra.NoArgs,
-		Long: `Turn the library's private channels into links to the shared channels they
-match on the air: the same frequencies, tones, and tone squelch. Each keeps
-its ID, so radios keep it, and its own tags and notes; a name that differs
-from the shared one is kept as a short name. Lists the changes on stdout.`}
-	cmd.Flags().Bool("dry-run", false, "List what would become a link without changing anything")
+	cmd := &cobra.Command{Use: "link", Short: "Replace your channels that match shared ones with the shared ones", Args: cobra.NoArgs,
+		Long: `Replace the library's private channels with the shared channels they match on
+the air: the same frequencies, tones, and tone squelch, and the same service or
+none. The shared channel takes each one's place on your radios, keeping their
+settings; its tags and notes, and a name that differs from the shared one (as a
+short name), become yours on the shared channel; and the private channel goes.
+Lists the changes on stdout.`}
+	cmd.Flags().Bool("dry-run", false, "List what would be replaced without changing anything")
 	conversionListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if err := conversionListing.check(cmd); err != nil {
@@ -154,11 +124,12 @@ var conversionListing = listing[app.Conversion]{
 }
 
 func newSharedChangesCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "changes", Short: "List links whose shared channel changed", Args: cobra.NoArgs,
-		Long: `List the library's links whose shared channel changed since you acknowledged
-it: what changed, why, and the radios it's on, which need programming again.
-A retired channel shows its replacement; rflib shared relink moves links over
-to it. rflib shared ack marks changes as seen.`}
+	cmd := &cobra.Command{Use: "changes", Short: "List the shared channels you use that changed", Args: cobra.NoArgs,
+		Long: `List the shared channels you use, on your radios or with your notes and tags,
+that changed since you acknowledged them: what changed, why, and the radios
+they're on, which need programming again. A retired channel shows its
+replacement; rflib shared relink moves it over. rflib shared ack marks changes
+as seen.`}
 	changeListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if err := changeListing.check(cmd); err != nil {
@@ -195,12 +166,12 @@ var changeListing = listing[app.Change]{
 
 func linkSelection(cmd *cobra.Command) {
 	idsFlag(cmd, "Channel IDs")
-	cmd.Flags().StringP("query", "q", "", "The links matching this query")
+	cmd.Flags().StringP("query", "q", "", "The changed shared channels matching this query")
 	cmd.Flags().Bool("all", false, "Every link with changes")
 }
 
 func newSharedAckCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "ack", Short: "Mark links' shared changes as seen", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "ack", Short: "Mark shared channels' changes as seen", Args: cobra.NoArgs}
 	linkSelection(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		sel, err := selection(cmd)
@@ -210,7 +181,7 @@ func newSharedAckCommand() *cobra.Command {
 		return withApp(cmd, func(a *app.Service) error {
 			cs, err := a.Acknowledge(ctx(cmd), sel)
 			if err == nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Acknowledged changes to %d links\n", len(cs))
+				fmt.Fprintf(cmd.ErrOrStderr(), "Acknowledged changes to %d shared channels\n", len(cs))
 			}
 			return err
 		})
@@ -219,9 +190,10 @@ func newSharedAckCommand() *cobra.Command {
 }
 
 func newSharedRelinkCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "relink", Short: "Move links to retired channels over to their replacements", Args: cobra.NoArgs,
-		Long: `Move links to retired shared channels over to the channels that replaced them.
-The links keep their IDs, so radios keep them; program the radios again.`}
+	cmd := &cobra.Command{Use: "relink", Short: "Move retired shared channels over to their replacements", Args: cobra.NoArgs,
+		Long: `Put each retired shared channel's replacement in its place on your radios,
+keeping their settings, and move your notes and tags over; program the radios
+again.`}
 	linkSelection(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		sel, err := selection(cmd)
@@ -241,7 +213,7 @@ The links keep their IDs, so radios keep them; program the radios again.`}
 
 func newSharedHistoryCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "history", Short: "Show a shared channel's revisions", Args: cobra.NoArgs,
-		Long: "Show a shared channel's revisions, oldest first: when, why, and what changed.\nGive a link's ID to see its shared channel's."}
+		Long: "Show a shared channel's revisions, oldest first: when, why, and what changed."}
 	idFlag(cmd, "Channel ID, or a link's (required)")
 	revisionListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {

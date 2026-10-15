@@ -189,7 +189,8 @@ func (s *Service) radioOrModel(ctx context.Context, ref string) (model.Model, er
 }
 
 // FindChannels returns the channels matching a query, in name order. With
-// in:shared it searches the whole shared list instead of the library.
+// in:shared it searches the whole shared list instead of the library, as
+// the library sees it (with its annotations).
 func (s *Service) FindChannels(ctx context.Context, n query.Node) ([]domain.Channel, error) {
 	scope, n, err := query.SplitScope(n)
 	if err != nil {
@@ -199,13 +200,14 @@ func (s *Service) FindChannels(ctx context.Context, n query.Node) ([]domain.Chan
 	if err != nil {
 		return nil, err
 	}
-	from := s.lib
-	if scope == "shared" {
-		if from, err = s.sharedLibrary(ctx); err != nil {
-			return nil, err
-		}
+	var all []domain.Channel
+	switch {
+	case scope == "shared" && !s.info.Shared:
+		// The library sees shared channels through its annotations.
+		all, err = s.radioScope(ctx, true)
+	default:
+		all, err = s.lib.ListChannels(ctx)
 	}
-	all, err := from.ListChannels(ctx)
 	if err != nil {
 		return nil, err
 	}
