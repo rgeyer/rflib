@@ -1,0 +1,12 @@
+RLEANS, LOUISIANA, U.S.A.
+
+CALL SIGN      FREQUENCIES        TIMES (UTC)         EMISSION         POWER
+NMG           4317.9 kHz      ALL BROADCAST TIMES      F3C             4 KW
+              8503.9 kHz      ALL BROADCAST TIMES      F3C             4 KW
+             12789.9 kHz      ALL BROADCAST TIMES      F3C             4 KW
+             17146.4 kHz      1200-2045                F3C             4 KW
+
+TRANS TIME   CONTENTS OF TRANSMISSION                  RPM/IOC  VALID    MAP
+                                                               TIME     AREA
+0000/1200   TEST PATTERN                               120/576
+0005/1205   U.S./TROPICAL SURFACE ANALYSIS (W HALF)    120/576  18/06     1

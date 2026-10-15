@@ -23,20 +23,8 @@ type List struct {
 // lists describes every file in data/; TestEveryListIsDescribed keeps them in
 // step.
 //
-// The lists are hand-entered. Sources, checked 2026-10-14:
-//   - us-ft4, us-ft8, us-wspr: WSJT-X's default frequency list
-//     (models/FrequencyList.cpp).
-//   - us-js8: JS8Call's default frequency list (FrequencyList.cpp).
-//   - us-psk31, us-sstv: common US activity frequencies from amateur
-//     compilations; there is no single authority.
-//   - us-beacons: NCDXF/IARU International Beacon Project.
-//   - us-fm-sats: AMSAT's live FM satellite summary (updated 2026-07-10);
-//     satellites come and go, so check AMSAT's status page.
-//   - us-radiofax: NWS Public Information Statement 26-48 (2026-06-09), which
-//     proposes ending these broadcasts at the end of 2026. Dial frequencies
-//     are 1.9 kHz below the assigned ones it lists.
-//   - us-interop: the NIFOG, via the RadioReference wiki's national
-//     interoperability table.
+// The lists are hand-entered. Each one's source, and how it's checked, is in
+// tools/datacheck/sources.yaml.
 var lists = []List{
 	{"us-60m", "US amateur 60m channels 1-5 (USB dial frequencies)"},
 	{"us-aprs", "APRS: the national frequency and the space digipeaters"},

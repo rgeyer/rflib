@@ -1,0 +1,559 @@
+Abbree AR-518
+Abbree AR-63
+Abbree AR-730
+Abbree AR-869
+Abbree AR-F5
+Alinco DJ175
+Alinco DJ596
+Alinco DJ-G7EG
+Alinco DJ-G7T
+Alinco DR03T
+Alinco DR06T
+Alinco DR135T
+Alinco DR235T
+Alinco DR435T
+Alinco DR735T
+Anysecu AC-580
+Anysecu UV-A37
+Anysecu WP-9900
+AnyTone 5888UV
+AnyTone 5888UVIII
+AnyTone 778UV
+AnyTone 778UV VOX
+AnyTone 779UV
+AnyTone OBLTR-8R
+AnyTone TERMN-8R
+AOR AR8200
+ARRL Travel Plus
+Bajeton BJ7800
+Baofeng 5RM
+Baofeng 5RX
+Baofeng BF-1901
+Baofeng BF-1904
+Baofeng BF-1909
+Baofeng BF-888
+Baofeng BF-A58
+Baofeng BF-A58S
+Baofeng BF-F8HP
+Baofeng BF-F8HP-PRO
+Baofeng BF-M4
+Baofeng BF-T1
+Baofeng BF-T20
+Baofeng BF-T20D
+Baofeng BF-T20FRS
+Baofeng BF-T8
+Baofeng BF-V12D
+Baofeng BF-V8A
+Baofeng DM-32UV
+Baofeng F-11
+Baofeng GM-15Pro
+Baofeng GM-21
+Baofeng GM-5RH
+Baofeng GT-3WP
+Baofeng GT-5R
+Baofeng K5-Plus
+Baofeng K6
+Baofeng MP31
+Baofeng UV-13Pro
+Baofeng UV-17
+Baofeng UV-17Pro
+Baofeng UV-17ProGPS
+Baofeng UV-17R-Plus
+Baofeng UV-21ProGPS
+Baofeng UV-21ProV2
+Baofeng UV-25
+Baofeng UV-28Plus
+Baofeng UV-32
+Baofeng UV-3R
+Baofeng UV-5G Mini
+Baofeng UV-5G Pro
+Baofeng UV-5R
+Baofeng UV-5RH
+Baofeng UV-5R Mini
+Baofeng UV-5RM Plus
+Baofeng UV-6
+Baofeng UV-6R
+Baofeng UV-82
+Baofeng UV-82HP
+Baofeng UV-82WP
+Baofeng UV-9G
+Baofeng UV-9R
+Baofeng UV-B5
+Baofeng UV-S9X3
+Baofeng W31D
+Baofeng W31E
+Baojie BJ-218
+Baojie BJ-318
+Baojie BJ-9900
+Baojie BJ-UV55
+Boblov X3Plus
+Boristone 8RS
+BTECH FRS-A1
+BTECH FRS-B1
+BTECH GMRS-20V2
+BTECH GMRS-50V2
+BTECH GMRS-50X1
+BTECH GMRS-V1
+BTECH GMRS-V2
+BTECH MURS-V1
+BTECH MURS-V2
+BTECH UV-2501
+BTECH UV-2501+220
+BTECH UV-25X2
+BTECH UV-25X2_G2
+BTECH UV-25X4
+BTECH UV-25X4_G2
+BTECH UV-5001
+BTECH UV-50X2
+BTECH UV-50X2_G2
+BTECH UV-50X3
+BTECH UV-5X3
+Cignus XTR-5
+Commander KG-UV
+CRT Micron UV
+CRT Micron UV V2
+Explorer QRZ-1
+Feidaxin FD-150A
+Feidaxin FD-160A
+Feidaxin FD-268A
+Feidaxin FD-268B
+Feidaxin FD-288A
+Feidaxin FD-288B
+Feidaxin FD-450A
+Feidaxin FD-460A
+Feidaxin FD-460UH
+Generic CSV
+HamGeek HG-590
+Hiroyasu HI-8811
+HobbyPCB RS-UV3
+Icom IC-208H
+Icom IC-2100H
+Icom IC-2200H
+Icom IC-2300H
+Icom IC-2720H
+Icom IC-2730A
+Icom IC-2730E
+Icom IC-2820H
+Icom IC-7000
+Icom IC-7100
+Icom IC-7200
+Icom IC-7300
+Icom IC-7400
+Icom IC-7410
+Icom IC-746
+Icom IC-7610
+Icom IC-910
+Icom IC-91/92AD
+Icom IC-9700
+Icom IC-E90
+Icom IC-F621-2
+Icom IC-M710
+Icom IC-P7
+Icom IC-Q7A
+Icom IC-T10
+Icom IC-T70
+Icom IC-T7H
+Icom IC-T8A
+Icom IC-U82
+Icom IC-V80
+Icom IC-V82
+Icom IC-V86
+Icom IC-W32A
+Icom IC-W32E
+Icom ID-31A
+Icom ID-4100
+Icom ID-51
+Icom ID-5100
+Icom ID-51 Plus
+Icom ID-51 Plus2
+Icom ID-800H (v2)
+Icom ID-80H
+Icom ID-880H
+Intek HR-2040
+Intek KT-980HP
+Jetstream JT220M
+Jetstream JT270M
+Jetstream JT270MH
+Jianpai 8800_Plus
+JJCC JC-8629
+Kenwood HMK
+Kenwood ITM
+Kenwood NX-800
+Kenwood TH-D7
+Kenwood TH-D72 (clone mode)
+Kenwood TH-D72 (live mode)
+Kenwood TH-D74 (clone mode)
+Kenwood TH-D74 (live mode)
+Kenwood TH-D75
+Kenwood TH-D7G
+Kenwood TH-F6
+Kenwood TH-F7
+Kenwood TH-G71
+Kenwood TH-K2
+Kenwood TK-2140K
+Kenwood TK-2180
+Kenwood TK-260
+Kenwood TK-260G
+Kenwood TK-270
+Kenwood TK-270G
+Kenwood TK-272
+Kenwood TK-272G
+Kenwood TK-278
+Kenwood TK-278G
+Kenwood TK-280
+Kenwood TK-3140K
+Kenwood TK-3140K2
+Kenwood TK-3140K3
+Kenwood TK-3180E
+Kenwood TK-3180K
+Kenwood TK-3180K2
+Kenwood TK-360
+Kenwood TK-360G
+Kenwood TK-370
+Kenwood TK-370G
+Kenwood TK-372
+Kenwood TK-372G
+Kenwood TK-378
+Kenwood TK-378G
+Kenwood TK-380
+Kenwood TK-388G
+Kenwood TK-481
+Kenwood TK-690
+Kenwood TK-7102
+Kenwood TK-7108
+Kenwood TK-7160K
+Kenwood TK-7160M
+Kenwood TK-7162
+Kenwood TK-7180
+Kenwood TK-7180E
+Kenwood TK-760
+Kenwood TK-760G
+Kenwood TK-762
+Kenwood TK-762G
+Kenwood TK-768
+Kenwood TK-768G
+Kenwood TK-780
+Kenwood TK-790
+Kenwood TK-8102
+Kenwood TK-8108
+Kenwood TK-8160K
+Kenwood TK-8160M
+Kenwood TK-8180
+Kenwood TK-8180E
+Kenwood TK-860
+Kenwood TK-860G
+Kenwood TK-862
+Kenwood TK-862G
+Kenwood TK-868
+Kenwood TK-868G
+Kenwood TK-880
+Kenwood TK-890
+Kenwood TK-981
+Kenwood TM-271
+Kenwood TM-281
+Kenwood TM-471
+Kenwood TM-D700
+Kenwood TM-D710
+Kenwood TM-D710_CloneMode
+Kenwood TM-D710G
+Kenwood TM-D710G_CloneMode
+Kenwood TM-G707
+Kenwood TM-V7
+Kenwood TM-V71
+Kenwood TS-2000
+Kenwood TS-480_CloneMode
+Kenwood TS-480_LiveMode
+Kenwood TS-590S_CloneMode
+Kenwood TS-590SG_CloneMode
+Kenwood TS-590S/SG_LiveMode
+Kenwood TS-790E
+Kenwood TS-850
+KSUN M6
+KYD IP-620
+KYD NC-630A
+Lanchonlh HG-UV98
+Leixen VV-898
+Leixen VV-898E
+Leixen VV-898E (Dual Bank)
+Leixen VV-898S
+Leixen VV-898S (Dual Bank)
+LUITON LT-316
+LUITON LT-580_UHF
+LUITON LT-580_VHF
+LUITON LT-588UV
+LUITON LT-725UV
+Maverick RA-100
+Maverick RA-425
+MaxTalker MT-5RM
+MaxTalker MT-8S
+MaxTalker P15
+MaxTalker TK-6
+Midland DBR2500
+MMLradio JC-8629
+MTC UV-5R-3
+Polmar DB-50M
+Powerwerx DB-750X
+Puxing PX-2R
+Puxing PX-777
+Puxing PX-888K
+Q-MAC HF-90 (v300 or earlier)
+Q-MAC HF-90 (v301 or later)
+Quansheng TG-UV2+
+Quansheng TK11
+Quansheng UV-K1
+Quansheng UV-K5
+Quansheng UV-K5 (egzumer)
+Quansheng UV-K5 (OSFW)
+Quansheng UV-K5 (unsupported)
+QYT KT-5000
+QYT KT5800
+QYT KT7900D
+QYT KT8900
+QYT KT8900D
+QYT KT8900R
+QYT KT-8R
+QYT KT980PLUS
+QYT KT-UV980
+QYT KT-WP12
+Radioddity DB20-G
+Radioddity DB25-G
+Radioddity DB40-G
+Radioddity GA-2S
+Radioddity GA-510
+Radioddity GA-510 (V2)
+Radioddity GM-30
+Radioddity GM-30 Plus
+Radioddity GM-30 Pro
+Radioddity GS-10B
+Radioddity GS-5B
+Radioddity MU-5
+Radioddity R2
+Radioddity UV-5G
+Radioddity UV-5G Plus
+Radioddity UV-5RX3
+Radioddity UV-82X3
+Radtel RT-470
+Radtel RT-470L
+Radtel RT-470X
+Radtel RT-470X_BT
+Radtel RT-490
+Radtel RT-495
+Radtel RT-620
+Radtel RT-630
+Radtel RT-730
+Radtel RT-880G
+Radtel RT-900
+Radtel RT-900_BT
+Radtel RT-910
+Radtel RT-910_BT
+Radtel RT-920
+Radtel T18
+Retevis C2
+Retevis H777
+Retevis H777H_FRS
+Retevis H777H_PMR
+Retevis H777 Plus
+Retevis H777S
+Retevis H777 (V4)
+Retevis HA1G
+Retevis HA1UV
+Retevis HA2
+Retevis MA1
+Retevis P2
+Retevis P62
+Retevis RA25
+Retevis RA685
+Retevis RA79
+Retevis RA85
+Retevis RA86
+Retevis RA87
+Retevis RA89
+Retevis RB15
+Retevis RB17
+Retevis RB17A
+Retevis RB17P
+Retevis RB17V
+Retevis RB18
+Retevis RB19
+Retevis RB19P
+Retevis RB23
+Retevis RB26
+Retevis RB27
+Retevis RB27B
+Retevis RB27V
+Retevis RB28
+Retevis RB28B
+Retevis RB29
+Retevis RB615
+Retevis RB617
+Retevis RB618
+Retevis RB619
+Retevis RB626
+Retevis RB627B
+Retevis RB628
+Retevis RB628B
+Retevis RB629
+Retevis RB75
+Retevis RB85
+Retevis RB87
+Retevis RB89
+Retevis RT1
+Retevis RT15
+Retevis RT16
+Retevis RT18
+Retevis RT19
+Retevis RT20
+Retevis RT21
+Retevis RT21H
+Retevis RT21V
+Retevis RT22
+Retevis RT22FRS
+Retevis RT22S
+Retevis RT23
+Retevis RT24
+Retevis RT24V
+Retevis RT26
+Retevis RT29_UHF
+Retevis RT29_VHF
+Retevis RT40B
+Retevis RT47
+Retevis RT47V
+Retevis RT6
+Retevis RT619
+Retevis RT622
+Retevis RT647
+Retevis RT668
+Retevis RT68
+Retevis RT76
+Retevis RT76P
+Retevis RT85
+Retevis RT86
+Retevis RT86S
+Retevis RT87
+Retevis RT9000D_136-174
+Retevis RT9000D_220-260
+Retevis RT9000D_400-490
+Retevis RT9000D_66-88
+Retevis RT95
+Retevis RT95 VOX
+Retevis RT97S
+Retevis RT98
+RT Systems CSV
+Rugged RH5R-V2
+Ruyage UV58Plus
+Sainsonic AP510
+SenhaiX 8800
+Socotran FB-8629
+Socotran JC-8629
+Talkpod A36plus
+Talkpod A36plus_8w
+TDXone TD-Q8A
+TIDRADIO TD-H3
+TIDRADIO TD-H3-GMRS
+TIDRADIO TD-H3-HAM
+TIDRADIO TD-H6
+TIDRADIO TD-H8
+TIDRADIO TD-H8 (G3)
+TIDRADIO TD-H8-GMRS
+TIDRADIO TD-H8-GMRS (G3)
+TIDRADIO TD-H8-HAM
+TIDRADIO TD-H8-HAM (G3)
+TIDRADIO TD-M11 (16 PMR)
+TIDRADIO TD-M11 (16 PMR v0.9.5)
+TIDRADIO TD-M11 (22 FRS)
+TID TD-M8
+TID TD-UV68
+TYT TH-350
+TYT TH-350 (US)
+TYT TH-7800
+TYT TH-7800 File
+TYT TH9000_144
+TYT TH9000_220
+TYT TH9000_440
+TYT TH-9800
+TYT TH-9800 File
+TYT TH-UV3R
+TYT TH-UV3R-25
+TYT TH-UV8000
+TYT TH-UV88
+TYT TH-UV98
+TYT TH-UVF1
+TYT TH-UVF8D
+WACCOM MINI-8900
+WLN KD-C1
+Wouxun KG-1000G
+Wouxun KG-1000G Plus
+Wouxun KG-805G
+Wouxun KG-816
+Wouxun KG-818
+Wouxun KG-935G
+Wouxun KG-935G Plus
+Wouxun KG-935H
+Wouxun KG-UV6
+Wouxun KG-UV8D
+Wouxun KG-UV8D Plus
+Wouxun KG-UV8E
+Wouxun KG-UV8H
+Wouxun KG-UV920P-A
+Wouxun KG-UV980P
+Wouxun KG-UV9D Plus
+Wouxun KG-UV9G Pro
+Wouxun KG-UV9GX
+Wouxun KG-UV9K
+Wouxun KG-UV9PX
+Wouxun KG-UVD1P
+Wouxun KG-XS20G
+Wouxun KG-XS20G Plus
+Wouxun KG-XS20H
+Yaesu FT-1500M
+Yaesu FT-1802M
+Yaesu FT-1D (R)
+Yaesu FT-25R
+Yaesu FT-2800M
+Yaesu FT-2900R/1900R
+Yaesu FT-2900R/1900R(TXMod) (Opened Xmit)
+Yaesu FT2D (R)
+Yaesu FT2D (Rv2)
+Yaesu FT3D (R)
+Yaesu FT-450
+Yaesu FT-450D
+Yaesu FT-4VR
+Yaesu FT-4XE
+Yaesu FT-4XR
+Yaesu FT-50
+Yaesu FT5D (R)
+Yaesu FT-60
+Yaesu FT-65E
+Yaesu FT-65R
+Yaesu FT-70D
+Yaesu FT-7100M
+Yaesu FT-7800/7900
+Yaesu FT-8100
+Yaesu FT-817
+Yaesu FT-817ND
+Yaesu FT-817ND (US)
+Yaesu FT-818
+Yaesu FT-818ND (US)
+Yaesu FT-857/897
+Yaesu FT-857/897 (US)
+Yaesu FT-8800
+Yaesu FT-8900
+Yaesu FT-90
+Yaesu FTM-300DR
+Yaesu FTM-3200D (R)
+Yaesu FTM-350
+Yaesu FTM-7250D (R)
+Yaesu VX-1
+Yaesu VX-150
+Yaesu VX-170
+Yaesu VX-177
+Yaesu VX-2
+Yaesu VX-3
+Yaesu VX-5
+Yaesu VX-6
+Yaesu VX-7
+Yaesu VX-8DR
+Yaesu VX-8GE
+Yaesu VX-8R
+Yedro YC-M04VUS
+Zastone ZT-X6
