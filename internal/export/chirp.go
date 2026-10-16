@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/ryan/rflib/internal/chirp"
 	"github.com/ryan/rflib/internal/domain"
@@ -25,11 +26,33 @@ type CHIRP struct {
 	// Locations, when set, gives each channel's memory number instead of
 	// numbering from Start (radio exports use it for section starts).
 	Locations []int
+	// ToneModes and CrossModes, when set, are the CHIRP tone modes and
+	// Cross modes the radio takes (see model.Model); a memory needing
+	// another can't be written.
+	ToneModes, CrossModes []string
 }
 
 func (x CHIRP) Validate(c domain.Channel) error {
-	_, err := chirp.FromChannel(c, 0, x.MaxNameLen)
+	_, err := x.memory(c, 0)
 	return err
+}
+
+// memory converts a channel, checking the radio takes its tone mode.
+func (x CHIRP) memory(c domain.Channel, loc int) (chirp.Memory, error) {
+	m, err := chirp.FromChannel(c, loc, x.MaxNameLen)
+	if err != nil {
+		return m, err
+	}
+	if len(x.ToneModes) > 0 && !slices.Contains(x.ToneModes, m.ToneMode) {
+		if m.ToneMode == "Cross" {
+			return m, fmt.Errorf("the radio can't hold different transmit and receive tones (CHIRP's Cross %s)", m.CrossMode)
+		}
+		return m, fmt.Errorf("the radio doesn't have tone mode %s", m.ToneMode)
+	}
+	if m.ToneMode == "Cross" && len(x.CrossModes) > 0 && !slices.Contains(x.CrossModes, m.CrossMode) {
+		return m, fmt.Errorf("the radio doesn't have CHIRP's Cross mode %s", m.CrossMode)
+	}
+	return m, nil
 }
 
 // Export fails without writing anything if any channel can't be represented,
@@ -42,7 +65,7 @@ func (x CHIRP) Export(w io.Writer, channels []domain.Channel) error {
 		if x.Locations != nil {
 			loc = x.Locations[i]
 		}
-		m, err := chirp.FromChannel(c, loc, x.MaxNameLen)
+		m, err := x.memory(c, loc)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("channel %q (%s MHz): %w", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), err))
 			continue

@@ -183,7 +183,7 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry, sections 
 		c := mem.Channel
 		c.ReceiveTone, c.ToneSquelch = domain.Tone{Kind: domain.ToneNone}, false
 		if ex.Validate(c) == nil {
-			notes[i] = append(notes[i], fmt.Sprintf("programmed with the transmit tone only: the radio can't hold receive tone %s (%v)", domain.FormatTone(mem.Channel.ReceiveTone), mem.Invalid))
+			notes[i] = append(notes[i], fmt.Sprintf("programmed with the transmit tone only, without receive tone %s: %v", domain.FormatTone(mem.Channel.ReceiveTone), mem.Invalid))
 			mem.Channel, mem.Invalid, mem.TransmitToneOnly = c, nil, true
 		}
 	}
@@ -321,7 +321,7 @@ func ExporterFor(p Layout) (Exporter, error) {
 		}
 		return profile.Exporter{Profile: e.Profile, Locations: locs}, nil
 	}
-	return export.CHIRP{Locations: locs}, nil
+	return export.CHIRP{Locations: locs, ToneModes: p.Model.ToneModes, CrossModes: p.Model.CrossModes}, nil
 }
 
 // Parse reads a file in a model's format, as its programming software or

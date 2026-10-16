@@ -41,7 +41,13 @@ type Model struct {
 	// Modes are the modulation modes a memory can use, from domain.Modes.
 	// Empty means unchecked.
 	Modes []string `yaml:"modes"`
-	Notes string   `yaml:"notes"`
+	// ToneModes are the CHIRP tone modes a memory can use ("" for none,
+	// Tone, TSQL, DTCS, Cross), for chirp formats; empty means all.
+	// CrossModes are the Cross modes it takes (such as Tone->Tone); empty
+	// means all.
+	ToneModes  []string `yaml:"tone_modes"`
+	CrossModes []string `yaml:"cross_modes"`
+	Notes      string   `yaml:"notes"`
 	// Source records where the facts came from.
 	Source string `yaml:"source"`
 }
@@ -127,8 +133,25 @@ func (m Model) Validate() error {
 			fail("band %v must be [low, high] MHz", b)
 		}
 	}
+	for _, t := range m.ToneModes {
+		if !slices.Contains(chirpToneModes, t) {
+			fail("tone mode %q must be one of \"\", Tone, TSQL, DTCS, or Cross", t)
+		}
+	}
+	for _, x := range m.CrossModes {
+		from, to, ok := strings.Cut(x, "->")
+		if !ok || !slices.Contains([]string{"", "Tone", "DTCS"}, from) || !slices.Contains([]string{"", "Tone", "DTCS"}, to) {
+			fail("cross mode %q must be like Tone->DTCS", x)
+		}
+	}
+	if len(m.CrossModes) > 0 && len(m.ToneModes) > 0 && !slices.Contains(m.ToneModes, "Cross") {
+		fail("cross_modes are for a radio whose tone_modes include Cross")
+	}
 	return errors.Join(errs...)
 }
+
+// chirpToneModes are CHIRP's tone modes.
+var chirpToneModes = []string{"", "Tone", "TSQL", "DTCS", "Cross"}
 
 // NameRules are the model's display limits for the naming engine.
 func (m Model) NameRules() naming.Rules {

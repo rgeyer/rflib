@@ -288,7 +288,7 @@ Nothing else is checked: rflib doesn't know the radio's bands, modes, or memory 
 ./rflib radio update HT --model my-ht
 ```
 
-To fill it in from CHIRP itself, `tools/chirp_model.py` drafts a model from CHIRP's driver: memories, name length and characters, power levels with watts, bands, and modes. It needs [uv](https://docs.astral.sh/uv/), which fetches CHIRP the first time:
+To fill it in from CHIRP itself, `tools/chirp_model.py` drafts a model from CHIRP's driver: memories, name length and characters, power levels with watts, bands, modes, and tone modes (`tone_modes`, and `cross_modes` for radios with CHIRP's Cross). A radio without Cross, such as the TYT TH-9800, can't hold different transmit and receive tones in one memory, so rflib programs those channels with the transmit tone alone and marks them; a model without `tone_modes` is assumed to take them all. It needs [uv](https://docs.astral.sh/uv/), which fetches CHIRP the first time:
 
 ```sh
 uv run tools/chirp_model.py --list uv-5r                     # find the radio as CHIRP names it

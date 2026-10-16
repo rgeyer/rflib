@@ -94,6 +94,9 @@ def features(cls):
         "bands_mhz": [[mhz(lo), mhz(hi)] for lo, hi in rf.valid_bands if 0 < lo <= hi],
         "modes": [m for m in RFLIB_MODES if m in rf.valid_modes],
         "other_modes": sorted(set(rf.valid_modes) - set(RFLIB_MODES) - {""}),
+        # The tone modes a memory can use, and with Cross, its cross modes.
+        "tone_modes": list(rf.valid_tmodes),
+        "cross_modes": list(rf.valid_cross_modes) if "Cross" in rf.valid_tmodes else [],
     }
 
 
@@ -115,7 +118,10 @@ def draft(cls):
         f"power: {json.dumps(f['power'])}",
         f"bands_mhz: {json.dumps(f['bands_mhz'])}",
         f"modes: {json.dumps(f['modes'])}",
+        f"tone_modes: {json.dumps(f['tone_modes'])}",
     ]
+    if f["cross_modes"]:
+        lines.append(f"cross_modes: {json.dumps(f['cross_modes'])}")
     notes = "Drafted from CHIRP's driver; check against the radio's manual or a CHIRP export."
     if f["other_modes"]:
         notes += f" CHIRP modes rflib doesn't have: {', '.join(f['other_modes'])}."
