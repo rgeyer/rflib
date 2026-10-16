@@ -84,7 +84,11 @@ radio from rflib, so a memory only on the radio is then gone.`}
 		var opts app.CompareOptions
 		opts.IgnoreNumbers, _ = cmd.Flags().GetBool("ignore-numbers")
 		return withApp(cmd, func(a *app.Service) error {
-			cmpn, err := a.CompareRadio(ctx(cmd), args[0], bytes.NewReader(file), opts)
+			rid, err := viewing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			cmpn, err := a.CompareRadio(ctx(cmd), rid, bytes.NewReader(file), opts)
 			if err != nil {
 				return err
 			}
@@ -101,7 +105,11 @@ radio from rflib, so a memory only on the radio is then gone.`}
 			status := cmd.ErrOrStderr()
 			d.DryRun, _ = cmd.Flags().GetBool("dry-run")
 			d.Options = opts
-			_, res, err := a.ApplyComparison(ctx(cmd), args[0], bytes.NewReader(file), d)
+			rid, err = editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			_, res, err := a.ApplyComparison(ctx(cmd), rid, bytes.NewReader(file), d)
 			if err != nil {
 				return err
 			}
@@ -261,7 +269,17 @@ func compareRadios(cmd *cobra.Command, radio, other string) error {
 		}
 	}
 	return withApp(cmd, func(a *app.Service) error {
-		c, err := a.CompareRadios(ctx(cmd), radio, other)
+		dry, _ := cmd.Flags().GetBool("dry-run")
+		add := strings.TrimSpace(getString(cmd, "add"))
+		resolve := viewing
+		if add != "" && !dry {
+			resolve = editing
+		}
+		rid, err := resolve(cmd, a, radio)
+		if err != nil {
+			return err
+		}
+		c, err := a.CompareRadios(ctx(cmd), rid, other)
 		if err != nil {
 			return err
 		}
@@ -282,7 +300,6 @@ func compareRadios(cmd *cobra.Command, radio, other string) error {
 		if err := tw.Flush(); err != nil {
 			return err
 		}
-		add := strings.TrimSpace(getString(cmd, "add"))
 		if add == "" {
 			return nil
 		}
@@ -292,8 +309,7 @@ func compareRadios(cmd *cobra.Command, radio, other string) error {
 				ids = append(ids, strings.TrimSpace(id))
 			}
 		}
-		dry, _ := cmd.Flags().GetBool("dry-run")
-		_, res, err := a.AddFromRadio(ctx(cmd), radio, other, ids, dry)
+		_, res, err := a.AddFromRadio(ctx(cmd), rid, other, ids, dry)
 		if err != nil {
 			return err
 		}

@@ -131,8 +131,22 @@ type Library interface {
 	GetRadio(ctx context.Context, idOrName string) (domain.Radio, error)
 	ListRadios(ctx context.Context) ([]domain.Radio, error)
 	UpdateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error)
-	// DeleteRadio deletes a radio; its channels stay in the library.
+	// DeleteRadio deletes a radio, and its draft; its channels stay in
+	// the library.
 	DeleteRadio(ctx context.Context, id string) error
+	// RadioDraft returns a radio's draft, or ErrNotFound.
+	RadioDraft(ctx context.Context, radioID string) (domain.Radio, error)
+	// StartRadioDraft makes a radio's draft: a radio with its name and
+	// settings, and a copy of its sections, sources, and channels as they
+	// are (with new section and source IDs). GetRadio finds a draft only by
+	// its ID, and ListRadios leaves drafts out; UpdateRadio changes a
+	// radio's draft's settings too. ErrConflict when it has one already.
+	StartRadioDraft(ctx context.Context, radioID string) (domain.Radio, error)
+	// SaveRadioDraft makes a radio's list its draft's, and removes the
+	// draft, in one transaction.
+	SaveRadioDraft(ctx context.Context, radioID string) error
+	// DiscardRadioDraft removes a radio's draft.
+	DiscardRadioDraft(ctx context.Context, radioID string) error
 
 	// RadioSections returns a radio's sections in order.
 	RadioSections(ctx context.Context, radioID string) ([]domain.RadioSection, error)

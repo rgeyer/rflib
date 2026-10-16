@@ -1,4 +1,14 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
+
+const RADIOS = "/api/v1/libraries/default/radios";
+
+/** saved makes setup changes to a radio's list in a draft, then saves it,
+ * as the CLI would; the page then starts from the saved radio. */
+async function saved(request: APIRequestContext, radio: string, changes: () => Promise<unknown>) {
+  expect((await request.post(`${RADIOS}/${encodeURIComponent(radio)}/draft`)).status()).toBe(201);
+  await changes();
+  expect((await request.post(`${RADIOS}/${encodeURIComponent(radio)}/draft/save`)).ok()).toBeTruthy();
+}
 
 // One pass through the main screens against a real rflib serve: link
 // channels from the shared list, add and edit a channel, set up a radio,
@@ -113,10 +123,13 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await expect(page.locator("tr[data-section]", { hasText: "band:noaa OR name:Marian" })).toBeVisible();
   await expect(page.getByRole("row", { name: /^Select memory.*Marian/ })).toBeVisible();
 
-  // Export downloads the CHIRP file.
+  // The changes are a draft; exporting offers to save it first.
+  await expect(page.getByText(/^Draft since/)).toBeVisible();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.getByRole("button", { name: "Save draft and export" }).click();
   const file = await download;
+  await expect(page.getByText(/^Draft since/)).toHaveCount(0);
   expect(file.suggestedFilename()).toBe("HT.csv");
   await expect(page.getByText("Exported 8 memories")).toBeVisible();
 
@@ -197,7 +210,7 @@ test("organizations, systems, and plans", async ({ page, request }) => {
 
   // The plan on a radio, in a section from memory 50, matching its numbers.
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Mobile", model: "baofeng-uv5rm" } });
-  await request.post("/api/v1/libraries/default/radios/Mobile/sections", { data: { name: "Fair plan", start: 50 } });
+  await saved(request, "Mobile", () => request.post("/api/v1/libraries/default/radios/Mobile/sections", { data: { name: "Fair plan", start: 50 } }));
   await page.goto("/l/default/radios/Mobile");
   await page.getByRole("tab", { name: "Sources" }).click();
   await page.getByRole("combobox", { name: "or a plan" }).click();
@@ -400,7 +413,7 @@ test("compare a radio with its file, and start it from that", async ({ page, req
 test("a first import ignores memory numbers", async ({ page, request }) => {
   // rflib already has Marian first on this radio; the radio holds it at 9.
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Imported", model: "baofeng-uv5rm" } });
-  await request.post("/api/v1/libraries/default/radios/Imported/channels", { data: { query: "name:Marian" } });
+  await saved(request, "Imported", () => request.post("/api/v1/libraries/default/radios/Imported/channels", { data: { query: "name:Marian" } }));
   await page.goto("/l/default/radios/Imported");
   await page.getByRole("tab", { name: "Compare" }).click();
   await page.getByRole("switch", { name: "Ignore memory numbers" }).check({ force: true });
@@ -439,7 +452,9 @@ test("the default search says what more the shared list has", async ({ page }) =
 
 test("the memories tab shows what is actually programmed", async ({ page, request }) => {
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Reference", model: "baofeng-uv5rm" } });
-  await request.post("/api/v1/libraries/default/radios/Reference/channels", { data: { query: 'name:"NOAA WX2" OR name:"NOAA WX3" OR name:"NOAA WX4"' } });
+  await saved(request, "Reference", () =>
+    request.post("/api/v1/libraries/default/radios/Reference/channels", { data: { query: 'name:"NOAA WX2" OR name:"NOAA WX3" OR name:"NOAA WX4"' } }),
+  );
   const found = await (await request.get(`/api/v1/libraries/shared/channels?q=${encodeURIComponent('name:"NOAA WX3"')}`)).json();
   const wx3 = found.channels[0].id as string;
   const status = (s: string) => request.post(`/api/v1/libraries/shared/channels/${wx3}/status`, { data: { status: s, reason: "test" } });
@@ -465,9 +480,11 @@ test("the memories tab shows what is actually programmed", async ({ page, reques
 
 test("sections: add one, and drag memories and sections", async ({ page, request }) => {
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Sectioned", model: "baofeng-uv5rm" } });
-  await request.post("/api/v1/libraries/default/radios/Sectioned/channels", {
-    data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2" OR name:"NOAA WX3"', sort: "name" },
-  });
+  await saved(request, "Sectioned", () =>
+    request.post("/api/v1/libraries/default/radios/Sectioned/channels", {
+      data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2" OR name:"NOAA WX3"', sort: "name" },
+    }),
+  );
   await page.goto("/l/default/radios/Sectioned");
   const number = (name: string) => page.getByRole("row", { name: new RegExp(`^Select memory.*${name}`) }).getByRole("cell").nth(2);
   await expect(number("NOAA WX3")).toHaveText("3");
@@ -541,9 +558,11 @@ test("sections: add one, and drag memories and sections", async ({ page, request
 
 test("copy a radio to another model, then compare the two", async ({ page, request }) => {
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Original", model: "chirp-generic" } });
-  await request.post("/api/v1/libraries/default/radios/Original/sections", { data: { name: "Weather", start: 40 } });
-  await request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2"', section: "Weather" } });
-  await request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"6m FM Call"' } });
+  await saved(request, "Original", async () => {
+    await request.post("/api/v1/libraries/default/radios/Original/sections", { data: { name: "Weather", start: 40 } });
+    await request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2"', section: "Weather" } });
+    await request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"6m FM Call"' } });
+  });
   await page.goto("/l/default/radios/Original");
   await page.getByRole("button", { name: "Copy", exact: true }).click();
   const dialog = page.getByRole("dialog");
@@ -557,7 +576,9 @@ test("copy a radio to another model, then compare the two", async ({ page, reque
   await expect(page.locator("tr[data-section='Weather']")).toContainText("Memories 40–41");
 
   // Independent: the original gains a channel; comparing offers it.
-  await request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"NOAA WX3"', section: "Weather" } });
+  await saved(request, "Original", () =>
+    request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"NOAA WX3"', section: "Weather" } }),
+  );
   await page.getByRole("tab", { name: "Compare" }).click();
   await page.getByText("With another radio").click();
   await page.getByRole("combobox", { name: "Other radio" }).click();
@@ -585,8 +606,10 @@ test("copy a radio to another model, then compare the two", async ({ page, reque
 
 test("narrowing a source takes off what it no longer matches", async ({ page, request }) => {
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Narrow", model: "baofeng-uv5rm" } });
-  await request.post("/api/v1/libraries/default/radios/Narrow/sources", { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2" OR name:"NOAA WX3"' } });
-  await request.post("/api/v1/libraries/default/radios/Narrow/sync", { data: {} });
+  await saved(request, "Narrow", async () => {
+    await request.post("/api/v1/libraries/default/radios/Narrow/sources", { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2" OR name:"NOAA WX3"' } });
+    await request.post("/api/v1/libraries/default/radios/Narrow/sync", { data: {} });
+  });
   await page.goto("/l/default/radios/Narrow");
   const row = (name: string) => page.getByRole("row", { name: new RegExp(`^Select memory.*${name}`) });
   await expect(row("NOAA WX3").getByText("S1")).toBeVisible();
@@ -650,7 +673,7 @@ test("a channel is retired, not deleted, and relinks to its replacement", async 
   ).json();
   await request.post("/api/v1/libraries/default/channels", { data: { name: "New Club Rpt", rx_hz: 147_165_000, tx_hz: 147_765_000, mode: "FM" } });
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Clubby", model: "baofeng-uv5rm" } });
-  await request.post("/api/v1/libraries/default/radios/Clubby/channels", { data: { ids: [made.channel.id] } });
+  await saved(request, "Clubby", () => request.post("/api/v1/libraries/default/radios/Clubby/channels", { data: { ids: [made.channel.id] } }));
 
   // Retire it from the Channels page: it's hidden, not gone.
   await page.goto("/l/default/channels");
@@ -679,4 +702,41 @@ test("a channel is retired, not deleted, and relinks to its replacement", async 
   await page.goto("/l/default/radios/Clubby");
   await expect(page.getByRole("row", { name: /New Club Rpt/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /Old Club Rpt/ })).toHaveCount(0);
+});
+
+test("changes go to a draft, which saves, discards, and catches a stale page", async ({ page, request }) => {
+  await request.post(RADIOS, { data: { name: "Drafty", model: "baofeng-uv5rm" } });
+  await saved(request, "Drafty", () => request.post(`${RADIOS}/Drafty/channels`, { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2"' } }));
+  await page.goto("/l/default/radios/Drafty");
+  const row = (name: string) => page.getByRole("row", { name: new RegExp(`^Select memory.*${name}`) });
+  await expect(row("NOAA WX2")).toBeVisible();
+  await expect(page.getByText(/^Draft since/)).toHaveCount(0);
+
+  // The first change opens a draft.
+  await row("NOAA WX2").getByRole("button", { name: "Take off this radio" }).click();
+  await expect(page.getByText(/^Draft since/)).toBeVisible();
+  await expect(page.getByText("So far: 1 removed.")).toBeVisible();
+  await expect(row("NOAA WX2")).toHaveCount(0);
+
+  // Discarding, after confirming, puts it back.
+  await page.getByRole("button", { name: "Discard draft" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Discard draft" }).click();
+  await expect(page.getByText("Discarded Drafty's draft; it's as it was")).toBeVisible();
+  await expect(row("NOAA WX2")).toBeVisible();
+
+  // A draft opened elsewhere: the page's next change is refused, and it
+  // shows the draft.
+  expect((await request.post(`${RADIOS}/Drafty/draft`)).status()).toBe(201);
+  await row("NOAA WX1").getByRole("button", { name: "Take off this radio" }).click();
+  await expect(page.getByText(/Drafty already has a draft \(started .*\); showing it/)).toBeVisible();
+  await expect(page.getByText(/^Draft since/)).toBeVisible();
+  await expect(row("NOAA WX1")).toBeVisible();
+
+  // Now the change goes through, and saving keeps it.
+  await row("NOAA WX1").getByRole("button", { name: "Take off this radio" }).click();
+  await expect(row("NOAA WX1")).toHaveCount(0);
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText("Saved Drafty's draft; program the radio again")).toBeVisible();
+  await expect(page.getByText(/^Draft since/)).toHaveCount(0);
+  await expect(row("NOAA WX1")).toHaveCount(0);
 });

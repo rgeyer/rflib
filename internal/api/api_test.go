@@ -28,6 +28,8 @@ type client struct {
 	srv    *httptest.Server
 	router routers.Router
 	token  string
+	// draft, when set, is sent as X-Rflib-Draft, as the web does.
+	draft string
 }
 
 func newClient(t *testing.T, token string) *client {
@@ -59,6 +61,14 @@ func newClient(t *testing.T, token string) *client {
 
 // do sends a request with a JSON (or raw string) body, checks it and the
 // response against the spec, and decodes a JSON response into out.
+// saveDraft saves a radio's draft, so an export sees its changes, and
+// starts another for the changes after.
+func (c *client) saveDraft(lib, radio string) {
+	c.t.Helper()
+	c.do("POST", lib+"/radios/"+radio+"/draft/save", nil, 200, nil)
+	c.do("POST", lib+"/radios/"+radio+"/draft", nil, 201, nil)
+}
+
 func (c *client) do(method, path string, body any, want int, out any) http.Header {
 	c.t.Helper()
 	var data []byte
@@ -82,6 +92,9 @@ func (c *client) do(method, path string, body any, want int, out any) http.Heade
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if c.draft != "" {
+		req.Header.Set(draftHeader, c.draft)
 	}
 	route, params, err := c.router.FindRoute(req)
 	if err != nil {
@@ -298,8 +311,10 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 	// A radio, its channels, overrides, sources, sync, and export.
 	var radio Radio
 	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, &radio)
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
 	var generic Radio
 	c.do("POST", L+"/radios", map[string]any{"name": "Spare", "model": "chirp-generic", "name_length": 6}, 201, &generic)
+	c.do("POST", L+"/radios/Spare/draft", nil, 201, nil)
 	if generic.NameLength != 6 {
 		t.Errorf("generic radio = %+v", generic)
 	}
@@ -366,6 +381,7 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 		t.Errorf("sync = %+v", sync)
 	}
 	var csv string
+	c.saveDraft(L, "HT")
 	h := c.do("GET", L+"/radios/HT/export", nil, 200, &csv)
 	if !strings.HasPrefix(csv, "Location,Name,") || h.Get("X-Rflib-Count") != "8" {
 		t.Errorf("export = %s %v", h.Get("X-Rflib-Count"), csv[:min(40, len(csv))])
@@ -539,6 +555,7 @@ func TestOrganizationsSystemsAndPlans(t *testing.T) {
 		t.Fatalf("plan = %+v", plan)
 	}
 	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
 	var sources struct {
 		Sources []Source `json:"sources"`
 	}
@@ -606,6 +623,7 @@ func TestPreviewSource(t *testing.T) {
 	const L = "/libraries/default"
 	c.seedAndLink("us-noaa", "us-gmrs", "us-ham-calling")
 	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
 	c.do("POST", L+"/radios/HT/sources", map[string]any{"query": "band:noaa"}, 201, nil)
 	var p struct {
 		Added     int       `json:"added"`
@@ -651,6 +669,7 @@ func TestCompareRadio(t *testing.T) {
 	const L = "/libraries/default"
 	c.seedAndLink("us-ham-calling")
 	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
 	file := "Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment,URCALL,RPT1CALL,RPT2CALL,DVCODE\n" +
 		"3,2m Call,146.520000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,,,,,,\n" +
 		"8,Mystery,146.580000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,,,,,,\n"
@@ -702,6 +721,7 @@ func TestChannelListDefaultAndMoreInShared(t *testing.T) {
 	const L = "/libraries/default"
 	noaa := c.seedAndLink("us-noaa")
 	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
 	c.do("POST", L+"/radios/HT/channels", map[string]any{"ids": []string{noaa[0].ID}}, 200, nil)
 	var list struct {
 		Total int `json:"total"`
@@ -729,6 +749,7 @@ func TestCopyAndCompareRadios(t *testing.T) {
 	const L = "/libraries/default"
 	c.seedAndLink("us-noaa", "us-ham-calling")
 	c.do("POST", L+"/radios", map[string]any{"name": "Shack", "model": "chirp-generic"}, 201, nil)
+	c.do("POST", L+"/radios/Shack/draft", nil, 201, nil)
 	c.do("POST", L+"/radios/Shack/sections", map[string]any{"name": "Weather", "start": 20}, 201, nil)
 	c.do("POST", L+"/radios/Shack/channels", map[string]any{"query": "band:noaa", "section": "Weather"}, 200, nil)
 	c.do("POST", L+"/radios/Shack/channels", map[string]any{"query": `name:"6m FM Call" OR name:"2m FM Call"`}, 200, nil)
@@ -737,7 +758,9 @@ func TestCopyAndCompareRadios(t *testing.T) {
 		Copied  int       `json:"copied"`
 		Skipped []Channel `json:"skipped"`
 	}
+	c.do("POST", L+"/radios/Shack/draft/save", nil, 200, nil)
 	c.do("POST", L+"/radios/Shack/copy", map[string]any{"name": "Mobile", "model": "baofeng-uv5rm"}, 201, &copied)
+	c.do("POST", L+"/radios/Mobile/draft", nil, 201, nil)
 	if copied.Radio.Name != "Mobile" || copied.Copied != 8 || len(copied.Skipped) != 1 || copied.Skipped[0].Name != "6m FM Call" {
 		t.Fatalf("copy = %+v", copied)
 	}
@@ -768,6 +791,7 @@ func TestMergeSectionsAndMoveMany(t *testing.T) {
 	const L = "/libraries/default"
 	c.seedAndLink("us-noaa")
 	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
 	c.do("POST", L+"/radios/HT/sections", map[string]any{"name": "Weather"}, 201, nil)
 	c.do("POST", L+"/radios/HT/channels", map[string]any{"query": "band:noaa"}, 200, nil)
 	var mems struct {
@@ -787,5 +811,88 @@ func TestMergeSectionsAndMoveMany(t *testing.T) {
 	c.do("POST", L+"/radios/HT/sections/Weather/merge", map[string]any{"into": "Other"}, 200, &merged)
 	if merged.Moved != 2 || len(merged.Sections) != 1 || merged.Sections[0].Name != "Other" {
 		t.Errorf("merged = %+v", merged)
+	}
+}
+
+// Changes to a radio's list go to its draft: without the web's header
+// they need one open; with it, the first change opens one, and a change
+// against a draft that's no longer open is refused.
+func TestRadioDrafts(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	c.seedAndLink("us-noaa")
+	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	var e errorBody
+	c.do("POST", L+"/radios/HT/channels", map[string]any{"query": "band:noaa"}, 409, &e)
+	if e.Error.Code != "no_draft" {
+		t.Errorf("without a draft = %+v", e)
+	}
+
+	// The web's first change opens a draft.
+	c.draft = "none"
+	c.do("POST", L+"/radios/HT/channels", map[string]any{"query": "band:noaa"}, 200, nil)
+	var radio Radio
+	c.do("GET", L+"/radios/HT", nil, 200, &radio)
+	if radio.Draft == nil || radio.Channels != 7 {
+		t.Fatalf("radio with a draft = %+v", radio)
+	}
+	// A page that still thinks there's no draft is refused.
+	c.do("POST", L+"/radios/HT/channels/remove", map[string]any{"select": map[string]any{"all": true}}, 409, &e)
+	if e.Error.Code != "stale_draft" || !strings.Contains(e.Error.Message, "HT already has a draft") {
+		t.Errorf("stale = %+v", e)
+	}
+	c.draft = radio.Draft.ID
+	var memories struct {
+		Memories []Memory `json:"memories"`
+	}
+	c.do("GET", L+"/radios/HT/memories", nil, 200, &memories)
+	if len(memories.Memories) != 7 {
+		t.Errorf("draft memories = %d", len(memories.Memories))
+	}
+	var draft struct {
+		Draft   *Draft `json:"draft"`
+		Changes struct {
+			Added []Channel `json:"added"`
+		} `json:"changes"`
+	}
+	c.do("GET", L+"/radios/HT/draft", nil, 200, &draft)
+	if draft.Draft == nil || len(draft.Changes.Added) != 7 {
+		t.Errorf("draft = %+v", draft)
+	}
+	// Exports use the saved radio until the draft is saved.
+	var csv string
+	if h := c.do("GET", L+"/radios/HT/export", nil, 200, &csv); h.Get("X-Rflib-Count") != "0" {
+		t.Errorf("export before saving = %s", h.Get("X-Rflib-Count"))
+	}
+	c.do("POST", L+"/radios/HT/draft/save", nil, 200, &radio)
+	if radio.Draft != nil || radio.Channels != 7 {
+		t.Errorf("saved = %+v", radio)
+	}
+	if h := c.do("GET", L+"/radios/HT/export", nil, 200, &csv); h.Get("X-Rflib-Count") != "7" {
+		t.Errorf("export after saving = %s", h.Get("X-Rflib-Count"))
+	}
+	// Saving again finds no draft to save.
+	c.do("POST", L+"/radios/HT/draft/save", nil, 409, &e)
+	if e.Error.Code != "no_draft" {
+		t.Errorf("save without a draft = %+v", e)
+	}
+
+	// Discarding leaves the radio as it was.
+	c.draft = ""
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
+	c.do("POST", L+"/radios/HT/draft", nil, 409, nil)
+	c.do("POST", L+"/radios/HT/channels/remove", map[string]any{"select": map[string]any{"all": true}}, 200, nil)
+	c.do("POST", L+"/radios/HT/draft/discard", nil, 200, &radio)
+	if radio.Draft != nil || radio.Channels != 7 {
+		t.Errorf("discarded = %+v", radio)
+	}
+
+	// A source the saved radio hasn't synced shows as sync changes.
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
+	c.do("POST", L+"/radios/HT/sources", map[string]any{"query": "band:noaa"}, 201, nil)
+	c.do("POST", L+"/radios/HT/channels/remove", map[string]any{"select": map[string]any{"query": `name:"NOAA WX1"`}}, 200, nil)
+	c.do("POST", L+"/radios/HT/draft/save", nil, 200, &radio)
+	if radio.SyncChanges == nil || *radio.SyncChanges != 1 {
+		t.Errorf("sync changes = %+v", radio.SyncChanges)
 	}
 }

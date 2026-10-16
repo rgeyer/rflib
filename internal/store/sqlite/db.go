@@ -241,6 +241,21 @@ ALTER TABLE radio_channels ADD COLUMN section_id TEXT REFERENCES radio_sections(
 ALTER TABLE radio_channels ADD COLUMN plan_number INTEGER;
 ALTER TABLE radio_sources ADD COLUMN section_id TEXT REFERENCES radio_sections(id);
 ALTER TABLE radio_sources ADD COLUMN plan_numbers TEXT NOT NULL DEFAULT 'compact';`},
+	// A radio's draft: a hidden copy of its list (sections, sources, and
+	// channels) that changes go to until it's saved or discarded. It has
+	// the radio's name, so names are unique among radios that aren't
+	// drafts, and a radio has at most one draft. A draft's section or
+	// source keeps the ID of the one it's a copy of (origin), which saving
+	// gives back.
+	{version: 18, rebuild: true, sql: `
+CREATE TABLE new_radios (id TEXT PRIMARY KEY, library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, name TEXT NOT NULL, model TEXT NOT NULL, default_power TEXT NOT NULL DEFAULT '', dedupe TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, name_length INTEGER NOT NULL DEFAULT 0, draft_of TEXT REFERENCES radios(id) ON DELETE CASCADE);
+INSERT INTO new_radios (id, library_id, name, model, default_power, dedupe, notes, created_at, updated_at, name_length) SELECT id, library_id, name, model, default_power, dedupe, notes, created_at, updated_at, name_length FROM radios;
+DROP TABLE radios;
+ALTER TABLE new_radios RENAME TO radios;
+CREATE UNIQUE INDEX idx_radios_name ON radios(library_id, name) WHERE draft_of IS NULL;
+CREATE UNIQUE INDEX idx_radios_draft ON radios(draft_of) WHERE draft_of IS NOT NULL;
+ALTER TABLE radio_sections ADD COLUMN origin TEXT;
+ALTER TABLE radio_sources ADD COLUMN origin TEXT;`},
 }
 
 // sectionRadios finishes migration 17: each radio's list becomes sections,

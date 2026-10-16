@@ -340,10 +340,16 @@ type Radio struct {
 	Channels     int       `json:"channels"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	// Draft is the radio's open draft, if any; SyncChanges is how many
+	// channels a sync of the saved radio would add or take off (nil when
+	// it doesn't lay out).
+	Draft       *Draft `json:"draft"`
+	SyncChanges *int   `json:"sync_changes"`
 }
 
+// newRadio is a radio by its saved self: a draft gives its radio's ID.
 func newRadio(r domain.Radio, channels int) Radio {
-	return Radio{r.ID, r.Name, r.Model, string(r.DefaultPower), cmpOr(r.Dedupe, "none"), r.NameLength, r.Notes, channels, r.CreatedAt, r.UpdatedAt}
+	return Radio{cmpOr(r.DraftOf, r.ID), r.Name, r.Model, string(r.DefaultPower), cmpOr(r.Dedupe, "none"), r.NameLength, r.Notes, channels, r.CreatedAt, r.UpdatedAt, nil, nil}
 }
 
 func cmpOr(v, fallback string) string {

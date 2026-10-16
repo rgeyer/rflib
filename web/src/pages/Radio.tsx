@@ -5,10 +5,11 @@ import { IconArrowDown, IconArrowUp, IconChevronDown, IconCopy, IconDots, IconDo
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, call, download, type Memory, type Radio, type Section, type Source } from "../api/client";
+import { api, call, download, showDraft, type Memory, type Radio, type Section, type Source } from "../api/client";
 import { CompareRadio } from "../components/CompareRadio";
 import { CompareRadios } from "../components/CompareRadios";
 import { CopyRadio } from "../components/CopyRadio";
+import { DraftBar, ExportChoice } from "../components/Drafts";
 import { DeleteRadio, EditRadio } from "../components/RadioSettings";
 import { FilterMenu, QueryBar } from "../components/QueryBar";
 import { confirmMerge, SectionEditor, SectionHeader, useMergeSection, useSections } from "../components/Sections";
@@ -39,10 +40,17 @@ export function RadioPage() {
   const radio = useParams().radio ?? "";
   const client = useQueryClient();
   const path = { lib, radio };
+  // The radio's list may change elsewhere (another window, or the CLI),
+  // so the page reloads when it's looked at again.
   const info = useQuery({
     queryKey: ["radio", lib, radio],
     queryFn: () => call<Radio>(api.GET("/libraries/{lib}/radios/{radio}", { params: { path } })),
+    refetchOnWindowFocus: true,
   });
+  // Changes from this page are made against the draft it shows.
+  useEffect(() => {
+    if (info.data) showDraft(lib, radio, info.data.draft?.id ?? null);
+  }, [lib, radio, info.data]);
   const [text, setText] = useState("");
   const [q] = useDebouncedValue(text, 300);
   const plan = useQuery({
@@ -52,10 +60,12 @@ export function RadioPage() {
         api.GET("/libraries/{lib}/radios/{radio}/memories", { params: { path, query: { q } } }),
       ),
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: true,
   });
   const sources = useQuery({
     queryKey: ["sources", lib, radio],
     queryFn: () => call<{ sources: Source[] }>(api.GET("/libraries/{lib}/radios/{radio}/sources", { params: { path } })),
+    refetchOnWindowFocus: true,
   });
   const sections = plan.data?.sections ?? [];
   const [editingSection, setEditingSection] = useState<Section | "new" | null>(null);
@@ -170,6 +180,7 @@ export function RadioPage() {
   const [preview, setPreview] = useState<SyncResult | null>(null);
   const [copying, setCopying] = useState(false);
   const [managing, setManaging] = useState<"edit" | "delete" | null>(null);
+  const [choosingExport, setChoosingExport] = useState(false);
   const [compareWith, setCompareWith] = useState<string>("file");
   const sync = useMutation({
     mutationFn: (dryRun: boolean) =>
@@ -211,7 +222,14 @@ export function RadioPage() {
     <Stack>
       <Group justify="space-between">
         <div>
-          <Title order={2}>{radio}</Title>
+          <Group gap="xs">
+            <Title order={2}>{radio}</Title>
+            {info.data?.sync_changes != null && info.data.sync_changes > 0 && (
+              <Tooltip label="A sync of the saved radio would add or take off this many channels">
+                <Badge variant="light">Sync would change {info.data.sync_changes}</Badge>
+              </Tooltip>
+            )}
+          </Group>
           {r && (
             <Text size="sm" c="dimmed">
               {r.model} · {r.channels} channels · default power {r.default_power || "unset"}
@@ -226,7 +244,11 @@ export function RadioPage() {
           <Button variant="default" leftSection={<IconCopy size={16} />} onClick={() => setCopying(true)}>
             Copy
           </Button>
-          <Button leftSection={<IconDownload size={16} />} onClick={() => exportFile.mutate()} loading={exportFile.isPending}>
+          <Button
+            leftSection={<IconDownload size={16} />}
+            onClick={() => (info.data?.draft ? setChoosingExport(true) : exportFile.mutate())}
+            loading={exportFile.isPending}
+          >
             Export
           </Button>
           <Menu position="bottom-end" withinPortal>
@@ -247,6 +269,7 @@ export function RadioPage() {
         </Group>
       </Group>
       {(info.error || plan.error) && <Alert color="red">{(info.error ?? plan.error)!.message}</Alert>}
+      {info.data?.draft && <DraftBar lib={lib} radio={radio} draft={info.data.draft} />}
       <Tabs defaultValue="memories">
         <Tabs.List>
           <Tabs.Tab value="memories">Memories</Tabs.Tab>
@@ -614,6 +637,9 @@ export function RadioPage() {
       </Tabs>
       {copying && <CopyRadio lib={lib} radio={radio} onClose={() => setCopying(false)} />}
       {managing === "edit" && r && <EditRadio lib={lib} radio={r} onClose={() => setManaging(null)} />}
+      {choosingExport && info.data?.draft && (
+        <ExportChoice lib={lib} radio={radio} draft={info.data.draft} onExport={() => exportFile.mutate()} onClose={() => setChoosingExport(false)} />
+      )}
       {managing === "delete" && r && <DeleteRadio lib={lib} radio={r} onClose={() => setManaging(null)} />}
       <Modal opened={preview !== null} onClose={() => setPreview(null)} title="Sync" size="lg">
         {preview && (

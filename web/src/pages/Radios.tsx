@@ -1,4 +1,4 @@
-import { Button, Group, Modal, NumberInput, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Badge, Button, Group, Modal, NumberInput, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconPlus } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -30,6 +30,7 @@ export function Radios() {
             <Table.Th>Model</Table.Th>
             <Table.Th>Channels</Table.Th>
             <Table.Th>Default power</Table.Th>
+            <Table.Th>Status</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -41,6 +42,20 @@ export function Radios() {
               <Table.Td>{r.model}</Table.Td>
               <Table.Td>{r.channels}</Table.Td>
               <Table.Td>{r.default_power || "unset"}</Table.Td>
+              <Table.Td>
+                <Group gap={4}>
+                  {r.draft && (
+                    <Badge size="sm" color="yellow" variant="light">
+                      Draft
+                    </Badge>
+                  )}
+                  {r.sync_changes != null && r.sync_changes > 0 && (
+                    <Badge size="sm" variant="light">
+                      Sync would change {r.sync_changes}
+                    </Badge>
+                  )}
+                </Group>
+              </Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>

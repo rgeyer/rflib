@@ -439,20 +439,28 @@ func (s *Service) Changes(ctx context.Context) ([]Change, error) {
 	return out, nil
 }
 
-// radioNames maps each channel to the radios it's on.
+// radioNames maps each channel to the radios it's on, or on whose open
+// drafts.
 func (s *Service) radioNames(ctx context.Context) (map[string][]string, error) {
-	rs, err := s.lib.ListRadios(ctx)
+	names, err := s.radioIDNames(ctx)
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]string, 0, len(names))
+	for id := range names {
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, func(a, b string) int { return strings.Compare(names[a], names[b]) })
 	out := map[string][]string{}
-	for _, r := range rs {
-		on, err := s.lib.RadioChannelIDs(ctx, r.ID)
+	for _, rid := range ids {
+		on, err := s.lib.RadioChannelIDs(ctx, rid)
 		if err != nil {
 			return nil, err
 		}
 		for id := range on {
-			out[id] = append(out[id], r.Name)
+			if !slices.Contains(out[id], names[rid]) {
+				out[id] = append(out[id], names[rid])
+			}
 		}
 	}
 	return out, nil
