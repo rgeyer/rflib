@@ -621,3 +621,25 @@ test("narrowing a source takes off what it no longer matches", async ({ page, re
   await page.getByRole("tab", { name: "Sources" }).click();
   await expect(page.getByRole("cell", { name: /NOAA WX1/ })).toHaveCount(0);
 });
+
+test("a radio's settings change, and deleting it needs its name", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Spare", model: "baofeng-uv5rm" } });
+  await page.goto("/l/default/radios/Spare");
+  await page.getByRole("button", { name: "Radio settings" }).click();
+  await page.getByRole("menuitem", { name: "Edit radio…" }).click();
+  await page.getByRole("dialog").getByRole("textbox", { name: "Name", exact: true }).fill("Spare HT");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page).toHaveURL(/\/radios\/Spare%20HT$/);
+  await expect(page.getByRole("heading", { name: "Spare HT" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Radio settings" }).click();
+  await page.getByRole("menuitem", { name: "Delete radio…" }).click();
+  const del = page.getByRole("button", { name: "Delete radio" });
+  await expect(del).toBeDisabled();
+  await page.getByLabel("Type Spare HT to confirm").fill("Spare");
+  await expect(del).toBeDisabled();
+  await page.getByLabel("Type Spare HT to confirm").fill("Spare HT");
+  await del.click();
+  await expect(page).toHaveURL(/\/radios$/);
+  await expect(page.getByRole("link", { name: "Spare HT" })).toHaveCount(0);
+});
