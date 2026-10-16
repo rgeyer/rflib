@@ -253,11 +253,32 @@ A radio is one of your own radios: a model, the channels programmed into it in y
 ```sh
 ./rflib model list
 ./rflib radio add Truck --model yaesu-ftm150 --default-power medium
+./rflib radio draft Truck --start
 ./rflib radio channels add Truck -q tag:mobile --sort freq
 ./rflib radio channels add Truck --id <channel-id>
 ./rflib radio channels list Truck
+./rflib radio draft Truck --save
 ./rflib radio export Truck --output truck.csv
 ```
+
+### Drafts
+
+Changes to a radio's list (its channels, sections, and sources, and sync) go to its **draft**, which you save when you're happy with it, or discard. Nothing changes on the radio until then, so a sync or a big reorganization is safe to try.
+
+```sh
+./rflib radio draft Truck --start      # a copy of the list as it is now
+./rflib radio draft Truck              # whether one is open, since when, and what it changes
+./rflib radio draft Truck --save       # make it the radio's list
+./rflib radio draft Truck --discard    # drop it
+```
+
+- **One draft per radio,** shared by the web and the CLI: starting another while one is open is refused, and every window and the CLI continue the one that's open.
+- **The CLI needs a draft started** for any command that changes the list; it says how when there's none. The web opens one with your first change, and shows **Draft since …** with **Save draft** and **Discard draft**.
+- **While a draft is open,** listing the radio's channels, sections, and sources shows the draft (the CLI says so on stderr; `--saved` shows the saved radio), and so does comparing with the radio's file.
+- **The saved radio** is what exports, copies, and other radios' comparisons use. With a draft open, `radio export` says so on stderr, and the web asks whether to save the draft first.
+- **Settings** (`radio update`, or **Edit radio…**) save at once, never in a draft. Changes to channels themselves, including retiring and relinking them, reach the saved radio and the draft alike.
+- **A page that's out of date** (a draft started, saved, or discarded elsewhere since it loaded) has its next change refused, and reloads to show the radio as it is now. The radio page also reloads when you come back to it.
+- **Sync would change N,** on the radio list and page, says that a sync of the saved radio would add or take off that many channels.
 
 ### Models
 
@@ -362,6 +383,7 @@ On CHIRP radios, receive-only means duplex `off`. The Yaesu FTM-150 and FTM-6000
 A radio's **sources** are searches, or plans, that `radio sync` adds new matching channels from, each into its section.
 
 ```sh
+./rflib radio draft HT --start                          # changes go to a draft (see Drafts)
 ./rflib radio sources add HT @local-rptrs --sort freq
 ./rflib radio sources add HT band:gmrs --sort freq --section GMRS
 ./rflib radio sources add HT band:noaa                  # a new section of its own, "band:noaa"
@@ -369,6 +391,7 @@ A radio's **sources** are searches, or plans, that `radio sync` adds new matchin
 ./rflib radio sync HT --dry-run
 ./rflib radio sync HT
 ./rflib radio sources list HT    # number, section, sort, plan numbers, channels added, query
+./rflib radio draft HT --save
 ```
 
 - **Placement:** a source's new channels go at the end of its section, in its sort order; a sorted section keeps its own order. Several sources can feed one section.
@@ -699,7 +722,7 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 - **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, retire, relink retired ones to their replacements, or add to a radio, open one to set its status (active, off the air, or retired with a replacement, yours or shared), show retired channels, which the list hides, and choose Source (in use, by default) to search the whole shared list as well as the channels you use; when the shared list has more matches, a link next to the count searches there too. **Clear** starts the search and its filters over. A globe marks a shared channel, and a note icon your notes or tags on one.
 - **Shared list:** opened from its own item in the navigation. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who uses the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
-- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and how it's programmed), and see in the Programmed column, and the count above the list, which memories aren't programmed (struck through, with no number, as on the programmed radio), which are receive-only, and which carry only their transmit tone, and select several (shift-click selects a range) to set scan or power, or take them off the radio; memories are grouped by section, with each section's memory range and sources, and you drag memories within and between sections (while dragging, a bar at the top of the window takes a memory to any section, and the page scrolls near the window's edges), and drag sections by their handles to reorder them (a menu on each memory moves it too); **Add section** and each section's edit button set its name, start, size or end, order, and whether it's the default, or merge it into another (or drag a section onto the **Merge into** bar that appears while dragging it); selected memories move to a section with **Move to section**; its sources, with a preview of what a new source would add before you add it; sync with a preview; the programming file to download; **Copy**, which makes a new radio from this one for another model; the **⋯** menu, to edit the radio's settings (name, default power, duplicate names, name length, and notes) or delete it, which needs its name typed and leaves its channels in the library; and **Compare**: with another radio, by channel, adding what the other has; or with the radio's file, which reads the radio's current file and lets you choose, memory by memory, a matching channel, keeping it as programmed, or taking the radio's changes; **Ignore memory numbers** makes it a first import that only checks everything on the radio is in rflib. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
+- **Radios:** the list marks a radio with an open draft, and one a sync would change. Each radio's changes go to its draft, with **Save draft** and **Discard draft** (see [Drafts](#drafts)); each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and how it's programmed), and see in the Programmed column, and the count above the list, which memories aren't programmed (struck through, with no number, as on the programmed radio), which are receive-only, and which carry only their transmit tone, and select several (shift-click selects a range) to set scan or power, or take them off the radio; memories are grouped by section, with each section's memory range and sources, and you drag memories within and between sections (while dragging, a bar at the top of the window takes a memory to any section, and the page scrolls near the window's edges), and drag sections by their handles to reorder them (a menu on each memory moves it too); **Add section** and each section's edit button set its name, start, size or end, order, and whether it's the default, or merge it into another (or drag a section onto the **Merge into** bar that appears while dragging it); selected memories move to a section with **Move to section**; its sources, with a preview of what a new source would add before you add it; sync with a preview; the programming file to download; **Copy**, which makes a new radio from this one for another model; the **⋯** menu, to edit the radio's settings (name, default power, duplicate names, name length, and notes) or delete it, which needs its name typed and leaves its channels in the library; and **Compare**: with another radio, by channel, adding what the other has; or with the radio's file, which reads the radio's current file and lets you choose, memory by memory, a matching channel, keeping it as programmed, or taking the radio's changes; **Ignore memory numbers** makes it a first import that only checks everything on the radio is in rflib. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
 - **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
 - **Import:** a file, its options, a dry-run preview, then the import.
 - **Built-in lists** (under the Shared list, for the maintainer) and **shared changes**, as `rflib seed update` and `rflib shared changes` do. Each list shows whether the shared list is up to date with it; reviewing an update lists the channels to add, update, and retire, and any correction it keeps.
@@ -722,7 +745,7 @@ curl -H "Authorization: Bearer s3cret" 'localhost:8080/api/v1/libraries/default/
 
 - **The description:** `GET /api/v1/openapi.yaml` is the OpenAPI document, which lists every endpoint and shape. Its source is `internal/api/openapi.yaml`, and the tests hold every route and response to it.
 - **Authentication:** with `$RFLIB_API_TOKEN` set, every request but `/health` and the document needs `Authorization: Bearer TOKEN`. Serving on anything but a loopback address requires a token.
-- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-status`, `relink`, and `copy`; channels are retired, never deleted, and `hide_retired` lists them as the Channels page does; a shared channel's ID gives your view of it, and saving it saves your notes, tags, and short names), `radios` (memories, channels, overrides, sources, sync, and export), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), and `feed`. `organizations`, `systems`, and `plans` (each with `history`), which live in the shared list, and `models`, `profiles`, `seeds` (with `update`), and `tags` sit beside `libraries`.
+- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-status`, `relink`, and `copy`; channels are retired, never deleted, and `hide_retired` lists them as the Channels page does; a shared channel's ID gives your view of it, and saving it saves your notes, tags, and short names), `radios` (memories, channels, overrides, sources, sync, `draft`, and export; changes to a radio's list go to its draft, as the spec's introduction describes), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), and `feed`. `organizations`, `systems`, and `plans` (each with `history`), which live in the shared list, and `models`, `profiles`, `seeds` (with `update`), and `tags` sit beside `libraries`.
 - **Values:** frequencies are exact integer Hz, and tones use the library's syntax (`ctcss:100.000`, `dcs:023`). Queries are the same as the CLI's, in a `q` parameter or a `query` field. Channel IDs can be shortened to a unique prefix.
 - **Changes:** `PATCH` changes only the fields given, and `null` clears `tx_hz` and `location`. Changes to the `shared` library, organizations, systems, and plans need a `reason`.
 - **Errors** are `{"error": {"code", "message"}}`: 400 for a request to fix, 401 without a valid token, 403 for everyday changes to the shared library, 404, 409 for a name in use, and 500 for anything else (the detail goes to the server's log).

@@ -162,7 +162,7 @@ held to FRS, GMRS, MURS, and CB limits.
 
 Sources: a radio can keep searches and plans (rflib radio sources) that radio
 sync uses to add new matching channels, each to its section.`}
-	cmd.AddCommand(newRadioAddCommand(), newRadioListCommand(), newRadioShowCommand(), newRadioUpdateCommand(), newRadioDeleteCommand(),
+	cmd.AddCommand(newRadioAddCommand(), newRadioListCommand(), newRadioShowCommand(), newRadioUpdateCommand(), newRadioDeleteCommand(), newRadioDraftCommand(),
 		newRadioChannelsCommand(), newRadioSectionsCommand(), newRadioSourcesCommand(), newRadioSyncCommand(), newRadioExportCommand(), newRadioCompareCommand(),
 		newRadioCopyCommand())
 	return cmd
@@ -249,7 +249,11 @@ them. The memory list's source column shows which source added each channel.`}
 			ids = append(ids, strings.TrimSpace(id))
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			n, err := a.ReleaseChannels(ctx(cmd), args[0], ids)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			n, err := a.ReleaseChannels(ctx(cmd), rid, ids)
 			if err == nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Kept %d channels; no source will take them off\n", n)
 			}
@@ -308,11 +312,16 @@ func newRadioListCommand() *cobra.Command {
 			}
 			rows := make([]radioRow, len(rs))
 			for i, r := range rs {
-				_, es, err := a.RadioEntries(ctx(cmd), r.ID)
+				// The channels are the open draft's, as other reads show.
+				rid, draft, err := a.ViewDraft(ctx(cmd), r.ID)
 				if err != nil {
 					return err
 				}
-				rows[i] = radioRow{r, len(es)}
+				_, es, err := a.RadioEntries(ctx(cmd), rid)
+				if err != nil {
+					return err
+				}
+				rows[i] = radioRow{r, len(es), draft}
 			}
 			return radioListing.write(cmd, rows)
 		})
@@ -323,6 +332,7 @@ func newRadioListCommand() *cobra.Command {
 type radioRow struct {
 	domain.Radio
 	channels int
+	draft    bool
 }
 
 var radioListing = listing[radioRow]{
@@ -334,6 +344,12 @@ var radioListing = listing[radioRow]{
 		{name: "dedupe", text: func(r radioRow) string { return orDefault(r.Dedupe, "none") }},
 		{name: "name_length", text: func(r radioRow) string { return nameLength(r.NameLength) }, json: func(r radioRow) any { return r.NameLength }},
 		{name: "notes", text: func(r radioRow) string { return r.Notes }},
+		{name: "draft", text: func(r radioRow) string {
+			if r.draft {
+				return "draft"
+			}
+			return ""
+		}, json: func(r radioRow) any { return r.draft }},
 		{name: "id", id: true, text: func(r radioRow) string { return r.ID }},
 	},
 	defaults: []string{"name", "model", "channels", "default_power"},
@@ -351,13 +367,21 @@ func newRadioShowCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "show RADIO", Short: "Show a radio's settings", Args: cobra.ExactArgs(1)}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return withApp(cmd, func(a *app.Service) error {
-			r, sources, es, err := a.Sources(ctx(cmd), args[0])
+			rid, err := viewing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			r, sources, es, err := a.Sources(ctx(cmd), rid)
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "%s\nname: %s\nmodel: %s\nchannels: %d\ndefault power: %s\ndedupe: %s\nname length: %s\nnotes: %s\nsources:",
-				r.ID, r.Name, r.Model, len(es), powerName(r.DefaultPower), orDefault(r.Dedupe, "none"), nameLength(r.NameLength), r.Notes)
+			draft := "none"
+			if _, d, err := a.Draft(ctx(cmd), r.ID); err == nil && d != nil {
+				draft = "started " + d.CreatedAt.Local().Format("2006-01-02 15:04")
+			}
+			fmt.Fprintf(out, "%s\nname: %s\nmodel: %s\nchannels: %d\ndefault power: %s\ndedupe: %s\nname length: %s\nnotes: %s\ndraft: %s\nsources:",
+				r.ID, r.Name, r.Model, len(es), powerName(r.DefaultPower), orDefault(r.Dedupe, "none"), nameLength(r.NameLength), r.Notes, draft)
 			if len(sources) == 0 {
 				fmt.Fprint(out, " none")
 			}
@@ -434,12 +458,17 @@ overrides. Warnings go to stderr.
 
 ` + tableHelp}
 	memoryListing.flags(cmd)
+	savedFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := memoryListing.check(cmd); err != nil {
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			p, es, err := a.Layout(ctx(cmd), args[0])
+			rid, err := viewing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			p, es, err := a.Layout(ctx(cmd), rid)
 			if err != nil {
 				return err
 			}
@@ -534,7 +563,11 @@ sources add. With both --id and a query, a channel must match both.
 			req.Query = n
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			r, res, err := a.AddChannels(ctx(cmd), args[0], req)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			r, res, err := a.AddChannels(ctx(cmd), rid, req)
 			if err != nil {
 				return err
 			}
@@ -575,14 +608,22 @@ library, and the list closes up. Removing by query or --all needs --yes;
 		}
 		return withApp(cmd, func(a *app.Service) error {
 			if dryRun {
-				r, cs, err := a.OnRadio(ctx(cmd), args[0], sel)
+				rid, err := viewing(cmd, a, args[0])
+				if err != nil {
+					return err
+				}
+				r, cs, err := a.OnRadio(ctx(cmd), rid, sel)
 				if err != nil {
 					return err
 				}
 				fmt.Fprintf(cmd.ErrOrStderr(), "Would remove %d channels from %s\n", len(cs), r.Name)
 				return channelListing.write(cmd, cs)
 			}
-			r, cs, err := a.RemoveChannels(ctx(cmd), args[0], sel)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			r, cs, err := a.RemoveChannels(ctx(cmd), rid, sel)
 			if err == nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Removed %d channels from %s\n", len(cs), r.Name)
 			}
@@ -631,7 +672,11 @@ manual, in the order it had.`}
 				ids = append(ids, strings.TrimSpace(id))
 			}
 			return withApp(cmd, func(a *app.Service) error {
-				cleared, err := a.MoveChannels(ctx(cmd), args[0], ids, mv.Section)
+				rid, err := editing(cmd, a, args[0])
+				if err != nil {
+					return err
+				}
+				cleared, err := a.MoveChannels(ctx(cmd), rid, ids, mv.Section)
 				reportCleared(cmd, cleared)
 				return err
 			})
@@ -641,7 +686,11 @@ manual, in the order it had.`}
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			cleared, err := a.MoveChannel(ctx(cmd), args[0], id, mv)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			cleared, err := a.MoveChannel(ctx(cmd), rid, id, mv)
 			reportCleared(cmd, cleared)
 			return err
 		})
@@ -691,14 +740,18 @@ IDs) can take --power and --scan; --name is set one channel at a time.
 			return fmt.Errorf("nothing to set; give --name, --power, or --scan")
 		}
 		return withApp(cmd, func(a *app.Service) error {
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
 			if sel.Bulk() {
-				cs, err := a.SetEntries(ctx(cmd), args[0], sel, edit)
+				cs, err := a.SetEntries(ctx(cmd), rid, sel, edit)
 				if cs != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Set overrides on %d channels\n", len(cs))
 				}
 				return err
 			}
-			r, e, err := a.RadioEntry(ctx(cmd), args[0], sel.IDs[0])
+			r, e, err := a.RadioEntry(ctx(cmd), rid, sel.IDs[0])
 			if err != nil {
 				return err
 			}
@@ -739,7 +792,15 @@ rflib radio channels keep.`}
 		opts.AnyMode, _ = cmd.Flags().GetBool("any-mode")
 		dryRun := opts.DryRun
 		return withApp(cmd, func(a *app.Service) error {
-			res, err := a.Sync(ctx(cmd), args[0], opts)
+			resolve := editing
+			if dryRun {
+				resolve = viewing
+			}
+			rid, err := resolve(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			res, err := a.Sync(ctx(cmd), rid, opts)
 			if err != nil {
 				return err
 			}
@@ -873,12 +934,17 @@ func parseSectionStart(v string) (*int, error) {
 func newRadioSourcesListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list RADIO", Short: "List a radio's sources", Args: cobra.ExactArgs(1)}
 	sourceListing.flags(cmd)
+	savedFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := sourceListing.check(cmd); err != nil {
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			_, sources, es, err := a.Sources(ctx(cmd), args[0])
+			rid, err := viewing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			_, sources, es, err := a.Sources(ctx(cmd), rid)
 			if err != nil {
 				return err
 			}
@@ -907,7 +973,11 @@ plan's numbers (--plan-numbers). Removing the source takes its channels off.`}
 		src := domain.RadioSource{Query: strings.Join(args[1:], " "), Sort: getString(cmd, "sort"), SectionID: getString(cmd, "section"),
 			PlanID: getString(cmd, "plan"), PlanNumbers: getString(cmd, "plan-numbers")}
 		return withApp(cmd, func(a *app.Service) error {
-			r, src, err := a.AddSource(ctx(cmd), args[0], src)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			r, src, err := a.AddSource(ctx(cmd), rid, src)
 			if err == nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Added source %d to %s; run rflib radio sync %s to add its channels\n", src.Position+1, r.Name, r.Name)
 			}
@@ -931,7 +1001,11 @@ where they are; radio sync adds the new matches, to its section.`}
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			_, src, err := a.Source(ctx(cmd), args[0], n)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			_, src, err := a.Source(ctx(cmd), rid, n)
 			if err != nil {
 				return err
 			}
@@ -966,7 +1040,13 @@ func newRadioSourcesMoveCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return withApp(cmd, func(a *app.Service) error { return a.MoveSource(ctx(cmd), args[0], n, to) })
+		return withApp(cmd, func(a *app.Service) error {
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			return a.MoveSource(ctx(cmd), rid, n, to)
+		})
 	}
 	return cmd
 }
@@ -981,7 +1061,11 @@ func newRadioSourcesRemoveCommand() *cobra.Command {
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			r, err := a.GetRadio(ctx(cmd), args[0])
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			r, err := a.GetRadio(ctx(cmd), rid)
 			if err != nil {
 				return err
 			}
@@ -1009,6 +1093,7 @@ manufacturer software's CSV for profile radios. Warnings go to stderr.`}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
 		return withApp(cmd, func(a *app.Service) error {
+			noteDraft(cmd, a, args[0], "exporting the saved radio")
 			p, _, err := a.Layout(ctx(cmd), args[0])
 			if err != nil {
 				return err

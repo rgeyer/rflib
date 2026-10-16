@@ -14,8 +14,27 @@ info:
 
     Errors are `{"error": {"code", "message"}}`: 400 `invalid` for a request
     to fix, 401 `unauthorized`, 403 `read_only` for everyday changes to the
-    shared library, 404 `not_found`, 409 `conflict` for a name in use, 413
-    `too_large`, and 500 `internal`.
+    shared library, 404 `not_found`, 409 `conflict` for a name in use,
+    `no_draft` for a change to a radio's list with no draft open, and
+    `stale_draft` for a change made against a draft that's no longer the
+    one open, 413 `too_large`, and 500 `internal`.
+
+    Changes to a radio's list (its channels, sections, and sources, and
+    sync) go to its open draft, which saving makes the radio's. With no
+    draft open, such a change is refused (`no_draft`): start one with
+    `POST .../draft`, make the changes, then `POST .../draft/save` (or
+    `.../draft/discard`). Reads of the list show the draft while one is
+    open; exports, copies, and other radios' comparisons use the saved
+    radio. Settings save at once.
+
+    Optionally, a change can send `X-Rflib-Draft`, as the web interface
+    does. With it, a change opens a draft when none is open. Its value
+    says what the client was showing: a draft's ID, or `none` for the saved
+    radio, and the change is refused (`stale_draft`) when the open draft
+    isn't that one, so a page that's out of date doesn't change a draft it
+    hasn't seen; or `any`, from a client that wasn't showing the radio's
+    list, for no such check. The response to a change names, in the same
+    header, the draft it went to.
 servers:
   - url: /api/v1
 security:
@@ -1099,6 +1118,65 @@ paths:
             text/csv:
               schema: {type: string}
         default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/draft:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    get:
+      summary: The radio's open draft, and what it changes
+      responses:
+        "200":
+          description: The draft (null when none is open) and its changes against the saved radio
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [draft, changes]
+                properties:
+                  draft: {$ref: "#/components/schemas/Draft"}
+                  changes:
+                    type: object
+                    required: [added, removed, changed, moved, renumbered, sections_added, sections_removed, sources_added, sources_removed]
+                    properties:
+                      added: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                      removed: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                      changed: {type: array, description: "Memories with another name, power, or scan", items: {$ref: "#/components/schemas/Channel"}}
+                      moved: {type: array, description: Memories moved to another section, items: {$ref: "#/components/schemas/MovedMemory"}}
+                      renumbered: {type: array, description: Memories renumbered within their section, items: {$ref: "#/components/schemas/MovedMemory"}}
+                      sections_added: {type: array, items: {type: string}}
+                      sections_removed: {type: array, items: {type: string}}
+                      sources_added: {type: array, items: {type: string}}
+                      sources_removed: {type: array, items: {type: string}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Open the radio's draft, a copy of its list as it is now
+      responses:
+        "201":
+          description: The draft
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Draft"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/draft/save:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Make the radio's list its draft's, and close the draft
+      responses:
+        "200":
+          description: The radio
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Radio"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/draft/discard:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Close the radio's draft, leaving the radio as it was
+      responses:
+        "200":
+          description: The radio
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Radio"}
+        default: {$ref: "#/components/responses/Error"}
 
   /organizations:
     get:
@@ -1504,7 +1582,7 @@ components:
           type: object
           required: [code, message]
           properties:
-            code: {type: string, enum: [invalid, unauthorized, read_only, not_found, conflict, too_large, internal]}
+            code: {type: string, enum: [invalid, unauthorized, read_only, not_found, conflict, no_draft, stale_draft, too_large, internal]}
             message: {type: string}
 
     Library:
@@ -1727,7 +1805,7 @@ components:
 
     Radio:
       type: object
-      required: [id, name, model, default_power, dedupe, name_length, notes, channels, created_at, updated_at]
+      required: [id, name, model, default_power, dedupe, name_length, notes, channels, created_at, updated_at, draft, sync_changes]
       properties:
         id: {type: string}
         name: {type: string}
@@ -1736,9 +1814,29 @@ components:
         dedupe: {type: string, enum: [none, index, freq]}
         name_length: {type: integer, description: "The radio's longest name, overriding the model's; 0 uses the model's"}
         notes: {type: string}
-        channels: {type: integer}
+        channels: {type: integer, description: "Memories on the radio, or on its open draft"}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+        draft: {$ref: "#/components/schemas/Draft"}
+        sync_changes: {type: integer, nullable: true, description: "How many channels a sync of the saved radio would add or take off; null when it has no sources or doesn't lay out"}
+    MovedMemory:
+      type: object
+      description: "A memory a draft moves: its number (null when not programmed) and section, before and after"
+      required: [channel, from, to, from_section, to_section]
+      properties:
+        channel: {$ref: "#/components/schemas/Channel"}
+        from: {type: integer, nullable: true}
+        to: {type: integer, nullable: true}
+        from_section: {type: string}
+        to_section: {type: string}
+    Draft:
+      type: object
+      nullable: true
+      description: A radio's open draft
+      required: [id, started_at]
+      properties:
+        id: {type: string}
+        started_at: {type: string, format: date-time}
     RadioInput:
       type: object
       additionalProperties: false

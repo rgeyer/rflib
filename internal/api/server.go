@@ -150,6 +150,10 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		status, code, msg = http.StatusNotFound, "not_found", err.Error()
 	case errors.Is(err, store.ErrNotFound):
 		status, code, msg = http.StatusNotFound, "not_found", err.Error()
+	case errors.Is(err, app.ErrStaleDraft):
+		status, code, msg = http.StatusConflict, "stale_draft", err.Error()
+	case errors.Is(err, app.ErrNoDraft):
+		status, code, msg = http.StatusConflict, "no_draft", err.Error()
 	case errors.Is(err, store.ErrConflict):
 		status, code, msg = http.StatusConflict, "conflict", err.Error()
 	case errors.Is(err, app.ErrReadOnly):

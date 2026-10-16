@@ -13,6 +13,10 @@ type Radio struct {
 	ID    string
 	Name  string
 	Model string
+	// DraftOf is, for a radio's draft, the radio's ID (see
+	// store.Library.StartRadioDraft); a draft has its radio's name and
+	// settings.
+	DraftOf string
 	// DefaultPower applies to channels without a power intent of their own.
 	DefaultPower PowerIntent
 	// Dedupe is how duplicate names on this radio are told apart: none,
@@ -43,6 +47,9 @@ type RadioSection struct {
 	Size     *int
 	Sort     string
 	Default  bool
+	// Origin is, for a section of a radio's draft, the ID of the radio's
+	// section it's a copy of; empty for one the draft added.
+	Origin string
 }
 
 // SectionSorts are a section's orders: manual (empty), name, or freq.

@@ -29,6 +29,7 @@ export type Plan = S["Plan"];
 export type PlanEntry = S["PlanEntry"];
 export type PlanRow = S["PlanRow"];
 export type RecordRevision = S["RecordRevision"];
+export type Draft = NonNullable<S["Draft"]>;
 
 const TOKEN_KEY = "rflib.token";
 
@@ -60,8 +61,47 @@ const auth: Middleware = {
   },
 };
 
+// Each radio page says which draft it shows (or "none"), and changes to
+// that radio send it: the server opens a draft with the first change, and
+// refuses a change made against a draft that's no longer open (see
+// STALE_DRAFT). Other pages send "any". A change's response names the
+// draft it went to.
+const shownDrafts = new Map<string, string>();
+const DRAFT_HEADER = "X-Rflib-Draft";
+
+function radioOf(url: string): string | null {
+  const m = /\/libraries\/([^/]+)\/radios\/([^/]+)\//.exec(new URL(url, location.href).pathname);
+  return m ? `${decodeURIComponent(m[1])}/${decodeURIComponent(m[2])}` : null;
+}
+
+/** showDraft records the draft a radio's page shows; null for none. */
+export function showDraft(lib: string, radio: string, id: string | null) {
+  shownDrafts.set(`${lib}/${radio}`, id ?? "none");
+}
+
+const drafts: Middleware = {
+  onRequest({ request }) {
+    // From a page that doesn't show the radio (such as Add to radio on the
+    // Channels page), a change goes to its draft, opening one if needed.
+    const key = request.method === "GET" ? null : radioOf(request.url);
+    if (key) request.headers.set(DRAFT_HEADER, shownDrafts.get(key) ?? "any");
+    return request;
+  },
+  onResponse({ request, response }) {
+    const key = radioOf(request.url);
+    const id = response.headers.get(DRAFT_HEADER);
+    if (key && id && response.ok) shownDrafts.set(key, id);
+    return response;
+  },
+};
+
 export const api = createClient<paths>({ baseUrl: "/api/v1" });
 api.use(auth);
+api.use(drafts);
+
+/** STALE_DRAFT is dispatched on window when a change was made against a
+ * radio's draft that's no longer the one open; the page reloads. */
+export const STALE_DRAFT = "rflib:stale-draft";
 
 /** ApiError is an error response: its status, code, and message. */
 export class ApiError extends Error {
@@ -85,6 +125,7 @@ export async function call<T>(request: Promise<Result<T>>): Promise<T> {
   if (!response.ok) {
     if (response.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED));
     const body = error as { error?: { code?: string; message?: string } } | undefined;
+    if (body?.error?.code === "stale_draft") window.dispatchEvent(new Event(STALE_DRAFT));
     throw new ApiError(response.status, body?.error?.code ?? "internal", body?.error?.message ?? response.statusText);
   }
   return data as T;

@@ -75,6 +75,10 @@ func (s *server) addFromRadio(w http.ResponseWriter, r *http.Request, a *app.Ser
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
+	r, err := editOrViewSaying(w, r, a, in.DryRun)
+	if err != nil {
+		return err
+	}
 	_, res, err := a.AddFromRadio(ctx(r), r.PathValue("radio"), in.Radio, in.Add, in.DryRun)
 	if err != nil {
 		return err

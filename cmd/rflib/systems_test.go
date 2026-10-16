@@ -39,6 +39,7 @@ func TestOrgsSystemsAndPlans(t *testing.T) {
 		t.Errorf("plan channels:\n%s", got)
 	}
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
 	c.ok("radio", "sections", "add", "HT", "Fair", "--start", "50")
 	c.ok("radio", "sources", "add", "HT", "--plan", "fair", "--section", "fair", "--plan-numbers", "match")
 	c.fails("not both", "radio", "sources", "add", "HT", "band:2m", "--plan", "fair")

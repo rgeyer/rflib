@@ -119,21 +119,18 @@ func (s *Service) SearchUsers(ctx context.Context, name string) ([]string, error
 			users = append(users, "@"+x.Name)
 		}
 	}
-	radios, err := s.lib.ListRadios(ctx)
+	names, err := s.radioIDNames(ctx)
 	if err != nil {
 		return nil, err
-	}
-	names := map[string]string{}
-	for _, r := range radios {
-		names[r.ID] = r.Name
 	}
 	sources, err := s.lib.AllRadioSources(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, src := range sources {
-		if uses(src.Query) {
-			users = append(users, fmt.Sprintf("radio %s source %d", names[src.RadioID], src.Position+1))
+		// A draft's sources count too, under its radio's name, once.
+		if u := fmt.Sprintf("radio %s source %d", names[src.RadioID], src.Position+1); uses(src.Query) && !slices.Contains(users, u) {
+			users = append(users, u)
 		}
 	}
 	return users, nil

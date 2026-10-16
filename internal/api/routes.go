@@ -63,33 +63,37 @@ func (s *server) routes() []route {
 		{"GET", R, s.lib(s.getRadio), false},
 		{"PATCH", R, s.lib(s.updateRadio), false},
 		{"DELETE", R, s.lib(s.deleteRadio), false},
-		{"GET", R + "/memories", s.lib(s.memories), false},
-		{"POST", R + "/channels", s.lib(s.addRadioChannels), false},
-		{"POST", R + "/channels/remove", s.lib(s.removeRadioChannels), false},
-		{"POST", R + "/channels/set", s.lib(s.setRadioChannels), false},
-		{"PATCH", R + "/channels/{id}", s.lib(s.setRadioChannel), false},
-		{"POST", R + "/channels/{id}/move", s.lib(s.moveRadioChannel), false},
-		{"GET", R + "/sources", s.lib(s.listSources), false},
-		{"POST", R + "/sources", s.lib(s.addSource), false},
-		{"POST", R + "/sources/preview", s.lib(s.previewSource), false},
-		{"PATCH", R + "/sources/{n}", s.lib(s.updateSource), false},
-		{"DELETE", R + "/sources/{n}", s.lib(s.removeSource), false},
-		{"POST", R + "/sources/{n}/move", s.lib(s.moveSource), false},
-		{"GET", R + "/sections", s.lib(s.listSections), false},
-		{"POST", R + "/sections", s.lib(s.addSection), false},
-		{"PATCH", R + "/sections/{section}", s.lib(s.updateSection), false},
-		{"DELETE", R + "/sections/{section}", s.lib(s.removeSection), false},
-		{"POST", R + "/sections/{section}/move", s.lib(s.moveSection), false},
-		{"POST", R + "/sections/{section}/merge", s.lib(s.mergeSection), false},
-		{"POST", R + "/channels/move", s.lib(s.moveRadioChannels), false},
-		{"POST", R + "/channels/keep", s.lib(s.keepRadioChannels), false},
+		{"GET", R + "/memories", s.lib(s.view(s.memories)), false},
+		{"POST", R + "/channels", s.lib(s.edit(s.addRadioChannels)), false},
+		{"POST", R + "/channels/remove", s.lib(s.edit(s.removeRadioChannels)), false},
+		{"POST", R + "/channels/set", s.lib(s.edit(s.setRadioChannels)), false},
+		{"PATCH", R + "/channels/{id}", s.lib(s.edit(s.setRadioChannel)), false},
+		{"POST", R + "/channels/{id}/move", s.lib(s.edit(s.moveRadioChannel)), false},
+		{"GET", R + "/sources", s.lib(s.view(s.listSources)), false},
+		{"POST", R + "/sources", s.lib(s.edit(s.addSource)), false},
+		{"POST", R + "/sources/preview", s.lib(s.view(s.previewSource)), false},
+		{"PATCH", R + "/sources/{n}", s.lib(s.edit(s.updateSource)), false},
+		{"DELETE", R + "/sources/{n}", s.lib(s.edit(s.removeSource)), false},
+		{"POST", R + "/sources/{n}/move", s.lib(s.edit(s.moveSource)), false},
+		{"GET", R + "/sections", s.lib(s.view(s.listSections)), false},
+		{"POST", R + "/sections", s.lib(s.edit(s.addSection)), false},
+		{"PATCH", R + "/sections/{section}", s.lib(s.edit(s.updateSection)), false},
+		{"DELETE", R + "/sections/{section}", s.lib(s.edit(s.removeSection)), false},
+		{"POST", R + "/sections/{section}/move", s.lib(s.edit(s.moveSection)), false},
+		{"POST", R + "/sections/{section}/merge", s.lib(s.edit(s.mergeSection)), false},
+		{"POST", R + "/channels/move", s.lib(s.edit(s.moveRadioChannels)), false},
+		{"POST", R + "/channels/keep", s.lib(s.edit(s.keepRadioChannels)), false},
 		{"POST", R + "/sync", s.lib(s.syncRadio), false},
 		{"POST", R + "/copy", s.lib(s.copyRadio), false},
-		{"POST", R + "/compare-radio", s.lib(s.compareRadios), false},
+		{"POST", R + "/compare-radio", s.lib(s.view(s.compareRadios)), false},
 		{"POST", R + "/compare-radio/apply", s.lib(s.addFromRadio), false},
-		{"POST", R + "/compare", s.lib(s.compareRadio), false},
-		{"POST", R + "/compare/apply", s.lib(s.applyComparison), false},
+		{"POST", R + "/compare", s.lib(s.view(s.compareRadio)), false},
+		{"POST", R + "/compare/apply", s.lib(s.edit(s.applyComparison)), false},
 		{"GET", R + "/export", s.lib(s.exportRadio), false},
+		{"GET", R + "/draft", s.lib(s.getDraft), false},
+		{"POST", R + "/draft", s.lib(s.startDraft), false},
+		{"POST", R + "/draft/save", s.lib(s.saveDraft), false},
+		{"POST", R + "/draft/discard", s.lib(s.discardDraft), false},
 
 		{"GET", "/organizations", s.recordHandler(s.listOrgs), false},
 		{"POST", "/organizations", s.recordHandler(s.createOrg), false},
@@ -834,9 +838,33 @@ func (in radioInput) apply(r *domain.Radio) error {
 	return nil
 }
 
+// radioOut is a radio, by its saved self: its channels are its open
+// draft's, as other reads show, and it says whether a sync of the saved
+// radio would change it.
 func (s *server) radioOut(r *http.Request, a *app.Service, radio domain.Radio) (Radio, error) {
-	_, es, err := a.RadioEntries(ctx(r), radio.ID)
-	return newRadio(radio, len(es)), err
+	saved, d, err := a.Draft(ctx(r), radio.ID)
+	if err != nil {
+		return Radio{}, err
+	}
+	shown := saved.ID
+	out := newRadio(saved, 0)
+	if d != nil {
+		shown, out.Draft = d.ID, &Draft{d.ID, d.CreatedAt}
+	}
+	_, es, err := a.RadioEntries(ctx(r), shown)
+	if err != nil {
+		return out, err
+	}
+	out.Channels = len(es)
+	// A radio that doesn't lay out has no sync to preview.
+	if res, err := a.Sync(ctx(r), saved.ID, app.SyncOptions{DryRun: true}); err == nil {
+		n := 0
+		for _, ss := range res.Sources {
+			n += len(ss.Add) + len(ss.Removed)
+		}
+		out.SyncChanges = &n
+	}
+	return out, nil
 }
 
 func (s *server) listRadios(w http.ResponseWriter, r *http.Request, a *app.Service) error {
@@ -1321,6 +1349,10 @@ func (s *server) syncRadio(w http.ResponseWriter, r *http.Request, a *app.Servic
 		AnyMode bool `json:"any_mode"`
 	}
 	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	r, err := editOrViewSaying(w, r, a, in.DryRun)
+	if err != nil {
 		return err
 	}
 	res, err := a.Sync(ctx(r), r.PathValue("radio"), app.SyncOptions{DryRun: in.DryRun, AnyBand: in.AnyBand, AnyMode: in.AnyMode})

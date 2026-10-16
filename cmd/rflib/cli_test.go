@@ -88,6 +88,14 @@ func (c *cli) ok(args ...string) string {
 	return strings.TrimSpace(out)
 }
 
+// saveDraft saves a radio's draft, so an export sees its changes, and
+// starts another for the changes after.
+func (c *cli) saveDraft(radio string) {
+	c.t.Helper()
+	c.ok("radio", "draft", radio, "--save")
+	c.ok("radio", "draft", radio, "--start")
+}
+
 func (c *cli) fails(want string, args ...string) {
 	c.t.Helper()
 	_, _, err := c.exec(args...)
@@ -523,6 +531,7 @@ func TestRadioWorkflow(t *testing.T) {
 	}
 	c.fails("unknown radio model", "radio", "add", "HT", "--model", "uv-5r")
 	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g", "--default-power", "high")
+	c.ok("radio", "draft", "HT", "--start")
 	c.ok("radio", "sources", "add", "HT", "service:noaa")
 
 	if out := c.status("radio", "channels", "add", "HT", "-q", "service:gmrs is:repeater", "--sort", "freq"); out != "Added 8 channels to HT" {
@@ -577,6 +586,7 @@ func TestRadioWorkflow(t *testing.T) {
 		t.Fatalf("second sync = %q", got)
 	}
 
+	c.saveDraft("HT")
 	csv, _, err := c.exec("radio", "export", "HT")
 	if err != nil {
 		t.Fatal(err)
@@ -611,6 +621,7 @@ func TestRadioMoveBeforeAfter(t *testing.T) {
 		ids = append(ids, c.ok("channel", "add", "--name", n, "--rx", "146.52"))
 	}
 	c.ok("radio", "add", "Truck", "--model", "yaesu-ftm150")
+	c.ok("radio", "draft", "Truck", "--start")
 	c.ok("radio", "channels", "add", "Truck", "--id", strings.Join(ids, ","))
 	order := func() string {
 		var names []string
@@ -683,6 +694,7 @@ func TestSearchAndSavedSearches(t *testing.T) {
 	c.fails("used by @quiet", "search", "delete", "wx", "--yes")
 	c.fails("used by @quiet", "search", "update", "wx", "--name", "weather")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
 	c.ok("radio", "sources", "add", "HT", "@quiet")
 	if out := c.ok("search", "show", "quiet"); !strings.Contains(out, "used by: radio HT source 1") || !strings.Contains(out, "matches: 29") {
 		t.Errorf("search show = %q", out)
@@ -703,6 +715,7 @@ func TestRadioSources(t *testing.T) {
 	c := newCLI(t)
 	c.sharedIDs("us-gmrs", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
 	c.fails("no sources", "radio", "sync", "HT")
 	c.ok("radio", "sources", "add", "HT", "band:noaa", "--sort", "freq")
 	c.ok("radio", "sections", "set", "HT", "band:noaa", "--start", "100")
@@ -803,6 +816,7 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	c := newCLI(t)
 	c.privateCopies("us-cb", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "radioddity-uv5g") // 130-176 and 400-520 MHz
+	c.ok("radio", "draft", "HT", "--start")
 	if n := len(strings.Split(c.ok("channel", "list", "tunes:HT"), "\n")); n != 7 {
 		t.Errorf("tunes:HT = %d channels", n)
 	}
@@ -831,10 +845,12 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 		t.Errorf("--any-mode = %q", out)
 	}
 	// It's on the radio but left out of the export.
+	c.saveDraft("HT")
 	exported, stderr, err := c.exec("radio", "export", "HT")
 	if err != nil || strings.Contains(exported, "CB 19") || !strings.Contains(stderr, `"CB 19": not programmed: the radio doesn't have AM (it has FM, NFM)`) {
 		t.Errorf("export: %v\n%s\n%s", err, stderr, exported)
 	}
+	c.saveDraft("HT")
 	if _, stderr, err := c.exec("radio", "export", "HT", "--output", filepath.Join(t.TempDir(), "ht.csv")); err != nil || !strings.Contains(stderr, "Exported 7 channels") {
 		t.Errorf("export count: %v, %q", err, stderr)
 	}
@@ -843,6 +859,7 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	}
 
 	c.ok("radio", "add", "Base", "--model", "radioddity-uv5g")
+	c.ok("radio", "draft", "Base", "--start")
 	c.ok("radio", "sources", "add", "Base", "service:cb OR service:noaa")
 	if out := c.ok("radio", "sync", "Base", "--dry-run"); strings.Count(out, "would skip") != 40 || strings.Count(out, "would add") != 7 {
 		t.Errorf("dry run = %q", out)
@@ -901,6 +918,7 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 	c := newCLI(t)
 	c.privateCopies("us-gmrs", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
 
 	// A list pipes straight into --id -, header or not, and --id narrows a
 	// query.
@@ -1005,6 +1023,7 @@ func TestSharedChannels(t *testing.T) {
 	// On a radio, with the radio's own power. The maintainer takes it off
 	// the air; it shows up in changes with the radio it's on.
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
 	c.ok("radio", "channels", "add", "HT", "--id", sharedID)
 	c.ok("radio", "channels", "set", "HT", "--id", sharedID, "--power", "low")
 	c.fails(`"reason" not set`, "shared", "status", "--id", sharedID, "--set", "off-air")
@@ -1095,7 +1114,9 @@ func TestGenericChirpRadioAndUserModels(t *testing.T) {
 	c := newCLI(t)
 	c.ok("channel", "add", "--name", "Santa Barbara Sheriff Dispatch", "--rx", "460.275")
 	c.ok("radio", "add", "HT", "--model", "chirp-generic")
+	c.ok("radio", "draft", "HT", "--start")
 	c.ok("radio", "channels", "add", "HT", "-q", "name:sheriff")
+	c.saveDraft("HT")
 	if csv := c.ok("radio", "export", "HT"); !strings.Contains(csv, "\r\n1,Santa Barbara Sheriff Dispatch,460.275000,") {
 		t.Fatalf("generic export = %q", csv)
 	}
@@ -1104,6 +1125,7 @@ func TestGenericChirpRadioAndUserModels(t *testing.T) {
 	if out := c.ok("radio", "show", "HT"); !strings.Contains(out, "name length: 7\n") {
 		t.Fatalf("radio show = %q", out)
 	}
+	c.saveDraft("HT")
 	csv := c.ok("radio", "export", "HT")
 	name := strings.Split(strings.Split(csv, "\r\n")[1], ",")[1]
 	if len(name) == 0 || len(name) > 7 {
@@ -1136,6 +1158,7 @@ func TestRadioCompare(t *testing.T) {
 		"3,Calling,146.520000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,,,,,,\n"+
 		"8,Metro,146.940000,-,0.600000,Tone,127.3,127.3,023,NN,023,Tone->Tone,FM,5.00,,,,,,,\n")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
 	out := c.ok("radio", "compare", "HT", file)
 	if !strings.Contains(out, "0 same, 0 changed, 2 only on the radio, 0 only in rflib") {
 		t.Fatalf("compare:\n%s", out)
@@ -1150,4 +1173,56 @@ func TestRadioCompare(t *testing.T) {
 	if out := c.ok("radio", "compare", "HT", file); !strings.Contains(out, "2 same, 0 changed, 0 only on the radio, 0 only in rflib") {
 		t.Errorf("compare again:\n%s", out)
 	}
+}
+
+func TestRadioDrafts(t *testing.T) {
+	c := newCLI(t)
+	var ids []string
+	for i, name := range []string{"A", "B"} {
+		ids = append(ids, c.ok("channel", "add", "--name", name, "--rx", []string{"146.52", "146.535"}[i]))
+	}
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	// Changes to the list need a draft; settings don't.
+	c.fails("HT has no draft; changes to its list go to one: start it with rflib radio draft HT --start", "radio", "channels", "add", "HT", "--id", ids[0])
+	c.ok("radio", "update", "HT", "--default-power", "low")
+	if got := c.status("radio", "draft", "HT"); got != "HT has no draft" {
+		t.Errorf("no draft = %q", got)
+	}
+	c.ok("radio", "draft", "HT", "--start")
+	c.fails("already has a draft", "radio", "draft", "HT", "--start")
+	c.ok("radio", "channels", "add", "HT", "--id", strings.Join(ids, ","))
+
+	// Reads show the draft, and say so; --saved and exports use the radio.
+	if out, stderr, _ := c.exec("radio", "channels", "list", "HT", "--fields", "name"); out != "A\nB\n" || !strings.Contains(stderr, "showing HT's draft") {
+		t.Errorf("draft list = %q, %q", out, stderr)
+	}
+	if got := c.ok("radio", "channels", "list", "HT", "--saved", "--fields", "name"); got != "" {
+		t.Errorf("saved list = %q", got)
+	}
+	if _, stderr, _ := c.exec("radio", "export", "HT"); !strings.Contains(stderr, "HT has an unsaved draft") || !strings.Contains(stderr, "exporting the saved radio") {
+		t.Errorf("export with a draft: %q", stderr)
+	}
+	if got := c.ok("radio", "draft", "HT"); !strings.Contains(got, "added  A") || !strings.Contains(got, "added  B") {
+		t.Errorf("draft changes = %q", got)
+	}
+
+	// Discarding leaves the radio as it was; saving makes the draft's list
+	// the radio's.
+	c.ok("radio", "draft", "HT", "--discard")
+	if got := c.ok("radio", "list", "--fields", "channels,draft"); got != "0" {
+		t.Errorf("after discarding = %q", got)
+	}
+	c.ok("radio", "draft", "HT", "--start")
+	c.ok("radio", "channels", "add", "HT", "--id", ids[1])
+	if got := c.ok("radio", "list", "--fields", "channels,draft"); got != "1\tdraft" {
+		t.Errorf("with a draft = %q", got)
+	}
+	if got := c.status("radio", "draft", "HT", "--save"); got != "Saved HT's draft; program the radio again" {
+		t.Errorf("save = %q", got)
+	}
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "name"); got != "B" {
+		t.Errorf("saved = %q", got)
+	}
+	c.fails("HT has no draft", "radio", "draft", "HT", "--save")
+	c.fails("if any flags in the group [start save discard] are set none of the others can be", "radio", "draft", "HT", "--start", "--save")
 }

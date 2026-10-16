@@ -11,6 +11,7 @@ export function useSections(lib: string, radio: string) {
   return useQuery({
     queryKey: ["sections", lib, radio],
     queryFn: () => call<{ sections: Section[] }>(api.GET("/libraries/{lib}/radios/{radio}/sections", { params: { path: { lib, radio } } })),
+    refetchOnWindowFocus: true,
   });
 }
 

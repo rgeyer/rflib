@@ -14,7 +14,8 @@ import (
 	"github.com/ryan/rflib/internal/store"
 )
 
-const radioColumns = `id,name,model,default_power,dedupe,name_length,notes,created_at,updated_at`
+const radioColumns = `id,name,model,default_power,dedupe,name_length,notes,created_at,updated_at,coalesce(draft_of,'')`
+const radioInsertColumns = `id,name,model,default_power,dedupe,name_length,notes,created_at,updated_at`
 
 func (l *library) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error) {
 	if err := domain.ValidateRadio(r); err != nil {
@@ -24,7 +25,7 @@ func (l *library) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio
 		return r, err
 	}
 	return r, l.inTx(ctx, func(tx *library) error {
-		_, err := tx.q.ExecContext(ctx, `INSERT INTO radios (library_id,`+radioColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		_, err := tx.q.ExecContext(ctx, `INSERT INTO radios (library_id,`+radioInsertColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?)`,
 			tx.id, r.ID, r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.NameLength, r.Notes, timestamp(r.CreatedAt), timestamp(r.UpdatedAt))
 		if err != nil {
 			return conflict(fmt.Errorf("create radio: %w", err), "a radio named %q", r.Name)
@@ -40,7 +41,8 @@ func (l *library) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio
 }
 
 func (l *library) GetRadio(ctx context.Context, idOrName string) (domain.Radio, error) {
-	r, err := scanRadio(l.q.QueryRowContext(ctx, `SELECT `+radioColumns+` FROM radios WHERE library_id=? AND (id=? OR name=?)`, l.id, idOrName, idOrName))
+	// A name is the radio's, never its draft's, which only its ID finds.
+	r, err := scanRadio(l.q.QueryRowContext(ctx, `SELECT `+radioColumns+` FROM radios WHERE library_id=? AND (id=? OR (name=? AND draft_of IS NULL))`, l.id, idOrName, idOrName))
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, fmt.Errorf("radio %q: %w", idOrName, store.ErrNotFound)
 	}
@@ -48,7 +50,7 @@ func (l *library) GetRadio(ctx context.Context, idOrName string) (domain.Radio, 
 }
 
 func (l *library) ListRadios(ctx context.Context) ([]domain.Radio, error) {
-	rows, err := l.q.QueryContext(ctx, `SELECT `+radioColumns+` FROM radios WHERE library_id=? ORDER BY name`, l.id)
+	rows, err := l.q.QueryContext(ctx, `SELECT `+radioColumns+` FROM radios WHERE library_id=? AND draft_of IS NULL ORDER BY name`, l.id)
 	if err != nil {
 		return nil, err
 	}
@@ -69,8 +71,9 @@ func (l *library) UpdateRadio(ctx context.Context, r domain.Radio) (domain.Radio
 		return r, err
 	}
 	r.UpdatedAt = time.Now().UTC()
-	res, err := l.q.ExecContext(ctx, `UPDATE radios SET name=?,model=?,default_power=?,dedupe=?,name_length=?,notes=?,updated_at=? WHERE id=? AND library_id=?`,
-		r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.NameLength, r.Notes, timestamp(r.UpdatedAt), r.ID, l.id)
+	// A radio's settings are its draft's too.
+	res, err := l.q.ExecContext(ctx, `UPDATE radios SET name=?,model=?,default_power=?,dedupe=?,name_length=?,notes=?,updated_at=? WHERE (id=? OR draft_of=?) AND library_id=?`,
+		r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.NameLength, r.Notes, timestamp(r.UpdatedAt), r.ID, r.ID, l.id)
 	if err != nil {
 		return r, conflict(fmt.Errorf("update radio: %w", err), "a radio named %q", r.Name)
 	}
@@ -94,7 +97,7 @@ func (l *library) DeleteRadio(ctx context.Context, id string) error {
 func scanRadio(r scanner) (domain.Radio, error) {
 	var x domain.Radio
 	var created, updated string
-	err := r.Scan(&x.ID, &x.Name, &x.Model, &x.DefaultPower, &x.Dedupe, &x.NameLength, &x.Notes, &created, &updated)
+	err := r.Scan(&x.ID, &x.Name, &x.Model, &x.DefaultPower, &x.Dedupe, &x.NameLength, &x.Notes, &created, &updated, &x.DraftOf)
 	if err != nil {
 		return x, err
 	}
@@ -418,7 +421,7 @@ func (l *library) SetRadioEntry(ctx context.Context, radioID string, e domain.Ra
 const sectionColumns = `id,radio_id,position,name,start,size,sort,is_default`
 
 func listSections(ctx context.Context, q querier, radioID string) ([]domain.RadioSection, error) {
-	rows, err := q.QueryContext(ctx, `SELECT `+sectionColumns+` FROM radio_sections WHERE radio_id=? ORDER BY position`, radioID)
+	rows, err := q.QueryContext(ctx, `SELECT `+sectionColumns+`,coalesce(origin,'') FROM radio_sections WHERE radio_id=? ORDER BY position`, radioID)
 	if err != nil {
 		return nil, fmt.Errorf("list radio sections: %w", err)
 	}
@@ -427,7 +430,7 @@ func listSections(ctx context.Context, q querier, radioID string) ([]domain.Radi
 	for rows.Next() {
 		var sec domain.RadioSection
 		var start, size sql.NullInt64
-		if err := rows.Scan(&sec.ID, &sec.RadioID, &sec.Position, &sec.Name, &start, &size, &sec.Sort, &sec.Default); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.RadioID, &sec.Position, &sec.Name, &start, &size, &sec.Sort, &sec.Default, &sec.Origin); err != nil {
 			return nil, err
 		}
 		sec.Start, sec.Size = optionalInt(start), optionalInt(size)
@@ -838,4 +841,202 @@ func (l *library) ReplaceOnRadios(ctx context.Context, oldID, newID string) erro
 		}
 		return nil
 	})
+}
+
+// --- drafts ---
+
+func (l *library) RadioDraft(ctx context.Context, radioID string) (domain.Radio, error) {
+	r, err := scanRadio(l.q.QueryRowContext(ctx, `SELECT `+radioColumns+` FROM radios WHERE library_id=? AND draft_of=?`, l.id, radioID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, fmt.Errorf("draft of radio %q: %w", radioID, store.ErrNotFound)
+	}
+	return r, err
+}
+
+func (l *library) StartRadioDraft(ctx context.Context, radioID string) (domain.Radio, error) {
+	var d domain.Radio
+	err := l.inTx(ctx, func(tx *library) error {
+		r, err := tx.GetRadio(ctx, radioID)
+		if err != nil {
+			return err
+		}
+		if r.DraftOf != "" {
+			return domain.Invalidf("radio %q is a draft", radioID)
+		}
+		d = r
+		// The draft is new: its times are when it started.
+		d.ID, d.DraftOf, d.CreatedAt, d.UpdatedAt = "", r.ID, time.Time{}, time.Time{}
+		if err := assignIdentity(&d.ID, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			return err
+		}
+		_, err = tx.q.ExecContext(ctx, `INSERT INTO radios (library_id,`+radioInsertColumns+`,draft_of) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			tx.id, d.ID, d.Name, d.Model, string(d.DefaultPower), d.Dedupe, d.NameLength, d.Notes, timestamp(d.CreatedAt), timestamp(d.UpdatedAt), r.ID)
+		if err != nil {
+			return conflict(fmt.Errorf("start draft: %w", err), "%s already has a draft", r.Name)
+		}
+		return tx.copyList(ctx, r.ID, d.ID)
+	})
+	return d, err
+}
+
+// copyList copies a radio's sections, sources, and channels, as they are,
+// to another radio, with new section and source IDs.
+func (tx *library) copyList(ctx context.Context, from, to string) error {
+	ids := map[string]string{}
+	newID := func(old string) (string, error) {
+		var id string
+		if err := assignIdentity(&id, new(time.Time), new(time.Time)); err != nil {
+			return "", err
+		}
+		ids[old] = id
+		return id, nil
+	}
+	sections, err := listSections(ctx, tx.q, from)
+	if err != nil {
+		return err
+	}
+	for _, sec := range sections {
+		id, err := newID(sec.ID)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.q.ExecContext(ctx, `INSERT INTO radio_sections (`+sectionColumns+`,origin) SELECT ?,?,position,name,start,size,sort,is_default,id FROM radio_sections WHERE id=?`, id, to, sec.ID); err != nil {
+			return fmt.Errorf("copy section: %w", err)
+		}
+	}
+	sources, err := listRadioSources(ctx, tx.q, from)
+	if err != nil {
+		return err
+	}
+	for _, src := range sources {
+		id, err := newID(src.ID)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.q.ExecContext(ctx, `INSERT INTO radio_sources (`+sourceColumns+`,origin) SELECT ?,?,position,query,sort,plan_id,?,plan_numbers,id FROM radio_sources WHERE id=?`,
+			id, to, nullable(ids[src.SectionID]), src.ID); err != nil {
+			return fmt.Errorf("copy source: %w", err)
+		}
+	}
+	type row struct{ channel, source, section string }
+	rows, err := tx.q.QueryContext(ctx, `SELECT channel_id, coalesce(source_id,''), coalesce(section_id,'') FROM radio_channels WHERE radio_id=?`, from)
+	if err != nil {
+		return err
+	}
+	var rs []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.channel, &r.source, &r.section); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		rs = append(rs, r)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, r := range rs {
+		if _, err := tx.q.ExecContext(ctx, `INSERT INTO radio_channels (radio_id,channel_id,position,name,power,skip,source_id,section_id,plan_number)
+			SELECT ?,channel_id,position,name,power,skip,?,?,plan_number FROM radio_channels WHERE radio_id=? AND channel_id=?`,
+			to, nullable(ids[r.source]), nullable(ids[r.section]), from, r.channel); err != nil {
+			return fmt.Errorf("copy channel: %w", err)
+		}
+	}
+	return nil
+}
+
+func (l *library) SaveRadioDraft(ctx context.Context, radioID string) error {
+	return l.inTx(ctx, func(tx *library) error {
+		d, err := tx.RadioDraft(ctx, radioID)
+		if err != nil {
+			return err
+		}
+		for _, table := range []string{"radio_channels", "radio_sources", "radio_sections"} {
+			if _, err := tx.q.ExecContext(ctx, `DELETE FROM `+table+` WHERE radio_id=?`, radioID); err != nil {
+				return fmt.Errorf("save draft: %w", err)
+			}
+		}
+		if err := tx.restoreOrigins(ctx, d.ID); err != nil {
+			return fmt.Errorf("save draft: %w", err)
+		}
+		for _, table := range []string{"radio_sections", "radio_sources", "radio_channels"} {
+			if _, err := tx.q.ExecContext(ctx, `UPDATE `+table+` SET radio_id=? WHERE radio_id=?`, radioID, d.ID); err != nil {
+				return fmt.Errorf("save draft: %w", err)
+			}
+		}
+		if _, err := tx.q.ExecContext(ctx, `UPDATE radios SET updated_at=? WHERE id=?`, timestamp(time.Now().UTC()), radioID); err != nil {
+			return err
+		}
+		_, err = tx.q.ExecContext(ctx, `DELETE FROM radios WHERE id=?`, d.ID)
+		return err
+	})
+}
+
+func (l *library) DiscardRadioDraft(ctx context.Context, radioID string) error {
+	d, err := l.RadioDraft(ctx, radioID)
+	if err != nil {
+		return err
+	}
+	return l.DeleteRadio(ctx, d.ID)
+}
+
+// restoreOrigins gives a draft's sections and sources, whose radio's are
+// gone, the IDs of those they're copies of, so they keep their IDs across
+// a save.
+func (tx *library) restoreOrigins(ctx context.Context, draftID string) error {
+	type move struct{ from, to string }
+	origins := func(table string) ([]move, error) {
+		rows, err := tx.q.QueryContext(ctx, `SELECT id, origin FROM `+table+` WHERE radio_id=? AND origin IS NOT NULL`, draftID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []move
+		for rows.Next() {
+			var m move
+			if err := rows.Scan(&m.from, &m.to); err != nil {
+				return nil, err
+			}
+			out = append(out, m)
+		}
+		return out, rows.Err()
+	}
+	// A row is copied under its old ID, references follow it, and the
+	// copy it was goes: references never point at a missing row.
+	secs, err := origins("radio_sections")
+	if err != nil {
+		return err
+	}
+	for _, m := range secs {
+		for _, q := range []string{
+			`INSERT INTO radio_sections (` + sectionColumns + `) SELECT ?,radio_id,position,name,start,size,sort,is_default FROM radio_sections WHERE id=?`,
+			`UPDATE radio_channels SET section_id=? WHERE section_id=?`,
+			`UPDATE radio_sources SET section_id=? WHERE section_id=?`,
+		} {
+			if _, err := tx.q.ExecContext(ctx, q, m.to, m.from); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.q.ExecContext(ctx, `DELETE FROM radio_sections WHERE id=?`, m.from); err != nil {
+			return err
+		}
+	}
+	srcs, err := origins("radio_sources")
+	if err != nil {
+		return err
+	}
+	for _, m := range srcs {
+		for _, q := range []string{
+			`INSERT INTO radio_sources (` + sourceColumns + `) SELECT ?,radio_id,position,query,sort,plan_id,section_id,plan_numbers FROM radio_sources WHERE id=?`,
+			`UPDATE radio_channels SET source_id=? WHERE source_id=?`,
+		} {
+			if _, err := tx.q.ExecContext(ctx, q, m.to, m.from); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.q.ExecContext(ctx, `DELETE FROM radio_sources WHERE id=?`, m.from); err != nil {
+			return err
+		}
+	}
+	return nil
 }

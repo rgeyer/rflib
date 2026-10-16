@@ -69,12 +69,17 @@ func newRadioSectionsListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list RADIO", Short: "List a radio's sections and the memories each uses", Args: cobra.ExactArgs(1),
 		Long: "List a radio's sections in order: start, size, the memories each uses (or reserves), order, and how many channels each holds. * marks the default section."}
 	sectionListing.flags(cmd)
+	savedFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := sectionListing.check(cmd); err != nil {
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			p, es, err := a.Layout(ctx(cmd), args[0])
+			rid, err := viewing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			p, es, err := a.Layout(ctx(cmd), rid)
 			if err != nil {
 				return err
 			}
@@ -147,7 +152,11 @@ func newRadioSectionsAddCommand() *cobra.Command {
 			sec.Sort = *e.Sort
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			sec, err := a.AddSection(ctx(cmd), args[0], sec)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			sec, err := a.AddSection(ctx(cmd), rid, sec)
 			if err == nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Added section %d, %s\n", sec.Position+1, sec.Name)
 			}
@@ -174,7 +183,11 @@ func newRadioSectionsSetCommand() *cobra.Command {
 			return fmt.Errorf("nothing to change; give --name, --start, --size, --sort, or --default")
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			_, err := a.UpdateSection(ctx(cmd), args[0], args[1], e)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			_, err = a.UpdateSection(ctx(cmd), rid, args[1], e)
 			return err
 		})
 	}
@@ -192,7 +205,11 @@ set new starts if you like.`}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		to, _ := cmd.Flags().GetInt("to")
 		return withApp(cmd, func(a *app.Service) error {
-			cleared, err := a.MoveSection(ctx(cmd), args[0], args[1], to)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			cleared, err := a.MoveSection(ctx(cmd), rid, args[1], to)
 			reportCleared(cmd, cleared)
 			return err
 		})
@@ -217,7 +234,11 @@ behind loses its start, as with moves.`}
 	_ = cmd.MarkFlagRequired("into")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return withApp(cmd, func(a *app.Service) error {
-			moved, cleared, err := a.MergeSection(ctx(cmd), args[0], args[1], getString(cmd, "into"))
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			moved, cleared, err := a.MergeSection(ctx(cmd), rid, args[1], getString(cmd, "into"))
 			if err != nil {
 				return err
 			}
@@ -240,7 +261,11 @@ another instead (rflib radio sections merge).`}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		takeOff, _ := cmd.Flags().GetBool("take-off")
 		return withApp(cmd, func(a *app.Service) error {
-			res, err := a.RemoveSection(ctx(cmd), args[0], args[1], takeOff)
+			rid, err := editing(cmd, a, args[0])
+			if err != nil {
+				return err
+			}
+			res, err := a.RemoveSection(ctx(cmd), rid, args[1], takeOff)
 			if err != nil {
 				return err
 			}

@@ -404,7 +404,9 @@ func (s *Service) Section(ctx context.Context, radio, ref string) (domain.RadioS
 	var prefixed []domain.RadioSection
 	for _, sec := range secs {
 		switch {
-		case ref == "" && sec.Default, sec.ID == ref, ref != "" && strings.EqualFold(sec.Name, ref):
+		// A draft's section is also found by the ID of the radio's section
+		// it's a copy of, as a page showing the saved radio knows it.
+		case ref == "" && sec.Default, sec.ID == ref, ref != "" && sec.Origin == ref, ref != "" && strings.EqualFold(sec.Name, ref):
 			return sec, nil
 		case ref != "" && strings.HasPrefix(sec.ID, ref):
 			prefixed = append(prefixed, sec)

@@ -41,6 +41,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Systems", testSystems},
 		{"Plans", testPlans},
 		{"SeedChannels", testSeedChannels},
+		{"RadioDrafts", testRadioDrafts},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
@@ -1067,4 +1068,105 @@ func testSeedChannels(t *testing.T, s store.Store) {
 	if got, err := sh.SeedChannels(ctx()); err != nil || len(got) != 0 {
 		t.Errorf("record outlived its channel: %+v, %v", got, err)
 	}
+}
+
+func testRadioDrafts(t *testing.T, s store.Store) {
+	l := newLibrary(t, s, "L")
+	var ids []string
+	for i, name := range []string{"A", "B", "C"} {
+		ids = append(ids, channel(t, l, name, int64(146_520_000+i*15_000)).ID)
+	}
+	r, err := l.CreateRadio(ctx(), domain.Radio{Name: "Truck", Model: "yaesu-ftm150"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := l.AddRadioSource(ctx(), domain.RadioSource{RadioID: r.ID, Query: "name:a", Sort: "name"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.AddSourceChannels(ctx(), src, ids[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.AddRadioChannels(ctx(), r.ID, "", ids[1:2]); err != nil {
+		t.Fatal(err)
+	}
+	mustNotFound(t, "RadioDraft before one", func() error { _, err := l.RadioDraft(ctx(), r.ID); return err }())
+
+	savedSecs, _ := l.RadioSections(ctx(), r.ID)
+	d, err := l.StartRadioDraft(ctx(), r.ID)
+	if err != nil || d.DraftOf != r.ID || d.Name != "Truck" || d.ID == r.ID || !d.CreatedAt.After(r.CreatedAt) {
+		t.Fatalf("start = %+v, %v", d, err)
+	}
+	if secs, _ := l.RadioSections(ctx(), d.ID); len(secs) != len(savedSecs) || secs[0].ID == savedSecs[0].ID || secs[0].Origin != savedSecs[0].ID {
+		t.Errorf("draft sections = %+v", secs)
+	}
+	if _, err := l.StartRadioDraft(ctx(), r.ID); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("a second draft: %v", err)
+	}
+	// The draft is a copy: the same list, with its own sections and
+	// sources, and the source a channel came from.
+	if radioOrder(t, l, d.ID) != "AB" {
+		t.Errorf("draft order = %s", radioOrder(t, l, d.ID))
+	}
+	des, _ := l.RadioEntries(ctx(), d.ID)
+	dsrc, _ := l.RadioSources(ctx(), d.ID)
+	if len(dsrc) != 1 || dsrc[0].ID == src.ID || des[0].SourceID != dsrc[0].ID || des[1].SourceID != "" {
+		t.Errorf("draft sources = %+v, entries = %+v", dsrc, des)
+	}
+	// Only the radio is found by name, and listed.
+	if got, _ := l.GetRadio(ctx(), "Truck"); got.ID != r.ID {
+		t.Errorf("by name = %+v", got)
+	}
+	if rs, _ := l.ListRadios(ctx()); len(rs) != 1 {
+		t.Errorf("list = %+v", rs)
+	}
+	// Settings are shared; the list isn't, until saved.
+	r.DefaultPower = domain.PowerLow
+	if _, err := l.UpdateRadio(ctx(), r); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := l.GetRadio(ctx(), d.ID); got.DefaultPower != domain.PowerLow {
+		t.Errorf("draft settings = %+v", got)
+	}
+	if _, err := l.AddRadioChannels(ctx(), d.ID, "", ids[2:]); err != nil {
+		t.Fatal(err)
+	}
+	if radioOrder(t, l, r.ID) != "AB" || radioOrder(t, l, d.ID) != "ABC" {
+		t.Errorf("before saving: %s, %s", radioOrder(t, l, r.ID), radioOrder(t, l, d.ID))
+	}
+	if err := l.SaveRadioDraft(ctx(), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if radioOrder(t, l, r.ID) != "ABC" {
+		t.Errorf("saved = %s", radioOrder(t, l, r.ID))
+	}
+	mustNotFound(t, "RadioDraft after saving", func() error { _, err := l.RadioDraft(ctx(), r.ID); return err }())
+	// Sections and sources keep their IDs across a save.
+	if srcs, _ := l.RadioSources(ctx(), r.ID); len(srcs) != 1 || srcs[0].ID != src.ID {
+		t.Errorf("saved sources = %+v, want ID %s", srcs, src.ID)
+	}
+	if secs, _ := l.RadioSections(ctx(), r.ID); len(secs) != len(savedSecs) || secs[0].ID != savedSecs[0].ID || secs[1].ID != savedSecs[1].ID || secs[0].Origin != "" {
+		t.Errorf("saved sections = %+v, want ID %s", secs, savedSecs[0].ID)
+	}
+	if es, _ := l.RadioEntries(ctx(), r.ID); es[0].SourceID != src.ID || es[0].Section.ID != src.SectionID {
+		t.Errorf("saved entries = %+v", es)
+	}
+
+	// Discarding leaves the radio as it was; deleting a radio takes its
+	// draft too.
+	d, _ = l.StartRadioDraft(ctx(), r.ID)
+	if _, err := l.RemoveRadioChannels(ctx(), d.ID, ids); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.DiscardRadioDraft(ctx(), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if radioOrder(t, l, r.ID) != "ABC" {
+		t.Errorf("after discarding = %s", radioOrder(t, l, r.ID))
+	}
+	d, _ = l.StartRadioDraft(ctx(), r.ID)
+	if err := l.DeleteRadio(ctx(), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	mustNotFound(t, "the draft of a deleted radio", func() error { _, err := l.GetRadio(ctx(), d.ID); return err }())
 }
