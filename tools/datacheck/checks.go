@@ -415,6 +415,10 @@ type chirpRadio struct {
 	} `json:"power"`
 	BandsMHz [][2]float64 `json:"bands_mhz"`
 	Modes    []string     `json:"modes"`
+	// ToneModes and CrossModes are absent from dumps made before
+	// tools/chirp_model.py listed them.
+	ToneModes  []string `json:"tone_modes"`
+	CrossModes []string `json:"cross_modes"`
 }
 
 func loadChirp(path string) (*chirpDump, error) {
@@ -458,6 +462,10 @@ func (c *checker) chirpModels(d Dataset) ([]string, error) {
 		differs("name length", strconv.Itoa(m.Names.MaxLength), strconv.Itoa(r.Names.MaxLength))
 		differs("modes", strings.Join(m.Modes, ","), strings.Join(r.Modes, ","))
 		differs("bands", bands(m.BandsMHz), bands(r.BandsMHz))
+		if r.ToneModes != nil {
+			differs("tone modes", sortedSet(m.ToneModes), sortedSet(r.ToneModes))
+			differs("cross modes", sortedSet(m.CrossModes), sortedSet(r.CrossModes))
+		}
 		var ours, theirs []string
 		for _, l := range m.Power {
 			if l.Watts != nil {
@@ -526,4 +534,16 @@ func (c *checker) chirpRadios(d Dataset) ([]string, error) {
 		out = append(out, fmt.Sprintf("Once reviewed, update %s from `uv run tools/chirp_model.py --list`.", d.Baseline))
 	}
 	return out, nil
+}
+
+// sortedSet lists values in order, for comparing sets; none reads "none".
+func sortedSet(vs []string) string {
+	out := slices.Clone(vs)
+	for i, v := range out {
+		if v == "" {
+			out[i] = `""`
+		}
+	}
+	slices.Sort(out)
+	return orNone(out)
 }

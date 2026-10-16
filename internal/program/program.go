@@ -93,6 +93,20 @@ type SectionRange struct {
 	Last    int
 }
 
+// StartError is a section whose start is behind the memories the sections
+// before it already reach.
+type StartError struct {
+	Section domain.RadioSection
+	Reached int
+}
+
+func (e *StartError) Error() string {
+	return fmt.Sprintf("section %q starts at memory %d, but the sections before it already reach memory %d", e.Section.Name, *e.Section.Start, e.Reached)
+}
+
+// Unwrap makes it an invalid-input error, as domain.Invalidf's are.
+func (e *StartError) Unwrap() error { return domain.ErrInvalid }
+
 // Build lays out a radio's memories, from its entries in list order (each
 // section's together, sections in order). It fails when the list doesn't
 // fit the model's memories, or a section's start is behind the sections
@@ -183,7 +197,7 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry, sections 
 		c := mem.Channel
 		c.ReceiveTone, c.ToneSquelch = domain.Tone{Kind: domain.ToneNone}, false
 		if ex.Validate(c) == nil {
-			notes[i] = append(notes[i], fmt.Sprintf("programmed with the transmit tone only: the radio can't hold receive tone %s (%v)", domain.FormatTone(mem.Channel.ReceiveTone), mem.Invalid))
+			notes[i] = append(notes[i], fmt.Sprintf("programmed with the transmit tone only, without receive tone %s: %v", domain.FormatTone(mem.Channel.ReceiveTone), mem.Invalid))
 			mem.Channel, mem.Invalid, mem.TransmitToneOnly = c, nil, true
 		}
 	}
@@ -203,7 +217,7 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry, sections 
 		}
 		if sec.Start != nil {
 			if *sec.Start < next {
-				return p, domain.Invalidf("section %q starts at memory %d, but the sections before it already reach memory %d", sec.Name, *sec.Start, next-1)
+				return p, &StartError{Section: sec, Reached: next - 1}
 			}
 			next = *sec.Start
 		}
@@ -321,7 +335,7 @@ func ExporterFor(p Layout) (Exporter, error) {
 		}
 		return profile.Exporter{Profile: e.Profile, Locations: locs}, nil
 	}
-	return export.CHIRP{Locations: locs}, nil
+	return export.CHIRP{Locations: locs, ToneModes: p.Model.ToneModes, CrossModes: p.Model.CrossModes}, nil
 }
 
 // Parse reads a file in a model's format, as its programming software or

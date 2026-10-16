@@ -163,7 +163,8 @@ held to FRS, GMRS, MURS, and CB limits.
 Sources: a radio can keep searches and plans (rflib radio sources) that radio
 sync uses to add new matching channels, each to its section.`}
 	cmd.AddCommand(newRadioAddCommand(), newRadioListCommand(), newRadioShowCommand(), newRadioUpdateCommand(), newRadioDeleteCommand(),
-		newRadioChannelsCommand(), newRadioSectionsCommand(), newRadioSourcesCommand(), newRadioSyncCommand(), newRadioExportCommand(), newRadioCompareCommand())
+		newRadioChannelsCommand(), newRadioSectionsCommand(), newRadioSourcesCommand(), newRadioSyncCommand(), newRadioExportCommand(), newRadioCompareCommand(),
+		newRadioCopyCommand())
 	return cmd
 }
 
@@ -222,6 +223,72 @@ func newRadioAddCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), r.ID)
 			}
 			return err
+		})
+	}
+	return cmd
+}
+
+// noLongerIn says why sync takes a source's channel off.
+func noLongerIn(src domain.RadioSource) string {
+	if src.PlanID != "" {
+		return "no longer in the plan"
+	}
+	return "no longer matches its search"
+}
+
+func newRadioChannelsKeepCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "keep RADIO", Short: "Keep channels a source added, even if it stops matching them", Args: cobra.ExactArgs(1),
+		Long: `Keep channels a source added (--id, comma-separated): they then count as added
+by hand, so no sync takes them off, even when the source's search stops matching
+them. The memory list's source column shows which source added each channel.`}
+	cmd.Flags().String("id", "", "Channel IDs, comma-separated (required)")
+	_ = cmd.MarkFlagRequired("id")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		var ids []string
+		for _, id := range strings.Split(getString(cmd, "id"), ",") {
+			ids = append(ids, strings.TrimSpace(id))
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			n, err := a.ReleaseChannels(ctx(cmd), args[0], ids)
+			if err == nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Kept %d channels; no source will take them off\n", n)
+			}
+			return err
+		})
+	}
+	return cmd
+}
+
+func newRadioCopyCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "copy RADIO NAME", Short: "Make a new radio from another as it is now, for another model", Args: cobra.ExactArgs(2),
+		Long: `Make a new radio, NAME, from RADIO as it is now: its sections, in order, with
+their starts, sizes, and orders; its sources; its channels, in their sections and
+order; and its overrides. --model is the new radio's model; channels it can't use
+(outside its bands, or in a mode it lacks) are left out and listed. Settings not
+given come from RADIO. From then on the two are independent; rflib radio
+compare NAME --radio RADIO shows what one has and the other doesn't.`}
+	radioFields(cmd)
+	_ = cmd.MarkFlagRequired("model")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		to := domain.Radio{Name: args[1]}
+		if err := applyRadioFlags(cmd, &to, false); err != nil {
+			return err
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			res, err := a.CopyRadio(ctx(cmd), args[0], to)
+			if err != nil {
+				return err
+			}
+			status := cmd.ErrOrStderr()
+			for _, c := range res.Skipped {
+				fmt.Fprintf(status, "left out %q (%s MHz): the %s can't use it\n", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), to.Model)
+			}
+			fmt.Fprintf(status, "Copied %s to %s: %d channels, %d left out\n", args[0], res.Radio.Name, res.Copied, len(res.Skipped))
+			if res.LayoutErr != nil {
+				fmt.Fprintf(status, "warning: %s doesn't lay out yet: %v\n", res.Radio.Name, res.LayoutErr)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), res.Radio.ID)
+			return nil
 		})
 	}
 	return cmd
@@ -348,7 +415,7 @@ func newRadioDeleteCommand() *cobra.Command {
 func newRadioChannelsCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "channels", Short: "List and arrange the channels on a radio"}
 	cmd.AddCommand(newRadioChannelsListCommand(), newRadioChannelsAddCommand(), newRadioChannelsRemoveCommand(),
-		newRadioChannelsMoveCommand(), newRadioChannelsSetCommand())
+		newRadioChannelsMoveCommand(), newRadioChannelsSetCommand(), newRadioChannelsKeepCommand())
 	return cmd
 }
 
@@ -529,10 +596,11 @@ func newRadioChannelsMoveCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "move RADIO", Short: "Move a channel within a radio's list", Args: cobra.ExactArgs(1),
 		Long: `Move a channel: into --section (by name; its own otherwise), before or after
 another channel (into that channel's section), to a position in the section,
-or to its top or bottom. --section alone puts it at the bottom. Placing a
-channel in a section sorted by name or freq makes the section manual, in the
-order it had.`}
-	cmd.Flags().String("id", "", "Channel ID to move, or - to read it from stdin (required)")
+or to its top or bottom. --section alone puts it at the bottom; with several
+IDs (comma-separated), --section alone moves them all to its bottom, in their
+order. Placing a channel in a section sorted by name or freq makes the section
+manual, in the order it had.`}
+	cmd.Flags().String("id", "", "Channel ID to move (or several, comma-separated, with --section alone), or - to read it from stdin (required)")
 	cmd.Flags().String("section", "", "Move into this section, by name")
 	cmd.Flags().String("before", "", "Move just before this channel ID")
 	cmd.Flags().String("after", "", "Move just after this channel ID")
@@ -554,12 +622,28 @@ order it had.`}
 				return fmt.Errorf("--to counts from 1")
 			}
 		}
+		if raw := getString(cmd, "id"); strings.Contains(raw, ",") {
+			if mv.Section == "" || mv.Before != "" || mv.After != "" || mv.To != 0 || mv.Top || mv.Bottom {
+				return fmt.Errorf("several channels move with --section alone, to its bottom")
+			}
+			var ids []string
+			for _, id := range strings.Split(raw, ",") {
+				ids = append(ids, strings.TrimSpace(id))
+			}
+			return withApp(cmd, func(a *app.Service) error {
+				cleared, err := a.MoveChannels(ctx(cmd), args[0], ids, mv.Section)
+				reportCleared(cmd, cleared)
+				return err
+			})
+		}
 		id, err := getID(cmd)
 		if err != nil {
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			return a.MoveChannel(ctx(cmd), args[0], id, mv)
+			cleared, err := a.MoveChannel(ctx(cmd), args[0], id, mv)
+			reportCleared(cmd, cleared)
+			return err
 		})
 	}
 	return cmd
@@ -640,8 +724,12 @@ the end of each source's section in the source's sort order (a sorted section
 keeps its own order); an earlier source claims a channel first. Channels
 outside the radio's bands are skipped unless --any-band, and channels in a mode
 the radio doesn't have unless --any-mode. A channel already on the radio stays
-where it is, wherever that is. Only a plan source removes channels: those its
-plan dropped.`}
+where it is, wherever that is.
+
+Sync also takes off what a source added that its search no longer matches
+(for a plan, what the plan dropped), wherever it now is; --dry-run lists it
+first. Channels added by hand never come off, and neither do ones kept with
+rflib radio channels keep.`}
 	cmd.Flags().Bool("dry-run", false, "List what would change without changing the radio")
 	fitFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -669,7 +757,7 @@ plan dropped.`}
 						fmt.Fprintf(out, "would skip\tsource %d\t%s\t%s\tthe radio doesn't have %s\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), c.Mode)
 					}
 					for _, c := range ss.Removed {
-						fmt.Fprintf(out, "would remove\tsource %d\t%s\t%s\tno longer in the plan\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz))
+						fmt.Fprintf(out, "would remove\tsource %d\t%s\t%s\t%s\n", n, c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), noLongerIn(ss.Source))
 					}
 					if ss.Note != "" {
 						fmt.Fprintf(out, "note\tsource %d\t%s\n", n, ss.Note)
@@ -680,7 +768,7 @@ plan dropped.`}
 					fmt.Fprintf(status, "%s: %s\n", app.SourceLabel(ss.Source), ss.Note)
 				}
 				if len(ss.Removed) > 0 {
-					fmt.Fprintf(status, "%s: removed %d no longer in the plan\n", app.SourceLabel(ss.Source), len(ss.Removed))
+					fmt.Fprintf(status, "%s: removed %d, %s\n", app.SourceLabel(ss.Source), len(ss.Removed), noLongerIn(ss.Source))
 				}
 				if len(ss.Add) > 0 || len(ss.Skipped) > 0 || len(ss.WrongMode) > 0 {
 					fmt.Fprintf(status, "%s: added %d%s\n", app.SourceLabel(ss.Source), ss.Added, skippedNote(ss.AddResult))

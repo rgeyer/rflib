@@ -288,7 +288,7 @@ Nothing else is checked: rflib doesn't know the radio's bands, modes, or memory 
 ./rflib radio update HT --model my-ht
 ```
 
-To fill it in from CHIRP itself, `tools/chirp_model.py` drafts a model from CHIRP's driver: memories, name length and characters, power levels with watts, bands, and modes. It needs [uv](https://docs.astral.sh/uv/), which fetches CHIRP the first time:
+To fill it in from CHIRP itself, `tools/chirp_model.py` drafts a model from CHIRP's driver: memories, name length and characters, power levels with watts, bands, modes, and tone modes (`tone_modes`, and `cross_modes` for radios with CHIRP's Cross). A radio without Cross, such as the TYT TH-9800, can't hold different transmit and receive tones in one memory, so rflib programs those channels with the transmit tone alone and marks them; a model without `tone_modes` is assumed to take them all. It needs [uv](https://docs.astral.sh/uv/), which fetches CHIRP the first time:
 
 ```sh
 uv run tools/chirp_model.py --list uv-5r                     # find the radio as CHIRP names it
@@ -310,19 +310,23 @@ A radio's list is in **sections**, in order, and every memory belongs to one. A 
 ./rflib radio sections move Truck GMRS --to 1
 ./rflib radio sections set Truck GMRS --start 100     # or --start "" to follow the section before
 ./rflib radio sections list Truck                     # number, name, start, size, memories, order, channels
-./rflib radio sections remove Truck GMRS              # its channels and sources go to the default section
+./rflib radio sections merge Truck "GMRS (from Shack)" --into GMRS   # its channels go to the end of GMRS
+./rflib radio sections remove Truck GMRS              # its sources go too; its channels to the default section (--take-off: off the radio)
 ```
 
 - **Start:** a section starts at `--start`, or right after the section before it. A start behind the sections before it is refused, as is anything that makes the list run past the model's memories.
 - **Size:** `--size` reserves that many memories, so the next section without a start of its own begins after them. A section holding more spills over: the extra memories are numbered past its end, with a warning, and the Memories tab marks them.
 - **Order:** a section's memories are in the order you place them (`manual`), or sorted by `name` or `freq`, whatever order they were added in. Placing a memory in a sorted section by hand makes it manual, in the order it had.
-- **Default:** `--default` makes a section the default; the old default stops being it. The default section can't be removed.
+- **Default:** `--default` makes a section the default; the old default stops being it. The default section can't be removed, but it can be merged into another, which becomes the default.
+- **Merging:** `radio sections merge` moves a section's channels to the end of another, in their order (or the other's sort), points its sources at the other, and removes it.
+- **Moves always happen:** moving a section, merging, or moving memories into a section never fails for want of room: a section whose start the change leaves behind the memories before it loses its start and follows the section before it, and the command names it.
 
 `radio channels add` appends to the end of a section (`--section NAME`, or the default section), by `--id` or by `--query`. Channels the radio can't receive are skipped and listed on stderr: those outside its model's bands (`--any-band` adds them anyway), and those in a mode it doesn't have, such as USB on an FM handheld (`--any-mode`). `channel list tunes:Truck` previews what fits. A channel in a mode the radio lacks that is on it anyway, added with `--any-mode` or before modes were checked, is listed with a warning but left out of the export. `radio channels list` says how each memory is programmed when it isn't an ordinary one: `rx only`, `tx tone only`, or `not programmed` and why (retired, a mode the radio lacks, or something the radio's file can't hold). A memory that isn't programmed stays in the list but takes no number (`-`), so the numbers are the radio's own once it's programmed. When a radio can't hold a channel's receive tone, such as split tones, the memory is programmed with its transmit tone alone, which is what opens a repeater. Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
 
 ```sh
 ./rflib radio channels move Truck --id <id> --before <other-id>   # or --after; into that channel's section
 ./rflib radio channels move Truck --id <id> --section GMRS --to 2 # or --top, --bottom; --section alone: its bottom
+./rflib radio channels move Truck --id <id>,<id> --section GMRS   # several, to its bottom, in their order
 ./rflib radio channels remove Truck --id <id>    # or -q QUERY --yes, or --all --yes
 ```
 
@@ -365,12 +369,25 @@ A radio's **sources** are searches, or plans, that `radio sync` adds new matchin
 - **Placement:** a source's new channels go at the end of its section, in its sort order; a sorted section keeps its own order. Several sources can feed one section.
 - **Order and claims:** sources are numbered from 1. An earlier source claims a channel first, and `radio sources move HT 3 --to 1` changes the order.
 - **Bands and modes:** like `radio channels add`, sync skips channels outside the radio's bands or in modes it lacks, reports how many, and takes `--any-band` and `--any-mode`.
-- **What sync leaves alone:** a query source never removes anything, and a channel already on the radio stays where it is, wherever that is, even moved out of its source's section. To keep a source's channels in order, sort its section.
+- **Narrowing:** sync keeps a source's channels equal to its search. What a source added that its search no longer matches comes off, wherever it now is (`--dry-run` lists it first). Each memory remembers which source added it (the `source` column; **S2** on the Memories tab), independent of its section, so renaming, merging, and moving sections keep that. Channels added by hand never come off; `radio channels keep RADIO --id ...` (or **Keep** on the Memories tab) makes a source's channel count as added by hand. Note that `near:` never matches a channel without a location: narrow with `(near:... OR -has:location)` to keep those.
+- **What sync leaves alone:** a channel already on the radio stays where it is, wherever that is. To keep a source's channels in order, sort its section.
 - **Changing a source:** `radio sources set HT 2 --query ... --sort ... --section ...` changes a source; its channels already on the radio stay where they are.
 - **Removing a source:** `radio sources remove HT 2` removes a source and leaves its channels on the radio. Add `--with-channels` to take them off too.
 - **Plans:** a source can be a plan instead of a query, and then follows the plan; see [Plans](#plans).
 
 Sync warns when the result no longer fits the radio, such as a section running into the next one's start.
+
+### Copying a radio
+
+`radio copy` makes a new radio from another as it is now, for another model: its sections in order (with their starts, sizes, and orders), its sources, its channels in their sections and order, and its overrides. Channels the new model can't use, outside its bands or in a mode it lacks, are left out and listed. Settings you don't give come from the original. From then on the two are independent.
+
+```sh
+./rflib radio copy Shack Mobile --model tyt-th9800
+./rflib radio compare Mobile --radio Shack                 # by channel: on both, only on Shack, only on Mobile
+./rflib radio compare Mobile --radio Shack --add all       # or --add ID,ID; --dry-run to check first
+```
+
+Comparing two radios pairs them by channel. `--add` brings what the other radio has onto this one, in the other's order, each into this radio's section of the same name, with the other radio's name, power, and scan for it. A section this radio lacks is made as the other radio has it (start, size, and order), at the end, after this radio's sections, without its start if that doesn't fit there; new channels that would push one of this radio's sections into a later section's start go to a section of their own at the end. Nothing already on the radio moves, and compare says what it did; drag the new sections into place afterwards; channels this radio's model can't use are listed but not added. It works one way, onto the radio you name first; compare the other way to go back.
 
 ### Comparing with the radio
 
@@ -677,7 +694,7 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 - **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and choose Source (in use, by default) to search the whole shared list as well as the channels you use; when the shared list has more matches, a link next to the count searches there too. **Clear** starts the search and its filters over. A globe marks a shared channel, and a note icon your notes or tags on one.
 - **Shared list:** opened from its own item in the navigation. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who uses the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
-- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and how it's programmed), and see in the Programmed column, and the count above the list, which memories aren't programmed (struck through, with no number, as on the programmed radio), which are receive-only, and which carry only their transmit tone, and select several (shift-click selects a range) to set scan or power, or take them off the radio; memories are grouped by section, with each section's memory range and sources, and you drag memories within and between sections (while dragging, a bar at the top of the window takes a memory to any section, and the page scrolls near the window's edges), and drag sections by their handles to reorder them (a menu on each memory moves it too); **Add section** and each section's edit button set its name, start, size or end, order, and whether it's the default; its sources, with a preview of what a new source would add before you add it; sync with a preview; the programming file to download; and **Compare with the radio**, which reads the radio's current file and lets you choose, memory by memory, a matching channel, keeping it as programmed, or taking the radio's changes; **Ignore memory numbers** makes it a first import that only checks everything on the radio is in rflib. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
+- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and how it's programmed), and see in the Programmed column, and the count above the list, which memories aren't programmed (struck through, with no number, as on the programmed radio), which are receive-only, and which carry only their transmit tone, and select several (shift-click selects a range) to set scan or power, or take them off the radio; memories are grouped by section, with each section's memory range and sources, and you drag memories within and between sections (while dragging, a bar at the top of the window takes a memory to any section, and the page scrolls near the window's edges), and drag sections by their handles to reorder them (a menu on each memory moves it too); **Add section** and each section's edit button set its name, start, size or end, order, and whether it's the default, or merge it into another (or drag a section onto the **Merge into** bar that appears while dragging it); selected memories move to a section with **Move to section**; its sources, with a preview of what a new source would add before you add it; sync with a preview; the programming file to download; **Copy**, which makes a new radio from this one for another model; and **Compare**: with another radio, by channel, adding what the other has; or with the radio's file, which reads the radio's current file and lets you choose, memory by memory, a matching channel, keeping it as programmed, or taking the radio's changes; **Ignore memory numbers** makes it a first import that only checks everything on the radio is in rflib. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
 - **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
 - **Import:** a file, its options, a dry-run preview, then the import.
 - **Built-in lists** (under the Shared list, for the maintainer) and **shared changes**, as `rflib seed update` and `rflib shared changes` do. Each list shows whether the shared list is up to date with it; reviewing an update lists the channels to add, update, and retire, and any correction it keeps.

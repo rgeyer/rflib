@@ -10,4 +10,6 @@ power:
   - {label: High, watts: 5, intent: high}
 bands_mhz: [[136, 174], [400, 480]]
 modes: [FM, NFM]
+tone_modes: ["", Tone, TSQL, DTCS, Cross]
+cross_modes: [Tone->Tone, DTCS->, ->DTCS, Tone->DTCS, DTCS->Tone, ->Tone, DTCS->DTCS]
 source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/th_uv88.py (QRZ1)

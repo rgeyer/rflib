@@ -391,6 +391,9 @@ type Memory struct {
 	Section string `json:"section"`
 	// PlanNumber is a plan source's Ch #.
 	PlanNumber *int `json:"plan_number"`
+	// Source is the number of the source that added it; null when added
+	// by hand.
+	Source *int `json:"source"`
 	// Overflow: past the end of its section's size.
 	Overflow bool    `json:"overflow"`
 	Name     string  `json:"name"`
@@ -420,7 +423,12 @@ func newMemories(p program.Layout, es []domain.RadioEntry) []Memory {
 		if r := m.NotProgrammed(); r != "" {
 			why = &r
 		}
-		out[i] = Memory{number(m.Location), e.Section.ID, e.PlanNumber, m.Overflow, m.Channel.Name, string(m.Name.Method), m.Name.Deduped, power, !m.Channel.Skip, m.Programmed(),
+		var source *int
+		if e.SourceNumber > 0 {
+			n := e.SourceNumber
+			source = &n
+		}
+		out[i] = Memory{number(m.Location), e.Section.ID, e.PlanNumber, source, m.Overflow, m.Channel.Name, string(m.Name.Method), m.Name.Deduped, power, !m.Channel.Skip, m.Programmed(),
 			why, m.ReceiveOnly(), m.TransmitToneOnly, Overrides{e.Name != "", e.Power != "", e.Skip != nil}, newChannel(m.Original)}
 	}
 	return out

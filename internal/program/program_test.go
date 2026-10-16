@@ -407,3 +407,31 @@ func TestSectionsSizesAndPlanNumbers(t *testing.T) {
 		t.Errorf("compact: %d", p.Memories[5].Location)
 	}
 }
+
+// A CHIRP radio without Cross (the TH-9800) programs split tones with the
+// transmit tone alone; a pair it can't hold even so isn't programmed.
+func TestCHIRPToneModes(t *testing.T) {
+	split := ch("Split", 145_180_000, 144_580_000, domain.ServiceAmateur)
+	split.TransmitTone, split.ReceiveTone, split.ToneSquelch = tone(t, "ctcss:131.8"), tone(t, "ctcss:146.2"), true
+	dcsOut := ch("DCS out", 146_520_000, 146_520_000, domain.ServiceAmateur)
+	dcsOut.TransmitTone = tone(t, "dcs:023")
+	m := mustModel(t, "tyt-th9800")
+	p, err := Build(domain.Radio{Name: "Mobile"}, m, entries(split, dcsOut))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mem := p.Memories[0]; !mem.Programmed() || !mem.TransmitToneOnly {
+		t.Errorf("split tones: %+v", mem)
+	}
+	if why := p.Memories[1].NotProgrammed(); !strings.Contains(why, "different transmit and receive tones") {
+		t.Errorf("DCS one way: %q", why)
+	}
+	var out bytes.Buffer
+	if n, err := Write(&out, p, true, &bytes.Buffer{}); err != nil || n != 1 || strings.Contains(out.String(), ",Cross,") || !strings.Contains(out.String(), ",Tone,131.8,") {
+		t.Errorf("export (%v):\n%s", err, out.String())
+	}
+	// A radio with Cross takes them as they are.
+	if p, _ = Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), entries(split, dcsOut)); p.Memories[0].TransmitToneOnly || !p.Memories[1].Programmed() {
+		t.Errorf("with Cross: %+v", p.Memories)
+	}
+}

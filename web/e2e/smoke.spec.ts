@@ -375,10 +375,10 @@ test("add a search as a radio source, with a preview", async ({ page, request })
 test("compare a radio with its file, and start it from that", async ({ page, request }) => {
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Adopted", model: "baofeng-uv5rm" } });
   await page.goto("/l/default/radios/Adopted");
-  await page.getByRole("tab", { name: "Compare with the radio" }).click();
+  await page.getByRole("tab", { name: "Compare" }).click();
   // A CHIRP file of what the radio holds: memories 4 and 9.
   const chooser = page.waitForEvent("filechooser");
-  await page.getByLabel("The radio's file").click();
+  await page.getByLabel("The radio's file", { exact: true }).click();
   await (await chooser).setFiles("e2e/fixtures/adopted-radio.csv");
   await expect(page.getByText("2 only on the radio")).toBeVisible();
   // The first test's Marian repeater programs exactly as memory 9 does, so
@@ -402,10 +402,10 @@ test("a first import ignores memory numbers", async ({ page, request }) => {
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Imported", model: "baofeng-uv5rm" } });
   await request.post("/api/v1/libraries/default/radios/Imported/channels", { data: { query: "name:Marian" } });
   await page.goto("/l/default/radios/Imported");
-  await page.getByRole("tab", { name: "Compare with the radio" }).click();
+  await page.getByRole("tab", { name: "Compare" }).click();
   await page.getByRole("switch", { name: "Ignore memory numbers" }).check({ force: true });
   const chooser = page.waitForEvent("filechooser");
-  await page.getByLabel("The radio's file").click();
+  await page.getByLabel("The radio's file", { exact: true }).click();
   await (await chooser).setFiles("e2e/fixtures/adopted-radio.csv");
   await expect(page.getByText("1 only on the radio")).toBeVisible();
   await expect(page.getByText("0 only in rflib")).toBeVisible();
@@ -511,4 +511,113 @@ test("sections: add one, and drag memories and sections", async ({ page, request
   await page.getByLabel("Drag section Other").dragTo(weather);
   await expect(page.locator("tr[data-section]").first()).toHaveAttribute("data-section", "Other");
   await expect(number("NOAA WX1")).toHaveText("1");
+
+  // Other starts at 1; dragging Weather ahead of it can't keep that, so the
+  // move happens and Other's start goes, with a note.
+  await request.patch("/api/v1/libraries/default/radios/Sectioned/sections/Other", { data: { start: 1 } });
+  await page.reload();
+  await page.getByLabel("Drag section Weather").dragTo(page.locator("tr[data-section='Other']"));
+  await expect(page.getByText(/these now follow the section before them: Other/)).toBeVisible();
+  await expect(page.locator("tr[data-section]").first()).toHaveAttribute("data-section", "Weather");
+  await expect(number("NOAA WX1")).toHaveText("25");
+
+  // Several selected memories move to a section at once.
+  await page.getByRole("checkbox", { name: /Select memory .*NOAA WX2|Select memory 20/ }).first().click();
+  await page.getByRole("button", { name: "Move to section" }).click();
+  await page.getByRole("menuitem", { name: "Other" }).click();
+  await expect(page.getByText("Moved 1 memories")).toBeVisible();
+
+  // Dragging a section shows a merge bar; dropping there merges, after a check.
+  await page.getByLabel("Drag section Weather").hover();
+  await page.mouse.down();
+  await page.mouse.move(10, 300, { steps: 5 });
+  await page.locator("[data-merge-section='Other']").hover();
+  await page.mouse.up();
+  await expect(page.getByText("Merge Weather into Other?")).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Merge" }).click();
+  await expect(page.getByText(/Merged: \d+ channels moved/)).toBeVisible();
+  await expect(page.locator("tr[data-section]")).toHaveCount(1);
+});
+
+test("copy a radio to another model, then compare the two", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Original", model: "chirp-generic" } });
+  await request.post("/api/v1/libraries/default/radios/Original/sections", { data: { name: "Weather", start: 40 } });
+  await request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2"', section: "Weather" } });
+  await request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"6m FM Call"' } });
+  await page.goto("/l/default/radios/Original");
+  await page.getByRole("button", { name: "Copy", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "Name" }).fill("Twin");
+  await dialog.getByRole("combobox", { name: "Model" }).fill("UV-5RM");
+  await page.getByRole("option", { name: /baofeng-uv5rm/ }).click();
+  await dialog.getByRole("button", { name: "Copy" }).click();
+  // The copy opens, with the original's section; 6 m is out of its bands.
+  await expect(page).toHaveURL(/\/radios\/Twin$/);
+  await expect(page.getByText("Copied Original to Twin: 2 channels")).toBeVisible();
+  await expect(page.locator("tr[data-section='Weather']")).toContainText("Memories 40–41");
+
+  // Independent: the original gains a channel; comparing offers it.
+  await request.post("/api/v1/libraries/default/radios/Original/channels", { data: { query: 'name:"NOAA WX3"', section: "Weather" } });
+  await page.getByRole("tab", { name: "Compare" }).click();
+  await page.getByText("With another radio").click();
+  await page.getByRole("combobox", { name: "Other radio" }).click();
+  await page.getByRole("option", { name: "Original" }).click();
+  await expect(page.getByText("2 on both")).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Add NOAA WX3" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Add 6m FM Call" })).toBeDisabled();
+  await page.getByRole("button", { name: "Add 1 channels" }).click();
+  await expect(page.getByText("Added 1 channels from Original")).toBeVisible();
+  await expect(page.getByText("3 on both")).toBeVisible();
+
+  // Onto a blank radio, the sections the channels need come along.
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Blank", model: "baofeng-uv5rm" } });
+  await page.goto("/l/default/radios/Blank");
+  await page.getByRole("tab", { name: "Compare" }).click();
+  await page.getByText("With another radio").click();
+  await page.getByRole("combobox", { name: "Other radio" }).click();
+  await page.getByRole("option", { name: "Original" }).click();
+  await page.getByRole("button", { name: "Add 3 channels" }).click();
+  await expect(page.getByText("Added 3 channels from Original, in new sections Weather")).toBeVisible();
+  await page.getByRole("tab", { name: "Memories" }).click();
+  await expect(page.locator("tr[data-section='Weather']")).toContainText("Memories 40–42");
+});
+
+
+test("narrowing a source takes off what it no longer matches", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Narrow", model: "baofeng-uv5rm" } });
+  await request.post("/api/v1/libraries/default/radios/Narrow/sources", { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2" OR name:"NOAA WX3"' } });
+  await request.post("/api/v1/libraries/default/radios/Narrow/sync", { data: {} });
+  await page.goto("/l/default/radios/Narrow");
+  const row = (name: string) => page.getByRole("row", { name: new RegExp(`^Select memory.*${name}`) });
+  await expect(row("NOAA WX3").getByText("S1")).toBeVisible();
+
+  // Keep WX3: it stays even when the source stops matching it.
+  await row("NOAA WX3").getByRole("button", { name: /^Move / }).click();
+  await page.getByRole("menuitem", { name: "Keep, even if source 1 stops matching" }).click();
+  await expect(page.getByText("Kept 1 memories")).toBeVisible();
+  await expect(row("NOAA WX3").getByText("S1")).toHaveCount(0);
+
+  // Narrow the source to WX1; sync takes WX2 off.
+  await request.patch("/api/v1/libraries/default/radios/Narrow/sources/1", { data: { query: 'name:"NOAA WX1"' } });
+  await page.getByRole("button", { name: "Sync" }).click();
+  await expect(page.getByText(/0 to add, 1 to take off/)).toBeVisible();
+  await page.getByRole("button", { name: "Sync now" }).click();
+  await expect(row("NOAA WX2")).toHaveCount(0);
+  await expect(row("NOAA WX3")).toBeVisible();
+
+  // Select all in a section, for the bulk actions.
+  const header = page.locator("tr[data-section]").first();
+  await header.getByRole("button", { name: /^Select all in/ }).click();
+  await expect(page.getByText("2 selected")).toBeVisible();
+  await page.getByRole("button", { name: "Clear", exact: true }).first().click();
+
+  // Removing the source's section takes the source with it.
+  await header.getByRole("button", { name: /^Edit section/ }).click();
+  await page.getByRole("button", { name: "Remove section" }).click();
+  await expect(page.getByText(/The source that feeds it goes too|that feed it go too/)).toBeVisible();
+  await page.getByRole("checkbox", { name: /Also take its channels off/ }).check();
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(page.getByText(/Section removed, with its 2 channels, and the source that fed it/)).toBeVisible();
+  await page.getByRole("tab", { name: "Sources" }).click();
+  await expect(page.getByRole("cell", { name: /NOAA WX1/ })).toHaveCount(0);
 });

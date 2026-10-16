@@ -10,4 +10,6 @@ power:
   - {label: High, watts: 8, intent: high}
 bands_mhz: [[108, 136], [136, 174], [200, 260], [350, 390], [400, 520]]
 modes: [FM, NFM, AM]
+tone_modes: ["", Tone, TSQL, DTCS, Cross]
+cross_modes: [Tone->Tone, DTCS->, ->DTCS, Tone->DTCS, DTCS->Tone, ->Tone, DTCS->DTCS]
 source: CHIRP driver source, kk7ds/chirp commit 33d2528 (2026-10-10), drivers/baofeng_uv17Pro.py (BF5RM)

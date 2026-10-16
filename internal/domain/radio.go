@@ -167,8 +167,10 @@ type RadioEntry struct {
 	Power   PowerIntent
 	Skip    *bool
 	// SourceID is the radio source that added the entry; empty for
-	// channels added by hand.
-	SourceID string
+	// channels added by hand. SourceNumber is that source's number (from
+	// 1), filled in on reads.
+	SourceID     string
+	SourceNumber int
 	// PlanNumber is a plan source's Ch # for the entry; with MatchPlan
 	// (the source matches plan numbers), the entry goes at its section's
 	// first memory + PlanNumber - 1.

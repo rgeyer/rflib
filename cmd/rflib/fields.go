@@ -191,6 +191,12 @@ func memoryColumns() []field[memory] {
 			return fmt.Sprint(m.Location)
 		}, json: func(m m) any { return m.Location }},
 		{name: "section", text: func(m m) string { return m.entry.Section.Name }},
+		{name: "source", text: func(m m) string {
+			if m.entry.SourceNumber == 0 {
+				return ""
+			}
+			return fmt.Sprint(m.entry.SourceNumber)
+		}, json: func(m m) any { return m.entry.SourceNumber }},
 		{name: "plan_ch", text: func(m m) string {
 			if m.entry.PlanNumber == nil {
 				return ""

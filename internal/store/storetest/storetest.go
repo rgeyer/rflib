@@ -520,7 +520,7 @@ func testReorderKeepsSections(t *testing.T, s store.Store) {
 	if err := l.UpdateRadioSection(ctx(), other); err == nil {
 		t.Error("the default stopped being the default")
 	}
-	if err := l.DeleteRadioSection(ctx(), r.ID, other.ID); err == nil {
+	if err := l.DeleteRadioSection(ctx(), r.ID, other.ID, ""); err == nil {
 		t.Error("the default section was deleted")
 	}
 	aprs.Default = true
@@ -531,11 +531,29 @@ func testReorderKeepsSections(t *testing.T, s store.Store) {
 		t.Fatalf("default didn't move: %+v", secs)
 	}
 	// Deleting a section puts its channels at the end of the default.
-	if err := l.DeleteRadioSection(ctx(), r.ID, other.ID); err != nil || order() != "ABCD" {
+	if err := l.DeleteRadioSection(ctx(), r.ID, other.ID, ""); err != nil || order() != "ABCD" {
 		t.Fatalf("delete section: %v, %s", err, order())
 	}
 	if secs, _ := l.RadioSections(ctx(), r.ID); len(secs) != 1 || secs[0].Position != 0 {
 		t.Fatalf("sections after delete: %+v", secs)
+	}
+	// Merging: the default section into another, which takes over as the
+	// default, its channels after the other's, in order.
+	extra, err := l.CreateRadioSection(ctx(), domain.RadioSection{RadioID: r.ID, Name: "Extra"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.MoveRadioChannel(ctx(), r.ID, ids["D"], extra.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.DeleteRadioSection(ctx(), r.ID, extra.ID, extra.ID); err == nil {
+		t.Error("merged a section into itself")
+	}
+	if err := l.DeleteRadioSection(ctx(), r.ID, aprs.ID, extra.ID); err != nil || order() != "DABC" {
+		t.Fatalf("merge: %v, %s", err, order())
+	}
+	if secs, _ := l.RadioSections(ctx(), r.ID); len(secs) != 1 || secs[0].ID != extra.ID || !secs[0].Default {
+		t.Fatalf("after merging the default: %+v", secs)
 	}
 }
 
