@@ -155,6 +155,9 @@ func SharedChanges(a, b Channel) []string {
 	add("status note", a.StatusNote, b.StatusNote)
 	add("back on", day(a.BackOn), day(b.BackOn))
 	add("replaced by", a.ReplacedBy, b.ReplacedBy)
+	add("short names", strings.Join(a.ShortNames, ","), strings.Join(b.ShortNames, ","))
+	add("power", string(a.Power), string(b.Power))
+	add("skip", fmt.Sprint(a.Skip), fmt.Sprint(b.Skip))
 	return out
 }
 

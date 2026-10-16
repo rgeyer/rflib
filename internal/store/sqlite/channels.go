@@ -105,7 +105,16 @@ func (tx *library) writeChannel(ctx context.Context, c domain.Channel, old *doma
 			c.Revision = old.Revision
 		}
 	} else if c.Link == nil {
-		c.Revision = 0
+		// A private channel records a revision whenever anything it
+		// records changes.
+		switch {
+		case old == nil:
+			c.Revision, record = 1, true
+		case !sameRecord(*old, c):
+			c.Revision, record = old.Revision+1, true
+		default:
+			c.Revision = old.Revision
+		}
 	}
 	var linkID any
 	if c.Link != nil {
@@ -323,8 +332,9 @@ func (l *library) DeleteChannel(ctx context.Context, id string) error {
 	} else if r, err := l.q.ExecContext(ctx, `DELETE FROM channels WHERE link_id=? AND library_id=?`, id, l.id); err != nil {
 		return fmt.Errorf("delete annotation: %w", err)
 	} else if n, _ := r.RowsAffected(); n > 0 {
-		// A view of a shared channel: only the user's annotation goes.
-		return nil
+		// A view of a shared channel: only the user's annotation goes, and
+		// its history records that.
+		return l.recordNotes(ctx, id, notesRecord{})
 	}
 	r, err := l.q.ExecContext(ctx, `DELETE FROM channels WHERE id=? AND library_id=? AND link_id IS NULL`, id, l.id)
 	if err != nil {
@@ -528,6 +538,9 @@ func (l *library) SaveAnnotation(ctx context.Context, c domain.Channel) (domain.
 		if err := tx.Follow(ctx, target.ID); err != nil {
 			return err
 		}
+		if err := tx.recordNotes(ctx, target.ID, notesRecord{tags, notes, shortNames}); err != nil {
+			return err
+		}
 		if len(tags) == 0 && notes == "" && len(shortNames) == 0 {
 			if rowID != "" {
 				if _, err := tx.q.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, rowID); err != nil {
@@ -664,13 +677,19 @@ type revisionRecord struct {
 	ReplacedBy   string          `json:"replaced_by,omitempty"`
 	Networks     []string        `json:"networks,omitempty"`
 	Orgs         []domain.OrgRef `json:"organizations,omitempty"`
+	// A channel of a private library also records what only it has.
+	ShortNames []string `json:"short_names,omitempty"`
+	Power      string   `json:"power,omitempty"`
+	Skip       bool     `json:"skip,omitempty"`
 }
 
-// newRecord is a channel's shared fields as a revision record.
+// newRecord is a channel's fields as a revision record: everything that
+// says what it is and how it's programmed.
 func newRecord(c domain.Channel) revisionRecord {
 	r := revisionRecord{Name: c.Name, ReceiveHz: c.ReceiveHz, TransmitHz: c.TransmitHz, Mode: c.Mode, Service: string(c.Service), RXOnly: c.RXOnly,
 		ReceiveTone: domain.FormatTone(c.ReceiveTone), TransmitTone: domain.FormatTone(c.TransmitTone), ToneSquelch: c.ToneSquelch, Bandwidth: c.Bandwidth,
-		Tags: c.Tags, Notes: c.Notes, Status: string(c.Status), StatusNote: c.StatusNote, ReplacedBy: c.ReplacedBy, Orgs: c.Orgs}
+		Tags: c.Tags, Notes: c.Notes, Status: string(c.Status), StatusNote: c.StatusNote, ReplacedBy: c.ReplacedBy, Orgs: c.Orgs,
+		ShortNames: c.ShortNames, Power: string(c.Power), Skip: c.Skip}
 	for _, n := range c.Networks {
 		r.Networks = append(r.Networks, n.String())
 	}
@@ -686,7 +705,8 @@ func newRecord(c domain.Channel) revisionRecord {
 // channel is a revision record's fields as a channel with the given ID.
 func (r revisionRecord) channel(id string) domain.Channel {
 	ch := domain.Channel{ID: id, Name: r.Name, ReceiveHz: r.ReceiveHz, TransmitHz: r.TransmitHz, Mode: r.Mode, Service: domain.Service(r.Service), RXOnly: r.RXOnly,
-		ToneSquelch: r.ToneSquelch, Bandwidth: r.Bandwidth, Tags: r.Tags, Notes: r.Notes, Status: domain.Status(r.Status), StatusNote: r.StatusNote, ReplacedBy: r.ReplacedBy}
+		ToneSquelch: r.ToneSquelch, Bandwidth: r.Bandwidth, Tags: r.Tags, Notes: r.Notes, Status: domain.Status(r.Status), StatusNote: r.StatusNote, ReplacedBy: r.ReplacedBy,
+		ShortNames: r.ShortNames, Power: domain.PowerIntent(r.Power), Skip: r.Skip}
 	ch.ReceiveTone, _ = domain.ParseTone(r.ReceiveTone)
 	ch.TransmitTone, _ = domain.ParseTone(r.TransmitTone)
 	if r.Latitude != nil && r.Longitude != nil {
@@ -820,4 +840,48 @@ func (l *library) SetSeedChannel(ctx context.Context, sc domain.SeedChannel) err
 	_, err = l.q.ExecContext(ctx, `INSERT INTO seed_channels (channel_id,list,name,applied) VALUES (?,?,?,?)
 		ON CONFLICT(channel_id) DO UPDATE SET list=excluded.list, name=excluded.name, applied=excluded.applied`, sc.ChannelID, sc.List, sc.Name, string(data))
 	return err
+}
+
+// sameRecord reports whether two channels record the same revision.
+func sameRecord(a, b domain.Channel) bool {
+	x, err1 := json.Marshal(newRecord(a))
+	y, err2 := json.Marshal(newRecord(b))
+	return err1 == nil && err2 == nil && string(x) == string(y)
+}
+
+// notesRecord is a revision of the user's own notes on a shared channel:
+// tags, notes, and short names.
+type notesRecord struct {
+	Tags       []string `json:"tags,omitempty"`
+	Notes      string   `json:"notes,omitempty"`
+	ShortNames []string `json:"short_names,omitempty"`
+}
+
+// recordNotes records a revision of the user's notes on a shared channel
+// when they differ from the last one (none being empty notes). The history
+// is kept by shared channel, so it outlasts the annotation row, which goes
+// when the notes are emptied.
+func (l *library) recordNotes(ctx context.Context, sharedID string, rec notesRecord) error {
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	last, lastData := 0, "{}"
+	err = l.q.QueryRowContext(ctx, `SELECT revision, record FROM annotation_revisions WHERE library_id=? AND shared_id=? ORDER BY revision DESC LIMIT 1`, l.id, sharedID).Scan(&last, &lastData)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if string(data) == lastData {
+		return nil
+	}
+	reason, author := store.ChangeOf(ctx)
+	_, err = l.q.ExecContext(ctx, `INSERT INTO annotation_revisions (library_id,shared_id,revision,changed_at,reason,author,record) VALUES (?,?,?,?,?,?,?)`,
+		l.id, sharedID, last+1, timestamp(time.Now().UTC()), reason, author, string(data))
+	return err
+}
+
+func (l *library) NotesRevision(ctx context.Context, sharedID string) (int, error) {
+	var n int
+	err := l.q.QueryRowContext(ctx, `SELECT coalesce(max(revision),0) FROM annotation_revisions WHERE library_id=? AND shared_id=?`, l.id, sharedID).Scan(&n)
+	return n, err
 }

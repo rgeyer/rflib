@@ -8,7 +8,7 @@ import { useOrgs } from "../lib/records";
 import { failed, ok, warn } from "../lib/notify";
 import { parseGrid } from "../lib/grid";
 import { formatMHz, MODES, parseMHz, POWERS, SERVICES } from "../lib/radio";
-import { NetworkLinks, ReasonModal, SharedChannelPicker } from "./Records";
+import { History, NetworkLinks, ReasonModal, SharedChannelPicker } from "./Records";
 import { ToneInput } from "./ToneInput";
 
 type Form = {
@@ -317,6 +317,7 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
         </Stack>
       </form>
       {c && !linked && !props.readOnly && <StatusEditor lib={lib} channel={c} onSaved={() => done([])} />}
+      {c && props.opened && <ChannelHistory lib={lib} channel={c} />}
       <ReasonModal opened={asking} title={c ? `Correct ${c.name}` : ""} loading={correct.isPending} onClose={() => setAsking(false)} onConfirm={(r) => correct.mutate(r)} />
     </Drawer>
   );
@@ -437,4 +438,21 @@ function StatusEditor(props: { lib: string; channel: Channel; onSaved: () => voi
 function gridError(v: string): string | undefined {
   const t = v.trim();
   return [4, 6, 8].includes(t.length) && !parseGrid(t) ? "Not a grid square" : undefined;
+}
+
+/** ChannelHistory shows a channel's revisions, newest first: your own
+ * channel's changes, or a shared channel's corrections. */
+function ChannelHistory(props: { lib: string; channel: Channel }) {
+  const history = useQuery({
+    queryKey: ["channel-history", props.lib, props.channel.id, props.channel.revision],
+    queryFn: () => call(api.GET("/libraries/{lib}/channels/{id}/history", { params: { path: { lib: props.lib, id: props.channel.id } } })),
+  });
+  const revisions = (history.data?.revisions ?? []).map((r) => ({ number: r.revision, at: r.at, reason: r.reason, author: r.author, changes: r.changes }));
+  if (revisions.length === 0) return null;
+  return (
+    <Stack gap="xs" mt="md">
+      <Divider label="History" />
+      <History revisions={revisions} />
+    </Stack>
+  );
 }

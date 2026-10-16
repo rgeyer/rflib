@@ -1107,13 +1107,17 @@ paths:
       - {$ref: "#/components/parameters/lib"}
       - {$ref: "#/components/parameters/radio"}
       - {name: skip_invalid, in: query, schema: {type: boolean}}
+      - {name: reason, in: query, description: "Why, for the revision the export saves when the radio changed since its last one (by default the day and \"saved automatically by an export\")", schema: {type: string}}
     get:
       summary: The radio's programming file
+      description: "From the saved radio. An export counts as programming the radio: when the radio differs from its last revision, it's saved as a new one, marked exported; otherwise the last one is marked exported."
       responses:
         "200":
           description: A CSV for CHIRP or the radio's programming software. X-Rflib-Warning headers carry the plan's warnings.
           headers:
             X-Rflib-Count: {schema: {type: integer}}
+            X-Rflib-Revision: {description: The revision the export is, schema: {type: integer}}
+            X-Rflib-Revision-Saved: {description: "true when the export saved that revision", schema: {type: string}}
           content:
             text/csv:
               schema: {type: string}
@@ -1132,24 +1136,89 @@ paths:
                 required: [draft, changes]
                 properties:
                   draft: {$ref: "#/components/schemas/Draft"}
-                  changes:
-                    type: object
-                    required: [added, removed, changed, moved, renumbered, sections_added, sections_removed, sources_added, sources_removed]
-                    properties:
-                      added: {type: array, items: {$ref: "#/components/schemas/Channel"}}
-                      removed: {type: array, items: {$ref: "#/components/schemas/Channel"}}
-                      changed: {type: array, description: "Memories with another name, power, or scan", items: {$ref: "#/components/schemas/Channel"}}
-                      moved: {type: array, description: Memories moved to another section, items: {$ref: "#/components/schemas/MovedMemory"}}
-                      renumbered: {type: array, description: Memories renumbered within their section, items: {$ref: "#/components/schemas/MovedMemory"}}
-                      sections_added: {type: array, items: {type: string}}
-                      sections_removed: {type: array, items: {type: string}}
-                      sources_added: {type: array, items: {type: string}}
-                      sources_removed: {type: array, items: {type: string}}
+                  changes: {$ref: "#/components/schemas/ListChanges"}
         default: {$ref: "#/components/responses/Error"}
     post:
       summary: Open the radio's draft, a copy of its list as it is now
       responses:
         "201":
+          description: The draft
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Draft"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/revisions:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    get:
+      summary: The radio's revisions, oldest first
+      responses:
+        "200":
+          description: The revisions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revisions]
+                properties:
+                  revisions: {type: array, items: {$ref: "#/components/schemas/RadioRevision"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Save the saved radio as a revision (refused when nothing changed since the last)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        "201":
+          description: The revision
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RadioRevision"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/revisions/{n}/compare:
+    parameters:
+      - {$ref: "#/components/parameters/lib"}
+      - {$ref: "#/components/parameters/radio"}
+      - {name: n, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      summary: Compare a revision with the radio as it is now (its open draft, if any)
+      responses:
+        "200":
+          description: What changed since the revision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, changes]
+                properties:
+                  revision: {$ref: "#/components/schemas/RadioRevision"}
+                  changes: {$ref: "#/components/schemas/ListChanges"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/revisions/{n}/restore:
+    parameters:
+      - {$ref: "#/components/parameters/lib"}
+      - {$ref: "#/components/parameters/radio"}
+      - {name: n, in: path, required: true, schema: {type: integer, minimum: 1}}
+    post:
+      summary: Put a revision's list into the radio's draft
+      description: "Its sections, sources, and memories, to review and save or discard; settings stay. With a draft open, it's refused (conflict) unless replace_draft."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                replace_draft: {type: boolean}
+      responses:
+        "200":
           description: The draft
           content:
             application/json:
@@ -1805,7 +1874,7 @@ components:
 
     Radio:
       type: object
-      required: [id, name, model, default_power, dedupe, name_length, notes, channels, created_at, updated_at, draft, sync_changes]
+      required: [id, name, model, default_power, dedupe, name_length, notes, channels, created_at, updated_at, draft, sync_changes, revision, changed_since_revision, needs_programming]
       properties:
         id: {type: string}
         name: {type: string}
@@ -1819,6 +1888,43 @@ components:
         updated_at: {type: string, format: date-time}
         draft: {$ref: "#/components/schemas/Draft"}
         sync_changes: {type: integer, nullable: true, description: "How many channels a sync of the saved radio would add or take off; null when it has no sources or doesn't lay out"}
+        revision: {type: integer, description: "The radio's latest revision; 0 for none"}
+        changed_since_revision: {type: boolean, description: "The saved radio differs from its latest revision, so an export would save one"}
+        needs_programming: {type: boolean, description: "The saved radio differs from its latest exported revision, including channels on it that changed since"}
+    RadioRevision:
+      type: object
+      description: A radio as saved at one time, by hand or by an export
+      required: [number, at, reason, author, exported, memories]
+      properties:
+        number: {type: integer}
+        at: {type: string, format: date-time}
+        reason: {type: string}
+        author: {type: string}
+        exported: {type: boolean, description: "An export saved it, or saw it"}
+        memories: {type: integer}
+    ListChanges:
+      type: object
+      description: What one list of a radio changes from another
+      required: [added, removed, changed, moved, renumbered, sections_added, sections_removed, sources_added, sources_removed]
+      properties:
+        added: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+        removed: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+        changed: {type: array, description: "Memories with another name, power, or scan", items: {$ref: "#/components/schemas/Channel"}}
+        moved: {type: array, description: Memories moved to another section, items: {$ref: "#/components/schemas/MovedMemory"}}
+        renumbered: {type: array, description: Memories renumbered within their section, items: {$ref: "#/components/schemas/MovedMemory"}}
+        sections_added: {type: array, items: {type: string}}
+        sections_removed: {type: array, items: {type: string}}
+        sources_added: {type: array, items: {type: string}}
+        sources_removed: {type: array, items: {type: string}}
+        channels:
+          type: array
+          description: "Comparing with a revision: channels whose own values changed since, and how"
+          items:
+            type: object
+            required: [channel, changes]
+            properties:
+              channel: {$ref: "#/components/schemas/Channel"}
+              changes: {type: array, items: {type: string}}
     MovedMemory:
       type: object
       description: "A memory a draft moves: its number (null when not programmed) and section, before and after"

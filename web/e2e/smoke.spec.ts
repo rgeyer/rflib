@@ -128,10 +128,15 @@ test("lists, channels, radios, and export", async ({ page }) => {
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export", exact: true }).click();
   await page.getByRole("button", { name: "Save draft and export" }).click();
+  // It changed since its last revision (it has none), so the export asks
+  // why, and saves revision 1.
+  await page.getByRole("dialog").getByRole("textbox", { name: "Reason" }).fill("first programming");
+  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
   const file = await download;
   await expect(page.getByText(/^Draft since/)).toHaveCount(0);
+  await expect(page.getByText(/saved revision 1/)).toBeVisible();
   expect(file.suggestedFilename()).toBe("HT.csv");
-  await expect(page.getByText("Exported 8 memories")).toBeVisible();
+  await expect(page.getByText(/^Exported 8 memories/)).toBeVisible();
 
   // Bulk changes: search the memories, select a range with shift-click,
   // turn scan off, then take them off the radio.
@@ -739,4 +744,36 @@ test("changes go to a draft, which saves, discards, and catches a stale page", a
   await expect(page.getByText("Saved Drafty's draft; program the radio again")).toBeVisible();
   await expect(page.getByText(/^Draft since/)).toHaveCount(0);
   await expect(row("NOAA WX1")).toHaveCount(0);
+});
+
+test("revisions: an export saves one, a change needs programming, and one restores", async ({ page, request }) => {
+  await request.post(RADIOS, { data: { name: "Revvy", model: "baofeng-uv5rm" } });
+  await saved(request, "Revvy", () => request.post(`${RADIOS}/Revvy/channels`, { data: { query: 'name:"NOAA WX1"' } }));
+  expect((await request.get(`${RADIOS}/Revvy/export?reason=first`)).ok()).toBeTruthy();
+  await page.goto("/l/default/radios/Revvy");
+  await expect(page.getByText("Needs programming", { exact: true })).toHaveCount(0);
+
+  // A change, saved, needs programming again.
+  await saved(request, "Revvy", () => request.post(`${RADIOS}/Revvy/channels`, { data: { query: 'name:"NOAA WX2"' } }));
+  await page.reload();
+  await expect(page.getByText("Needs programming", { exact: true })).toBeVisible();
+
+  // Save a revision by hand; it doesn't count as programmed.
+  await page.getByRole("tab", { name: "Revisions" }).click();
+  await page.getByRole("button", { name: "Save revision" }).click();
+  await page.getByRole("dialog").getByRole("textbox", { name: "Reason" }).fill("added WX2");
+  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved revision 2")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "added WX2" })).toBeVisible();
+  await expect(page.getByText("Needs programming", { exact: true })).toBeVisible();
+
+  // Compare revision 1 with now, then restore it into the draft.
+  await page.getByRole("cell", { name: "first" }).click();
+  await expect(page.getByText(/Added NOAA WX2/)).toBeVisible();
+  await page.getByRole("button", { name: "Restore into draft" }).click();
+  await expect(page.getByText(/Put revision 1 into Revvy's draft/)).toBeVisible();
+  await expect(page.getByText(/^Draft since/)).toBeVisible();
+  await page.getByRole("tab", { name: "Memories" }).click();
+  await expect(page.getByRole("row", { name: /^Select memory.*NOAA WX2/ })).toHaveCount(0);
+  await expect(page.getByRole("row", { name: /^Select memory.*NOAA WX1/ })).toBeVisible();
 });

@@ -162,7 +162,7 @@ held to FRS, GMRS, MURS, and CB limits.
 
 Sources: a radio can keep searches and plans (rflib radio sources) that radio
 sync uses to add new matching channels, each to its section.`}
-	cmd.AddCommand(newRadioAddCommand(), newRadioListCommand(), newRadioShowCommand(), newRadioUpdateCommand(), newRadioDeleteCommand(), newRadioDraftCommand(),
+	cmd.AddCommand(newRadioAddCommand(), newRadioListCommand(), newRadioShowCommand(), newRadioUpdateCommand(), newRadioDeleteCommand(), newRadioDraftCommand(), newRadioRevisionsCommand(),
 		newRadioChannelsCommand(), newRadioSectionsCommand(), newRadioSourcesCommand(), newRadioSyncCommand(), newRadioExportCommand(), newRadioCompareCommand(),
 		newRadioCopyCommand())
 	return cmd
@@ -321,7 +321,11 @@ func newRadioListCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				rows[i] = radioRow{r, len(es), draft}
+				st, err := a.RevisionState(ctx(cmd), r.ID)
+				if err != nil {
+					return err
+				}
+				rows[i] = radioRow{r, len(es), draft, st.NeedsProgramming}
 			}
 			return radioListing.write(cmd, rows)
 		})
@@ -331,8 +335,9 @@ func newRadioListCommand() *cobra.Command {
 
 type radioRow struct {
 	domain.Radio
-	channels int
-	draft    bool
+	channels    int
+	draft       bool
+	programming bool
 }
 
 var radioListing = listing[radioRow]{
@@ -350,6 +355,12 @@ var radioListing = listing[radioRow]{
 			}
 			return ""
 		}, json: func(r radioRow) any { return r.draft }},
+		{name: "programming", text: func(r radioRow) string {
+			if r.programming {
+				return "needs programming"
+			}
+			return ""
+		}, json: func(r radioRow) any { return r.programming }},
 		{name: "id", id: true, text: func(r radioRow) string { return r.ID }},
 	},
 	defaults: []string{"name", "model", "channels", "default_power"},
@@ -380,8 +391,13 @@ func newRadioShowCommand() *cobra.Command {
 			if _, d, err := a.Draft(ctx(cmd), r.ID); err == nil && d != nil {
 				draft = "started " + d.CreatedAt.Local().Format("2006-01-02 15:04")
 			}
-			fmt.Fprintf(out, "%s\nname: %s\nmodel: %s\nchannels: %d\ndefault power: %s\ndedupe: %s\nname length: %s\nnotes: %s\ndraft: %s\nsources:",
-				r.ID, r.Name, r.Model, len(es), powerName(r.DefaultPower), orDefault(r.Dedupe, "none"), nameLength(r.NameLength), r.Notes, draft)
+			st, err := a.RevisionState(ctx(cmd), r.ID)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s\nname: %s\nmodel: %s\nchannels: %d\ndefault power: %s\ndedupe: %s\nname length: %s\nnotes: %s\ndraft: %s\nrevision: %s\nprogramming: %s\nsources:",
+				r.ID, r.Name, r.Model, len(es), powerName(r.DefaultPower), orDefault(r.Dedupe, "none"), nameLength(r.NameLength), r.Notes, draft,
+				revisionText(st), programmingText(st))
 			if len(sources) == 0 {
 				fmt.Fprint(out, " none")
 			}
@@ -1087,11 +1103,20 @@ func newRadioExportCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "export RADIO", Short: "Export a radio's programming file", Args: cobra.ExactArgs(1),
 		Long: `Export a radio's programming file in its model's format: a CHIRP CSV for CHIRP
 radios (open the radio's image in CHIRP, then File > Import), or the
-manufacturer software's CSV for profile radios. Warnings go to stderr.`}
+manufacturer software's CSV for profile radios. Warnings go to stderr.
+
+An export counts as programming the radio: when the radio differs from its
+last revision, it's saved as a new revision, with --reason (by default the
+day and "saved automatically by CLI export"); see rflib radio revisions.`}
 	cmd.Flags().String("output", "-", "Output path, or - for stdout")
 	cmd.Flags().Bool("skip-invalid", false, "Leave out memories the format can't represent instead of failing")
+	cmd.Flags().String("reason", "", "Why, for the revision the export saves when the radio changed")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		skipInvalid, _ := cmd.Flags().GetBool("skip-invalid")
+		reason := getString(cmd, "reason")
+		if !cmd.Flags().Changed("reason") {
+			reason = app.ExportReason("CLI")
+		}
 		return withApp(cmd, func(a *app.Service) error {
 			noteDraft(cmd, a, args[0], "exporting the saved radio")
 			p, _, err := a.Layout(ctx(cmd), args[0])
@@ -1099,9 +1124,16 @@ manufacturer software's CSV for profile radios. Warnings go to stderr.`}
 				return err
 			}
 			printWarnings(cmd.ErrOrStderr(), p)
-			return writeOutput(cmd, func(w io.Writer) (int, error) {
+			if err := writeOutput(cmd, func(w io.Writer) (int, error) {
 				return program.Write(w, p, skipInvalid, cmd.ErrOrStderr())
-			})
+			}); err != nil {
+				return err
+			}
+			rev, saved, err := a.RecordExport(ctx(cmd), args[0], reason)
+			if err == nil && saved {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Saved revision %d of %s: %s\n", rev.Number, p.Radio.Name, rev.Reason)
+			}
+			return err
 		})
 	}
 	return cmd

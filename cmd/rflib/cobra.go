@@ -76,7 +76,7 @@ func newGroupGoneCommand() *cobra.Command {
 
 func newChannelCommand() *cobra.Command {
 	channel := &cobra.Command{Use: "channel", Short: "Manage analog radio channels"}
-	channel.AddCommand(newChannelAddCommand(), newChannelListCommand(), newChannelShowCommand(), newChannelUpdateCommand(), newChannelStatusCommand(), newChannelRelinkCommand(),
+	channel.AddCommand(newChannelAddCommand(), newChannelListCommand(), newChannelShowCommand(), newChannelUpdateCommand(), newChannelStatusCommand(), newChannelRelinkCommand(), newChannelHistoryCommand(),
 		newChannelCopyCommand())
 	return channel
 }

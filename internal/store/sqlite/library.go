@@ -40,7 +40,23 @@ func (l *library) inTx(ctx context.Context, fn func(*library) error) error {
 		_ = tx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	return commit(ctx, l.db, tx)
+}
+
+// uncanceledDB runs a library's reads whether or not their context is
+// canceled (see DB.Library).
+type uncanceledDB struct{ db *sql.DB }
+
+func (u uncanceledDB) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
+	return u.db.ExecContext(context.WithoutCancel(ctx), q, args...)
+}
+
+func (u uncanceledDB) QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+	return u.db.QueryContext(context.WithoutCancel(ctx), q, args...)
+}
+
+func (u uncanceledDB) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row {
+	return u.db.QueryRowContext(context.WithoutCancel(ctx), q, args...)
 }
 
 // uncanceled runs a transaction's statements whether or not their context

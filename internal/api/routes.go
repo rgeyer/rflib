@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +95,10 @@ func (s *server) routes() []route {
 		{"POST", R + "/draft", s.lib(s.startDraft), false},
 		{"POST", R + "/draft/save", s.lib(s.saveDraft), false},
 		{"POST", R + "/draft/discard", s.lib(s.discardDraft), false},
+		{"GET", R + "/revisions", s.lib(s.listRadioRevisions), false},
+		{"POST", R + "/revisions", s.lib(s.saveRadioRevision), false},
+		{"GET", R + "/revisions/{n}/compare", s.lib(s.compareRadioRevision), false},
+		{"POST", R + "/revisions/{n}/restore", s.lib(s.restoreRadioRevision), false},
 
 		{"GET", "/organizations", s.recordHandler(s.listOrgs), false},
 		{"POST", "/organizations", s.recordHandler(s.createOrg), false},
@@ -856,6 +861,11 @@ func (s *server) radioOut(r *http.Request, a *app.Service, radio domain.Radio) (
 		return out, err
 	}
 	out.Channels = len(es)
+	st, err := a.RevisionState(ctx(r), saved.ID)
+	if err != nil {
+		return out, err
+	}
+	out.Revision, out.ChangedSinceRevision, out.NeedsProgramming = st.Latest, st.Changed, st.NeedsProgramming
 	// A radio that doesn't lay out has no sync to preview.
 	if res, err := a.Sync(ctx(r), saved.ID, app.SyncOptions{DryRun: true}); err == nil {
 		n := 0
@@ -1396,9 +1406,22 @@ func (s *server) exportRadio(w http.ResponseWriter, r *http.Request, a *app.Serv
 			left = append(left, line)
 		}
 	}
+	// An export counts as programming the radio (see app.RecordExport).
+	reason := r.URL.Query().Get("reason")
+	if reason == "" {
+		reason = app.ExportReason("an")
+	}
+	rev, saved, err := a.RecordExport(ctx(r), r.PathValue("radio"), reason)
+	if err != nil {
+		return err
+	}
 	exportHeaders(w, "text/csv", name, n, left, nil)
 	for _, warning := range p.Warnings {
 		w.Header().Add("X-Rflib-Warning", warning)
+	}
+	w.Header().Set("X-Rflib-Revision", strconv.Itoa(rev.Number))
+	if saved {
+		w.Header().Set("X-Rflib-Revision-Saved", "true")
 	}
 	_, err = w.Write(buf.Bytes())
 	return err

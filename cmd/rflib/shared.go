@@ -211,8 +211,18 @@ again.`}
 }
 
 func newSharedHistoryCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "history", Short: "Show a shared channel's revisions", Args: cobra.NoArgs,
-		Long: "Show a shared channel's revisions, oldest first: when, why, and what changed."}
+	return historyCommand("Show a shared channel's revisions")
+}
+
+// newChannelHistoryCommand shows any channel's history: your own, or a
+// shared one's.
+func newChannelHistoryCommand() *cobra.Command {
+	return historyCommand("Show a channel's revisions")
+}
+
+func historyCommand(short string) *cobra.Command {
+	cmd := &cobra.Command{Use: "history", Short: short, Args: cobra.NoArgs,
+		Long: "Show a channel's revisions, oldest first: when, why, and what changed. Your own\nchannels record a revision whenever they change; a shared channel's are its\ncorrections."}
 	idFlag(cmd, "Channel ID, or a link's (required)")
 	revisionListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {

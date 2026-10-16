@@ -44,6 +44,11 @@ export function Radios() {
               <Table.Td>{r.default_power || "unset"}</Table.Td>
               <Table.Td>
                 <Group gap={4}>
+                  {r.needs_programming && (
+                    <Badge size="sm" color="orange" variant="light">
+                      Needs programming
+                    </Badge>
+                  )}
                   {r.draft && (
                     <Badge size="sm" color="yellow" variant="light">
                       Draft

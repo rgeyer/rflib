@@ -751,3 +751,95 @@ func TestRetireAndRelink(t *testing.T) {
 		t.Errorf("the retired channel = %+v, %v", got, err)
 	}
 }
+
+// A radio's revisions: saved by hand or by an export, compared with now
+// (including channels that changed since), and restored into its draft.
+func TestRadioRevisions(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	mk := func(name string, mhz float64) domain.Channel {
+		c, _, err := s.CreateChannel(ctx, domain.Channel{Name: name, ReceiveHz: int64(mhz * 1e6), Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: none, TransmitTone: none})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	a, b := mk("Alpha", 146.52), mk("Bravo", 146.55)
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	state := func() RevisionState {
+		t.Helper()
+		st, err := s.RevisionState(ctx, "HT")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	if st := state(); st.Latest != 0 || st.NeedsProgramming {
+		t.Errorf("an empty radio = %+v", st)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{a.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if st := state(); !st.Changed || !st.NeedsProgramming {
+		t.Errorf("never exported = %+v", st)
+	}
+	// An export saves revision 1; exporting again with nothing changed
+	// saves none.
+	rev, saved, err := s.RecordExport(ctx, "HT", "first time")
+	if err != nil || !saved || rev.Number != 1 || !rev.Exported || rev.Reason != "first time" {
+		t.Fatalf("export = %+v, %v, %v", rev, saved, err)
+	}
+	if _, saved, _ := s.RecordExport(ctx, "HT", "again"); saved {
+		t.Error("an unchanged export saved a revision")
+	}
+	if st := state(); st.Changed || st.NeedsProgramming {
+		t.Errorf("just exported = %+v", st)
+	}
+	if _, err := s.SaveRadioRevision(ctx, "HT", "nothing new"); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("saving with nothing changed: %v", err)
+	}
+
+	// A channel's own change makes the radio differ, and needs programming;
+	// a revision saved by hand doesn't count as programmed.
+	hz := int64(100_000)
+	a.TransmitTone = domain.Tone{Kind: domain.ToneCTCSS, CTCSSMilliHz: &hz}
+	if _, _, err := s.UpdateChannel(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{b.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if rev, err := s.SaveRadioRevision(ctx, "HT", "added Bravo"); err != nil || rev.Number != 2 || rev.Exported {
+		t.Fatalf("save = %+v, %v", rev, err)
+	}
+	if st := state(); st.Changed || !st.NeedsProgramming {
+		t.Errorf("saved by hand = %+v", st)
+	}
+
+	// Compared with revision 1: Bravo added, and Alpha's tone changed.
+	_, ch, err := s.CompareRevision(ctx, "HT", 1)
+	if err != nil || names(ch.Added) != "Bravo" || len(ch.Channels) != 1 || !strings.Contains(strings.Join(ch.Channels[0].Changes, ";"), "transmit tone") {
+		t.Errorf("compare = %+v, %v", ch, err)
+	}
+
+	// Restoring revision 1 puts its list into a draft; with one open, it
+	// needs replaceDraft.
+	d, err := s.RestoreRevision(ctx, "HT", 1, false)
+	if err != nil || d.DraftOf == "" {
+		t.Fatalf("restore = %+v, %v", d, err)
+	}
+	if _, on, _ := s.OnRadio(ctx, d.ID, Selection{All: true}); names(on) != "Alpha" {
+		t.Errorf("restored draft = %s", names(on))
+	}
+	if _, on, _ := s.OnRadio(ctx, "HT", Selection{All: true}); names(on) != "Alpha,Bravo" {
+		t.Errorf("the radio before saving = %s", names(on))
+	}
+	if _, err := s.RestoreRevision(ctx, "HT", 2, false); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("restore over a draft: %v", err)
+	}
+	if _, err := s.RestoreRevision(ctx, "HT", 2, true); err != nil {
+		t.Errorf("restore, replacing the draft: %v", err)
+	}
+}

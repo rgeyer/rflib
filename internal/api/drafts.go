@@ -111,6 +111,12 @@ func (s *server) getDraft(w http.ResponseWriter, r *http.Request, a *app.Service
 	if d != nil {
 		draft = &Draft{d.ID, d.CreatedAt}
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"draft": draft, "changes": draftChangesOut(ch)})
+	return nil
+}
+
+// draftChangesOut is what one list changes from another.
+func draftChangesOut(ch app.DraftChanges) map[string]any {
 	moves := func(ms []app.MovedMemory) []map[string]any {
 		out := make([]map[string]any, len(ms))
 		for i, m := range ms {
@@ -118,13 +124,12 @@ func (s *server) getDraft(w http.ResponseWriter, r *http.Request, a *app.Service
 		}
 		return out
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"draft": draft, "changes": map[string]any{
+	return map[string]any{
 		"added": newChannels(ch.Added), "removed": newChannels(ch.Removed), "changed": newChannels(ch.Changed),
 		"moved": moves(ch.Moved), "renumbered": moves(ch.Renumbered),
 		"sections_added": orEmpty(ch.SectionsAdded), "sections_removed": orEmpty(ch.SectionsRemoved),
 		"sources_added": orEmpty(ch.SourcesAdded), "sources_removed": orEmpty(ch.SourcesRemoved),
-	}})
-	return nil
+	}
 }
 
 func (s *server) startDraft(w http.ResponseWriter, r *http.Request, a *app.Service) error {

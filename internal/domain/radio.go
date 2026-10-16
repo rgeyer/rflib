@@ -268,3 +268,64 @@ func digitPrefix(s string) int {
 	}
 	return n
 }
+
+// RadioSnapshot is a radio as it is at one time, as a radio revision keeps
+// it: its settings, sections, sources, and memories. A memory names its
+// channel and the channel's revision (and, for a shared channel, the
+// revision of the user's own notes on it), not the channel's values, which
+// the channel's history keeps.
+type RadioSnapshot struct {
+	Name         string            `json:"name"`
+	Model        string            `json:"model"`
+	DefaultPower PowerIntent       `json:"default_power,omitempty"`
+	Dedupe       string            `json:"dedupe,omitempty"`
+	NameLength   int               `json:"name_length,omitempty"`
+	Notes        string            `json:"notes,omitempty"`
+	Sections     []SnapshotSection `json:"sections"`
+	Sources      []SnapshotSource  `json:"sources"`
+	Memories     []SnapshotMemory  `json:"memories"`
+}
+
+// SnapshotSection is a section as a radio revision keeps it.
+type SnapshotSection struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Start   *int   `json:"start,omitempty"`
+	Size    *int   `json:"size,omitempty"`
+	Sort    string `json:"sort,omitempty"`
+	Default bool   `json:"default,omitempty"`
+}
+
+// SnapshotSource is a source as a radio revision keeps it.
+type SnapshotSource struct {
+	ID          string `json:"id"`
+	SectionID   string `json:"section_id,omitempty"`
+	Query       string `json:"query,omitempty"`
+	PlanID      string `json:"plan_id,omitempty"`
+	Sort        string `json:"sort,omitempty"`
+	PlanNumbers string `json:"plan_numbers,omitempty"`
+}
+
+// SnapshotMemory is a memory as a radio revision keeps it, in list order.
+type SnapshotMemory struct {
+	ChannelID       string      `json:"channel_id"`
+	ChannelRevision int         `json:"channel_revision"`
+	NotesRevision   int         `json:"notes_revision,omitempty"`
+	SectionID       string      `json:"section_id"`
+	Name            string      `json:"name,omitempty"`
+	Power           PowerIntent `json:"power,omitempty"`
+	Skip            *bool       `json:"skip,omitempty"`
+	SourceID        string      `json:"source_id,omitempty"`
+	PlanNumber      *int        `json:"plan_number,omitempty"`
+}
+
+// RadioRevision is a radio as saved at one time: by hand, or by an export
+// (Exported).
+type RadioRevision struct {
+	Number   int
+	At       time.Time
+	Reason   string
+	Author   string
+	Exported bool
+	Snapshot RadioSnapshot
+}

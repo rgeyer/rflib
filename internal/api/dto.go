@@ -345,11 +345,17 @@ type Radio struct {
 	// it doesn't lay out).
 	Draft       *Draft `json:"draft"`
 	SyncChanges *int   `json:"sync_changes"`
+	// Revision is the latest revision (0 for none); ChangedSinceRevision
+	// says an export would save one; NeedsProgramming, that the radio
+	// differs from its last exported revision.
+	Revision             int  `json:"revision"`
+	ChangedSinceRevision bool `json:"changed_since_revision"`
+	NeedsProgramming     bool `json:"needs_programming"`
 }
 
 // newRadio is a radio by its saved self: a draft gives its radio's ID.
 func newRadio(r domain.Radio, channels int) Radio {
-	return Radio{cmpOr(r.DraftOf, r.ID), r.Name, r.Model, string(r.DefaultPower), cmpOr(r.Dedupe, "none"), r.NameLength, r.Notes, channels, r.CreatedAt, r.UpdatedAt, nil, nil}
+	return Radio{cmpOr(r.DraftOf, r.ID), r.Name, r.Model, string(r.DefaultPower), cmpOr(r.Dedupe, "none"), r.NameLength, r.Notes, channels, r.CreatedAt, r.UpdatedAt, nil, nil, 0, false, false}
 }
 
 func cmpOr(v, fallback string) string {

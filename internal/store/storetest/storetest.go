@@ -42,6 +42,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Plans", testPlans},
 		{"SeedChannels", testSeedChannels},
 		{"RadioDrafts", testRadioDrafts},
+		{"NotesRevisions", testNotesRevisions},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
@@ -881,8 +882,21 @@ func testSharedRevisions(t *testing.T, s store.Store) {
 	if revs, _ := mine.ChannelRevisions(ctx(), link.ID); len(revs) != 3 {
 		t.Errorf("link revisions = %+v", revs)
 	}
-	if revs, err := mine.ChannelRevisions(ctx(), channel(t, mine, "Private", 1).ID); err != nil || len(revs) != 0 {
+	// A private channel records a revision whenever what it records
+	// changes, including what only it has, such as power.
+	p := channel(t, mine, "Private", 1)
+	if revs, err := mine.ChannelRevisions(ctx(), p.ID); err != nil || len(revs) != 1 || p.Revision != 1 {
 		t.Errorf("private revisions = %+v, %v", revs, err)
+	}
+	if p, err = mine.UpdateChannel(ctx(), p); err != nil || p.Revision != 1 {
+		t.Errorf("an unchanged save = %d, %v", p.Revision, err)
+	}
+	p.Power = domain.PowerLow
+	if p, err = mine.UpdateChannel(store.WithChange(ctx(), "too loud", ""), p); err != nil || p.Revision != 2 {
+		t.Fatalf("a power change = %d, %v", p.Revision, err)
+	}
+	if revs, _ := mine.ChannelRevisions(ctx(), p.ID); len(revs) != 2 || revs[1].Reason != "too loud" || revs[1].Channel.Power != domain.PowerLow {
+		t.Errorf("private revisions after a change = %+v", revs)
 	}
 }
 
@@ -1169,4 +1183,37 @@ func testRadioDrafts(t *testing.T, s store.Store) {
 		t.Fatal(err)
 	}
 	mustNotFound(t, "the draft of a deleted radio", func() error { _, err := l.GetRadio(ctx(), d.ID); return err }())
+}
+
+// The user's notes on a shared channel keep a history by shared channel,
+// even once they're removed.
+func testNotesRevisions(t *testing.T, s store.Store) {
+	shared := sharedLibrary(t, s)
+	sc := channel(t, shared, "Shared", 146_940_000)
+	mine := newLibrary(t, s, "L")
+	rev := func() int {
+		t.Helper()
+		n, err := mine.NotesRevision(ctx(), sc.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if rev() != 0 {
+		t.Fatalf("before any notes = %d", rev())
+	}
+	view := domain.Channel{Link: &domain.Link{SharedID: sc.ID}, Tags: []string{"club"}}
+	if _, err := mine.SaveAnnotation(ctx(), view); err != nil || rev() != 1 {
+		t.Fatalf("notes = %d, %v", rev(), err)
+	}
+	if _, err := mine.SaveAnnotation(ctx(), view); err != nil || rev() != 1 {
+		t.Errorf("the same notes again = %d, %v", rev(), err)
+	}
+	view.ShortNames = []string{"Shrd"}
+	if _, err := mine.SaveAnnotation(ctx(), view); err != nil || rev() != 2 {
+		t.Errorf("a short name = %d, %v", rev(), err)
+	}
+	if err := mine.DeleteChannel(ctx(), sc.ID); err != nil || rev() != 3 {
+		t.Errorf("removed = %d, %v", rev(), err)
+	}
 }
