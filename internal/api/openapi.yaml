@@ -780,6 +780,109 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/SyncResult"}
         default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/copy:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Make a new radio from this one as it is now, for another model
+      description: >-
+        The new radio gets this one's sections (in order, with their starts,
+        sizes, and orders), sources, channels in their sections and order,
+        and overrides. Channels the new model can't use are left out. Unset
+        settings come from this radio. From then on the two are independent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: [{$ref: "#/components/schemas/RadioInput"}]
+              required: [name, model]
+      responses:
+        "201":
+          description: The new radio, and what came across
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [radio, copied, skipped, layout_error]
+                properties:
+                  radio: {$ref: "#/components/schemas/Radio"}
+                  copied: {type: integer}
+                  skipped: {type: array, items: {$ref: "#/components/schemas/Channel"}, description: "Channels the new model can't use"}
+                  layout_error: {type: string, nullable: true, description: "Set when the copy doesn't lay out on the new model, such as a section past its last memory"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/compare-radio:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Compare this radio with another, by channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [radio]
+              properties:
+                radio: {type: string, description: "The other radio's name or ID"}
+      responses:
+        "200":
+          description: How many channels both have, what only the other has, and what only this one has
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [other, same, missing, extra]
+                properties:
+                  other: {type: string}
+                  same: {type: integer}
+                  missing:
+                    type: array
+                    items:
+                      type: object
+                      required: [channel, section, name, unusable]
+                      properties:
+                        channel: {$ref: "#/components/schemas/Channel"}
+                        section: {type: string, description: "The other radio's section for it"}
+                        name: {type: string, description: "The other radio's name override for it"}
+                        unusable: {type: string, nullable: true, description: "Why this radio's model can't use it"}
+                  extra: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/compare-radio/apply:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Add channels another radio has and this one doesn't
+      description: >-
+        In the other radio's order, each into this radio's section of the
+        same name, with the other radio's overrides for it; a section this
+        radio lacks is made as the other has it, after the sections it
+        follows there, without its start if that doesn't fit here. Without
+        add, every one this radio can use.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [radio]
+              properties:
+                radio: {type: string}
+                add: {type: array, items: {type: string}, description: "Channel IDs; all usable ones when absent"}
+                dry_run: {type: boolean}
+      responses:
+        "200":
+          description: The channels added (or that would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [added, new_sections, unstarted, dry_run]
+                properties:
+                  added: {type: array, items: {$ref: "#/components/schemas/Channel"}}
+                  new_sections: {type: array, items: {type: string}, description: "Sections made for them, as the other radio has them"}
+                  unstarted: {type: array, items: {type: string}, description: "Sections made without their start, which didn't fit here"}
+                  dry_run: {type: boolean}
+        default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/radios/{radio}/compare:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
     post:

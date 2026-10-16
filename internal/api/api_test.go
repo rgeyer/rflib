@@ -702,3 +702,42 @@ func TestChannelListDefaultAndMoreInShared(t *testing.T) {
 		t.Errorf("uncounted unless asked: %d", list.More)
 	}
 }
+
+// A radio copies to another model, and two radios compare by channel.
+func TestCopyAndCompareRadios(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	c.seedAndLink("us-noaa", "us-ham-calling")
+	c.do("POST", L+"/radios", map[string]any{"name": "Shack", "model": "chirp-generic"}, 201, nil)
+	c.do("POST", L+"/radios/Shack/sections", map[string]any{"name": "Weather", "start": 20}, 201, nil)
+	c.do("POST", L+"/radios/Shack/channels", map[string]any{"query": "band:noaa", "section": "Weather"}, 200, nil)
+	c.do("POST", L+"/radios/Shack/channels", map[string]any{"query": `name:"6m FM Call" OR name:"2m FM Call"`}, 200, nil)
+	var copied struct {
+		Radio   Radio     `json:"radio"`
+		Copied  int       `json:"copied"`
+		Skipped []Channel `json:"skipped"`
+	}
+	c.do("POST", L+"/radios/Shack/copy", map[string]any{"name": "Mobile", "model": "baofeng-uv5rm"}, 201, &copied)
+	if copied.Radio.Name != "Mobile" || copied.Copied != 8 || len(copied.Skipped) != 1 || copied.Skipped[0].Name != "6m FM Call" {
+		t.Fatalf("copy = %+v", copied)
+	}
+	var cmp struct {
+		Same    int `json:"same"`
+		Missing []struct {
+			Channel  Channel `json:"channel"`
+			Section  string  `json:"section"`
+			Unusable *string `json:"unusable"`
+		} `json:"missing"`
+	}
+	c.do("POST", L+"/radios/Mobile/compare-radio", map[string]any{"radio": "Shack"}, 200, &cmp)
+	if cmp.Same != 8 || len(cmp.Missing) != 1 || cmp.Missing[0].Unusable == nil {
+		t.Fatalf("compare = %+v", cmp)
+	}
+	var added struct {
+		Added []Channel `json:"added"`
+	}
+	c.do("POST", L+"/radios/Mobile/compare-radio/apply", map[string]any{"radio": "Shack"}, 200, &added)
+	if len(added.Added) != 0 {
+		t.Errorf("added what the radio can't use: %+v", added)
+	}
+}

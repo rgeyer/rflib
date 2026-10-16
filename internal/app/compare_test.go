@@ -342,3 +342,177 @@ func TestSyncSkipsRetired(t *testing.T) {
 		t.Errorf("back in service: %s", got)
 	}
 }
+
+// A copy has the original's sections, sources, channels, and overrides,
+// less channels its model can't use; from then on, comparing the two
+// offers what one has and the other doesn't.
+func TestCopyAndCompareRadios(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	mine := func(c domain.Channel) domain.Channel {
+		made, _, err := s.CreateChannel(ctx, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return made
+	}
+	aprs := mine(analog("APRS", 144.39, 0, 0))
+	call := mine(analog("Calling", 146.52, 146.52, 0))
+	cb := mine(analog("CB 19", 27.185, 27.185, 0))
+	gmrs := mine(analog("GMRS 1", 462.5625, 462.5625, 0))
+	gmrs.Service = domain.ServiceGMRS
+	if _, _, err := s.UpdateChannel(ctx, gmrs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "Shack", Model: "chirp-generic", DefaultPower: domain.PowerHigh}); err != nil {
+		t.Fatal(err)
+	}
+	ninety, ten := 90, 10
+	if _, err := s.AddSection(ctx, "Shack", domain.RadioSection{Name: "APRS", Start: &ninety, Size: &ten}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddSource(ctx, "Shack", domain.RadioSource{Query: "service:gmrs"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "Shack", AddRequest{IDs: []string{aprs.ID}, Section: "aprs"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "Shack", AddRequest{IDs: []string{call.ID, cb.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Sync(ctx, "Shack", SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, e, err := s.RadioEntry(ctx, "Shack", call.ID); err != nil {
+		t.Fatal(err)
+	} else {
+		e.Name = "CALL"
+		if err := s.SetEntry(ctx, e.Section.RadioID, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	layout := func(radio string) string {
+		t.Helper()
+		l, es, err := s.Layout(ctx, radio)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for i, m := range l.Memories {
+			out = append(out, fmt.Sprintf("%d %s %s", m.Location, m.Channel.Name, es[i].Section.Name))
+		}
+		return strings.Join(out, ", ")
+	}
+	before := layout("Shack")
+
+	res, err := s.CopyRadio(ctx, "Shack", domain.Radio{Name: "Mobile", Model: "baofeng-uv5rm"})
+	if err != nil || res.LayoutErr != nil {
+		t.Fatalf("copy: %+v, %v", res, err)
+	}
+	if res.Copied != 3 || len(res.Skipped) != 1 || res.Skipped[0].Name != "CB 19" || res.Radio.DefaultPower != domain.PowerHigh {
+		t.Fatalf("copy result = %+v", res)
+	}
+	// The same layout, less what the UV-5RM can't receive.
+	if got, want := layout("Mobile"), strings.Replace(before, ", 102 CB 19 Other", "", 1); got != want {
+		t.Errorf("copy = %s\nwant %s", got, want)
+	}
+	_, srcs, _, err := s.Sources(ctx, "Mobile")
+	if err != nil || len(srcs) != 1 || srcs[0].SectionName != "service:gmrs" {
+		t.Errorf("sources = %+v, %v", srcs, err)
+	}
+	// Independent from now on: Shack gains a channel; comparing offers it.
+	extra := mine(analog("Simplex", 146.55, 146.55, 0))
+	if _, _, err := s.AddChannels(ctx, "Shack", AddRequest{IDs: []string{extra.ID}, Section: "APRS"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.CompareRadios(ctx, "Mobile", "Shack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Same != 3 || len(c.Missing) != 2 || c.Missing[0].Entry.Channel.Name != "Simplex" || c.Missing[1].Unusable == "" || len(c.Extra) != 0 {
+		t.Fatalf("compare = %+v", c)
+	}
+	if _, res, err := s.AddFromRadio(ctx, "Mobile", "Shack", nil, true); err != nil || len(res.Added) != 1 || layout("Mobile") != strings.Replace(before, ", 102 CB 19 Other", "", 1) {
+		t.Fatalf("dry run: %+v, %v", res, err)
+	}
+	if _, _, err := s.AddFromRadio(ctx, "Mobile", "Shack", []string{cb.ID}, false); err == nil {
+		t.Error("added a channel the radio can't use")
+	}
+	if _, res, err := s.AddFromRadio(ctx, "Mobile", "Shack", nil, false); err != nil || len(res.Added) != 1 || len(res.NewSections) != 0 {
+		t.Fatalf("add: %+v, %v", res, err)
+	}
+	if got := layout("Mobile"); !strings.Contains(got, "91 Simplex APRS") {
+		t.Errorf("after adding = %s", got)
+	}
+	if _, err := s.CompareRadios(ctx, "Mobile", "Mobile"); err == nil {
+		t.Error("compared a radio with itself")
+	}
+}
+
+// Adding from a radio onto a nearly blank one brings the sections the
+// channels need, as the other has them, in its order; a start that doesn't
+// fit here is dropped, and said.
+func TestAddFromRadioMakesSections(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	var ids []string
+	for i, n := range []string{"A", "B", "C"} {
+		made, _, err := s.CreateChannel(ctx, analog(n, 146.52+float64(i)*0.03, 0, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, made.ID)
+	}
+	for _, r := range []string{"Full", "Blank"} {
+		if _, err := s.CreateRadio(ctx, domain.Radio{Name: r, Model: "baofeng-uv5rm"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one, two, ten := 1, 2, 10
+	for _, r := range []string{"Full", "Blank"} {
+		if _, err := s.AddSection(ctx, r, domain.RadioSection{Name: "Mine", Start: &one}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.AddSection(ctx, "Full", domain.RadioSection{Name: "Low", Start: &two}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddSection(ctx, "Full", domain.RadioSection{Name: "High", Start: &ten, Sort: "name"}); err != nil {
+		t.Fatal(err)
+	}
+	for i, sec := range []string{"Low", "High", "High"} {
+		if _, _, err := s.AddChannels(ctx, "Full", AddRequest{IDs: []string{ids[i]}, Section: sec}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Blank holds four channels of its own in Mine, which Low follows on
+	// Full, so Low's start at 2 can't fit here; High's at 10 can.
+	for i := range 4 {
+		made, _, err := s.CreateChannel(ctx, analog(fmt.Sprintf("Own %d", i), 147.0+float64(i)*0.03, 0, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.AddChannels(ctx, "Blank", AddRequest{IDs: []string{made.ID}, Section: "Mine"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, res, err := s.AddFromRadio(ctx, "Blank", "Full", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(res.NewSections, ",") != "Low,High" || strings.Join(res.Unstarted, ",") != "Low" || len(res.Added) != 3 {
+		t.Fatalf("result = %+v", res)
+	}
+	_, secs, _ := s.Sections(ctx, "Blank")
+	var got []string
+	for _, sec := range secs {
+		start := "-"
+		if sec.Start != nil {
+			start = fmt.Sprint(*sec.Start)
+		}
+		got = append(got, fmt.Sprintf("%s@%s/%s", sec.Name, start, sec.Sort))
+	}
+	if strings.Join(got, " ") != "Mine@1/ Low@-/ High@10/name Other@-/" {
+		t.Errorf("sections = %s", strings.Join(got, " "))
+	}
+}

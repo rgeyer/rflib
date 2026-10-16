@@ -18,9 +18,16 @@ import (
 )
 
 func newRadioCompareCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "compare RADIO FILE", Short: "Compare a radio with a file of what it holds, and bring rflib in line",
-		Args: cobra.ExactArgs(2),
-		Long: `Compare a radio with FILE, what the radio holds as its programming software or
+	cmd := &cobra.Command{Use: "compare RADIO [FILE]", Short: "Compare a radio with a file of what it holds, or with another radio",
+		Args: cobra.RangeArgs(1, 2),
+		Long: `With --radio OTHER, compare RADIO with another of your radios, by channel:
+how many both have, what only OTHER has (and whether RADIO's model can use
+it), and what only RADIO has. --add all (or channel IDs, comma-separated) adds
+what OTHER has to RADIO, in OTHER's order, each into RADIO's section of the
+same name, with OTHER's overrides for it; a section RADIO lacks is made as
+OTHER has it, without its start if that doesn't fit.
+
+Otherwise, compare a radio with FILE, what the radio holds as its programming software or
 CHIRP saved it (- reads stdin), memory by memory. Starting a radio from its
 current programming is the case where the radio is still empty in rflib.
 
@@ -58,8 +65,16 @@ radio from rflib, so a memory only on the radio is then gone.`}
 	cmd.Flags().String("keep", "", "Memories only on the radio to keep as programmed, as private channels: numbers, comma-separated, or all")
 	cmd.Flags().String("take", "", "Changed memories whose radio values rflib takes: numbers, comma-separated, or all")
 	cmd.Flags().Bool("ignore-numbers", false, "Compare only what memories hold, wherever they are (a first import); added channels go at the end")
+	cmd.Flags().String("radio", "", "Compare with another of your radios, by channel, instead of a file")
+	cmd.Flags().String("add", "", "With --radio: channels it has to add to this radio (and the sections they need): all, or IDs, comma-separated")
 	cmd.Flags().Bool("dry-run", false, "Report the comparison and check the decisions without changing anything")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if other := getString(cmd, "radio"); other != "" || len(args) == 1 {
+			if other == "" || len(args) == 2 {
+				return fmt.Errorf("compare with a FILE or with --radio OTHER, one of them")
+			}
+			return compareRadios(cmd, args[0], other)
+		}
 		file, err := readFileArg(cmd, args[1])
 		if err != nil {
 			return err
@@ -233,4 +248,65 @@ func compareDecisions(cmd *cobra.Command, c app.Comparison) (d app.CompareDecisi
 		return d, false, err
 	}
 	return d, decided, nil
+}
+
+// compareRadios reports a radio against another, and with --add adds what
+// the other has.
+func compareRadios(cmd *cobra.Command, radio, other string) error {
+	for _, f := range []string{"use", "use-exact", "keep", "take", "ignore-numbers"} {
+		if cmd.Flags().Changed(f) {
+			return fmt.Errorf("--%s is for comparing with a file; with --radio, use --add", f)
+		}
+	}
+	return withApp(cmd, func(a *app.Service) error {
+		c, err := a.CompareRadios(ctx(cmd), radio, other)
+		if err != nil {
+			return err
+		}
+		out := cmd.OutOrStdout()
+		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "STATUS\tCHANNEL\tMHZ\tSECTION ON %s\tNOTES\tID\n", strings.ToUpper(c.Other.Name))
+		for _, m := range c.Missing {
+			status, note := "add", ""
+			if m.Unusable != "" {
+				status, note = "can't use", m.Unusable
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", status, m.Entry.Channel.Name, domain.FormatFrequencyMHz(m.Entry.Channel.ReceiveHz), m.Entry.Section.Name, note, m.Entry.Channel.ID)
+		}
+		for _, ch := range c.Extra {
+			fmt.Fprintf(tw, "only here\t%s\t%s\t\t\t%s\n", ch.Name, domain.FormatFrequencyMHz(ch.ReceiveHz), ch.ID)
+		}
+		fmt.Fprintf(tw, "\n%d on both, %d only on %s, %d only on %s\n", c.Same, len(c.Missing), c.Other.Name, len(c.Extra), c.Radio.Name)
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		add := strings.TrimSpace(getString(cmd, "add"))
+		if add == "" {
+			return nil
+		}
+		var ids []string
+		if add != "all" {
+			for _, id := range strings.Split(add, ",") {
+				ids = append(ids, strings.TrimSpace(id))
+			}
+		}
+		dry, _ := cmd.Flags().GetBool("dry-run")
+		_, res, err := a.AddFromRadio(ctx(cmd), radio, other, ids, dry)
+		if err != nil {
+			return err
+		}
+		status := cmd.ErrOrStderr()
+		if dry {
+			fmt.Fprint(status, "Dry run, nothing changed. Would have: ")
+		}
+		fmt.Fprintf(status, "added %d channels from %s to %s", len(res.Added), c.Other.Name, c.Radio.Name)
+		if len(res.NewSections) > 0 {
+			fmt.Fprintf(status, ", in new sections %s", strings.Join(res.NewSections, ", "))
+		}
+		fmt.Fprintln(status)
+		if len(res.Unstarted) > 0 {
+			fmt.Fprintf(status, "Their starts didn't fit here, so these follow the section before them: %s\n", strings.Join(res.Unstarted, ", "))
+		}
+		return nil
+	})
 }

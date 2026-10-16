@@ -1,12 +1,14 @@
-import { ActionIcon, Affix, Alert, Badge, Paper, Spoiler, Button, Checkbox, Group, List, Menu, Modal, Select, Stack, Switch, Table, Tabs, Text, TextInput, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Affix, Alert, Badge, Paper, SegmentedControl, Spoiler, Button, Checkbox, Group, List, Menu, Modal, Select, Stack, Switch, Table, Tabs, Text, TextInput, Title, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconArrowDown, IconArrowUp, IconChevronDown, IconDots, IconDownload, IconGripVertical, IconPencil, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { IconArrowDown, IconArrowUp, IconChevronDown, IconCopy, IconDots, IconDownload, IconGripVertical, IconPencil, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, call, download, type Memory, type Radio, type Section, type Source } from "../api/client";
 import { CompareRadio } from "../components/CompareRadio";
+import { CompareRadios } from "../components/CompareRadios";
+import { CopyRadio } from "../components/CopyRadio";
 import { FilterMenu, QueryBar } from "../components/QueryBar";
 import { SectionEditor, SectionHeader, useSections } from "../components/Sections";
 import { SourcePreview } from "../components/SourcePreview";
@@ -140,6 +142,8 @@ export function RadioPage() {
   });
   const refresh = () => void client.invalidateQueries();
   const [preview, setPreview] = useState<SyncResult | null>(null);
+  const [copying, setCopying] = useState(false);
+  const [compareWith, setCompareWith] = useState<string>("file");
   const sync = useMutation({
     mutationFn: (dryRun: boolean) =>
       call<SyncResult>(api.POST("/libraries/{lib}/radios/{radio}/sync", { params: { path }, body: { dry_run: dryRun } })),
@@ -192,6 +196,9 @@ export function RadioPage() {
           <Button variant="light" leftSection={<IconRefresh size={16} />} onClick={() => sync.mutate(true)} loading={sync.isPending}>
             Sync
           </Button>
+          <Button variant="default" leftSection={<IconCopy size={16} />} onClick={() => setCopying(true)}>
+            Copy
+          </Button>
           <Button leftSection={<IconDownload size={16} />} onClick={() => exportFile.mutate()} loading={exportFile.isPending}>
             Export
           </Button>
@@ -202,7 +209,7 @@ export function RadioPage() {
         <Tabs.List>
           <Tabs.Tab value="memories">Memories</Tabs.Tab>
           <Tabs.Tab value="sources">Sources</Tabs.Tab>
-          <Tabs.Tab value="compare">Compare with the radio</Tabs.Tab>
+          <Tabs.Tab value="compare">Compare</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="memories" pt="sm">
           {drag?.kind === "memory" && (
@@ -490,9 +497,19 @@ export function RadioPage() {
           <Sources />
         </Tabs.Panel>
         <Tabs.Panel value="compare" pt="sm">
-          <CompareRadio lib={lib} radio={radio} />
+          <SegmentedControl
+            mb="sm"
+            data={[
+              { value: "file", label: "With the radio's file" },
+              { value: "radio", label: "With another radio" },
+            ]}
+            value={compareWith}
+            onChange={setCompareWith}
+          />
+          {compareWith === "file" ? <CompareRadio lib={lib} radio={radio} /> : <CompareRadios lib={lib} radio={radio} />}
         </Tabs.Panel>
       </Tabs>
+      {copying && <CopyRadio lib={lib} radio={radio} onClose={() => setCopying(false)} />}
       <Modal opened={preview !== null} onClose={() => setPreview(null)} title="Sync" size="lg">
         {preview && (
           <Stack>

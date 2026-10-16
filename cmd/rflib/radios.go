@@ -163,7 +163,8 @@ held to FRS, GMRS, MURS, and CB limits.
 Sources: a radio can keep searches and plans (rflib radio sources) that radio
 sync uses to add new matching channels, each to its section.`}
 	cmd.AddCommand(newRadioAddCommand(), newRadioListCommand(), newRadioShowCommand(), newRadioUpdateCommand(), newRadioDeleteCommand(),
-		newRadioChannelsCommand(), newRadioSectionsCommand(), newRadioSourcesCommand(), newRadioSyncCommand(), newRadioExportCommand(), newRadioCompareCommand())
+		newRadioChannelsCommand(), newRadioSectionsCommand(), newRadioSourcesCommand(), newRadioSyncCommand(), newRadioExportCommand(), newRadioCompareCommand(),
+		newRadioCopyCommand())
 	return cmd
 }
 
@@ -222,6 +223,41 @@ func newRadioAddCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), r.ID)
 			}
 			return err
+		})
+	}
+	return cmd
+}
+
+func newRadioCopyCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "copy RADIO NAME", Short: "Make a new radio from another as it is now, for another model", Args: cobra.ExactArgs(2),
+		Long: `Make a new radio, NAME, from RADIO as it is now: its sections, in order, with
+their starts, sizes, and orders; its sources; its channels, in their sections and
+order; and its overrides. --model is the new radio's model; channels it can't use
+(outside its bands, or in a mode it lacks) are left out and listed. Settings not
+given come from RADIO. From then on the two are independent; rflib radio
+compare NAME --radio RADIO shows what one has and the other doesn't.`}
+	radioFields(cmd)
+	_ = cmd.MarkFlagRequired("model")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		to := domain.Radio{Name: args[1]}
+		if err := applyRadioFlags(cmd, &to, false); err != nil {
+			return err
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			res, err := a.CopyRadio(ctx(cmd), args[0], to)
+			if err != nil {
+				return err
+			}
+			status := cmd.ErrOrStderr()
+			for _, c := range res.Skipped {
+				fmt.Fprintf(status, "left out %q (%s MHz): the %s can't use it\n", c.Name, domain.FormatFrequencyMHz(c.ReceiveHz), to.Model)
+			}
+			fmt.Fprintf(status, "Copied %s to %s: %d channels, %d left out\n", args[0], res.Radio.Name, res.Copied, len(res.Skipped))
+			if res.LayoutErr != nil {
+				fmt.Fprintf(status, "warning: %s doesn't lay out yet: %v\n", res.Radio.Name, res.LayoutErr)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), res.Radio.ID)
+			return nil
 		})
 	}
 	return cmd
