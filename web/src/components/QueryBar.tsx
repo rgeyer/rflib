@@ -1,5 +1,5 @@
 import { Button, Group, Menu, TextInput } from "@mantine/core";
-import { IconChevronDown, IconSearch } from "@tabler/icons-react";
+import { IconChevronDown, IconSearch, IconX } from "@tabler/icons-react";
 import { getTerm, setTerm } from "../lib/query";
 
 /** Option is a filter's value; short, when set, labels the button. */
@@ -85,9 +85,18 @@ const SOURCE = {
 /**
  * QueryBar is the search box with guided filters. The text is always the
  * search: each filter adds, changes, or removes its own term in it, and
- * anything typed by hand is kept.
+ * anything typed by hand is kept. Clear starts over: the search, and any
+ * extra filters the page has.
  */
-export function QueryBar(props: { value: string; onChange: (v: string) => void; tags?: string[]; placeholder?: string; source?: boolean }) {
+export function QueryBar(props: {
+  value: string;
+  onChange: (v: string) => void;
+  tags?: string[];
+  placeholder?: string;
+  source?: boolean;
+  /** Filters outside the search text that Clear also resets. */
+  extra?: { active: boolean; clear: () => void };
+}) {
   let filters = props.source ? [SOURCE, ...FILTERS] : FILTERS;
   if (props.tags?.length) filters = [...filters, { field: "tag", label: "Tag", options: opts(props.tags) }];
   return (
@@ -110,6 +119,19 @@ export function QueryBar(props: { value: string; onChange: (v: string) => void; 
             onChange={(v) => props.onChange(setTerm(props.value, f.field, v))}
           />
         ))}
+        {props.extra?.active || props.value.trim() !== "" ? (
+          <Button
+            size="compact-sm"
+            variant="subtle"
+            leftSection={<IconX size={14} />}
+            onClick={() => {
+              props.onChange("");
+              props.extra?.clear();
+            }}
+          >
+            Clear
+          </Button>
+        ) : null}
       </Group>
     </div>
   );

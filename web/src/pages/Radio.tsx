@@ -48,7 +48,7 @@ export function RadioPage() {
     placeholderData: keepPreviousData,
   });
   const tags = useTags(lib);
-  const [facets, setFacets] = useState<Facets>({ scan: null, power: null, override: null, fit: null, export: null });
+  const [facets, setFacets] = useState<Facets>(NO_FACETS);
   const shown = (plan.data?.memories ?? []).filter((m) => matchFacets(m, facets));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
@@ -173,7 +173,12 @@ export function RadioPage() {
             </Alert>
           )}
           <Stack gap="xs" mb="sm">
-            <QueryBar value={text} onChange={setText} tags={tags} />
+            <QueryBar
+              value={text}
+              onChange={setText}
+              tags={tags}
+              extra={{ active: Object.values(facets).some((v) => v !== null), clear: () => setFacets(NO_FACETS) }}
+            />
             <Group gap={6}>
               <Text size="xs" c="dimmed">
                 On this radio:
@@ -497,6 +502,8 @@ function Sources() {
 }
 
 type Facets = { scan: string | null; power: string | null; override: string | null; fit: string | null; export: string | null };
+
+const NO_FACETS: Facets = { scan: null, power: null, override: null, fit: null, export: null };
 
 /** matchFacets applies the filters on this radio's own settings, which a query can't express. */
 function matchFacets(m: Memory, f: Facets): boolean {

@@ -423,6 +423,11 @@ test("the default search says what more the shared list has", async ({ page }) =
   await expect(page.getByRole("row", { name: /APRS/ }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Source filter" })).toHaveText("Source: mine and the shared list");
   await expect(more).toHaveCount(0);
+  // Clear starts over: no search, and Source back to its default.
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByLabel("Search", { exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Source filter" })).toHaveText("Source: in use");
+  await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
 });
 
 test("the memories tab shows what is actually programmed", async ({ page, request }) => {
