@@ -262,7 +262,13 @@ func newChannelListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return channelListing.write(cmd, cs)
+			if err := channelListing.write(cmd, cs); err != nil {
+				return err
+			}
+			if more, err := a.MoreInShared(ctx(cmd), n, len(cs)); err == nil && more > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%d more in the shared list; add in:all to include them\n", more)
+			}
+			return nil
 		})
 	}
 	return cmd

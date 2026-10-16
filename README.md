@@ -38,7 +38,7 @@ The `shared` library holds channels shared with everyone: the built-in lists, an
 ./rflib channel copy --id <id>                      # a private copy you can edit
 ```
 
-- **One list:** `channel list` (and the web's Channels page) shows the channels you use: your own, and shared channels you've annotated or put on a radio. `in:shared` searches the whole shared list, `in:all` both, and `in:mine` only your own; in the web interface, the Source filter does the same. Shared channels are marked as such.
+- **One list:** `channel list` (and the web's Channels page) shows the channels you use: your own, and shared channels you've annotated or put on a radio. `in:shared` searches the whole shared list, `in:all` both, and `in:mine` only your own; in the web interface, the Source filter does the same. Shared channels are marked as such. When the shared list has more matches than the channels you use, `channel list` says how many (on stderr), and the web interface offers to search there too.
 - **What's yours on a shared channel:** tags, notes, and short names. Power and scan are set on each radio (`radio channels set`). Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which takes the shared channel's place on your radios and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
 - **Names:** a shared channel shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
 - **Converting:** `shared link` replaces a private channel with the shared one it matches on the air (the same frequencies, tones, and tone squelch, and the same service, or none; FRS and GMRS share frequencies, so the service keeps them apart). The shared channel takes its place on your radios, its tags, notes, and name become yours on the shared channel, and the private channel goes. In the web interface, **Link to shared list** on the Channels page lists your matching channels and replaces the ones you pick.
@@ -49,7 +49,7 @@ The `shared` library holds channels shared with everyone: the built-in lists, an
 
 A shared channel is `active`, `off-air` (temporarily, such as for maintenance, with an expected-back date if known), or `retired` (gone for good, possibly replaced by another channel). A small change, such as a new tone, is a correction to the same channel; a repeater that becomes a different system is a new channel, and the old one is retired and points to it.
 
-- **On your radios:** an off-air channel stays programmed, so it needs no reprogramming when it's back, but it isn't scanned. Retired channels warn on export.
+- **On your radios:** an off-air channel stays programmed, so it needs no reprogramming when it's back, but it isn't scanned. A retired channel isn't programmed at all: it stays on the radio's list but takes no memory number, and a source doesn't add one. If it's ever back in service, it's programmed again, and a source that matches it adds it.
 - **`rflib shared changes`** lists the shared channels you use (on your radios, or with your notes and tags) that changed since you last looked: what changed, why, and the radios they're on, which need programming again. `rflib shared ack --all` marks them seen. `rflib shared relink --all` moves retired channels' places on your radios, and your notes and tags, over to their replacements.
 - **History:** every change to a shared channel is kept, with when and why: `rflib shared history --id <id>`.
 - **Searching:** `status:off-air` finds channels that are down.
@@ -302,7 +302,7 @@ Check the draft against the radio's manual or a CHIRP export of your radio: some
 
 ### Channel order and memory numbers
 
-`radio channels add` appends to the end of the list, by `--id` or by `--query`. Channels the radio can't receive are skipped and listed on stderr: those outside its model's bands (`--any-band` adds them anyway), and those in a mode it doesn't have, such as USB on an FM handheld (`--any-mode`). `channel list tunes:Truck` previews what fits. A channel in a mode the radio lacks that is on it anyway, added with `--any-mode` or before modes were checked, is listed with a warning but left out of the export. Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
+`radio channels add` appends to the end of the list, by `--id` or by `--query`. Channels the radio can't receive are skipped and listed on stderr: those outside its model's bands (`--any-band` adds them anyway), and those in a mode it doesn't have, such as USB on an FM handheld (`--any-mode`). `channel list tunes:Truck` previews what fits. A channel in a mode the radio lacks that is on it anyway, added with `--any-mode` or before modes were checked, is listed with a warning but left out of the export. `radio channels list` says how each memory is programmed when it isn't an ordinary one: `rx only`, `tx tone only`, or `not programmed` and why (retired, a mode the radio lacks, or something the radio's file can't hold). A memory that isn't programmed stays in the list but takes no number (`-`), so the numbers are the radio's own once it's programmed; a section start on it moves to the next memory that is. When a radio can't hold a channel's receive tone, such as split tones, the memory is programmed with its transmit tone alone, which is what opens a repeater. Channels already on the radio are skipped, so adding never reshuffles anything. Rearrange the list at any time:
 
 ```sh
 ./rflib radio channels move Truck --id <id> --before <other-id>   # or --after, --to N, --top, --bottom
@@ -361,6 +361,27 @@ A radio's **sources** are searches that `radio sync` adds new matching channels 
 - **Plans:** a source can be a plan instead of a query, and then follows the plan; see [Plans](#plans).
 
 Sync warns when the result no longer fits the radio, such as a source running past the next section start.
+
+### Comparing with the radio
+
+`radio compare` compares a radio with a file of what it holds now, as its programming software or CHIRP saved it. Starting a radio you already programmed by hand is the case where it's still empty in rflib.
+
+```sh
+./rflib radio add Mobile --model yaesu-ftm150
+./rflib radio compare Mobile mobile.csv                       # report only
+./rflib radio compare Mobile mobile.csv --use-exact --keep all --dry-run
+./rflib radio compare Mobile mobile.csv --use-exact --keep all
+```
+
+Each memory is **same**, **changed** (rflib has it there, but the radio's differs), **radio** (only on the radio), or **rflib** (only in rflib; the next export programs it). Memories pair by what they program, frequencies, tones, and mode; then as changed when only the receive tone or tone squelch differs (a repeater's tone set to transmit only is common, and works); then by memory number when the receive frequency or name is the same. A memory rflib's export leaves out, such as one with tones the radio's format can't hold, is still compared, with the reason. In the web interface, the values that differ are highlighted. For each memory only on the radio, compare lists channels it might be, from your channels and the shared list: an exact match, the same frequencies with other tones or mode, or the same receive frequency, with a matching name ranked higher.
+
+- `--use 12=ID` puts that channel on the radio for memory 12; `--use-exact` does so with the best exact match for every memory that has one.
+- `--keep 12,14` (or `all`) keeps memories as programmed, each as a private channel.
+- `--take 3` (or `all`) gives rflib a changed memory's values: a private channel changes; a shared one is copied first; a different name or scan setting becomes this radio's own.
+
+**First import:** when rflib already lays the radio out its own way (with sources, say) and you only want to be sure nothing on the radio gets lost, add `--ignore-numbers` (in the web interface, **Ignore memory numbers**). Memories then pair by what they program wherever they are, or as changed by name and receive frequency together; used and kept memories go at the end of the list, and rflib's order wins from then on.
+
+Used and kept memories keep their numbers where rflib has nothing there, starting a section when needed; where rflib uses the number, they go at the end of the list, and compare says so. Undecided memories stay as rflib has them, so the next export removes a memory only on the radio. A channel put on the radio this way that a source also matches isn't added twice.
 
 ## Organizations, systems, and plans
 
@@ -549,7 +570,7 @@ In ADMS, open the *Memories* tab and use *File > Import* on the exported file. A
 - **Receive only:** these radios have no per-memory transmit inhibit, so receive-only channels are written as simplex. Both radios only transmit on 2 m and 70 cm.
 - **Step:** the coarsest of 25, 5, 6.25, or 12.5 kHz that the frequency fits.
 - **Names:** fitted to 16 (FTM-150) or 6 (FTM-6000) characters as described in [Names on radio displays](#names-on-radio-displays).
-- **Tone modes:** only `OFF`, `TONE` (encode), and `DCS` are mapped, because those are the only spellings confirmed in ADMS exports. Tone squelch and split-tone channels fail the export (or are left out with `--skip-invalid`) until their ADMS spelling is confirmed. Override the profile, as below, to add them sooner.
+- **Tone modes:** `OFF`, `TONE` (encode), and `DCS` as confirmed in ADMS exports. On the FTM-6000, tone squelch is written `TONE SQL`, as the radio shows it; on the FTM-150 it isn't mapped yet and fails the export (or is left out with `--skip-invalid`). Neither radio holds different transmit and receive CTCSS tones in one memory, so a radio's export programs split-tone channels with their transmit tone alone (`export profile` of channels directly still refuses them). Override the profile, as below, to change these.
 
 Importing reads every non-empty memory. Unnamed memories are named after their frequency, and unused tone columns are ignored.
 
@@ -642,10 +663,10 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 
 `rflib serve` also serves a web interface at `http://127.0.0.1:8080/`, built into the binary:
 
-- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and choose Source to search the whole shared list as well as the channels you use. A globe marks a shared channel, and a note icon your notes or tags on one.
+- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and choose Source (in use, by default) to search the whole shared list as well as the channels you use; when the shared list has more matches, a link next to the count searches there too. **Clear** starts the search and its filters over. A globe marks a shared channel, and a note icon your notes or tags on one.
 - **Shared list:** opened from its own item in the navigation. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who uses the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
-- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and memories left out of the export), and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources, with a preview of what a new source would add before you add it; sync with a preview; and the programming file to download. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
+- **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and how it's programmed), and see in the Programmed column, and the count above the list, which memories aren't programmed (struck through, with no number, as on the programmed radio), which are receive-only, and which carry only their transmit tone, and select several (shift-click selects a range) to set scan or power, or take them off the radio; its sources, with a preview of what a new source would add before you add it; sync with a preview; the programming file to download; and **Compare with the radio**, which reads the radio's current file and lets you choose, memory by memory, a matching channel, keeping it as programmed, or taking the radio's changes; **Ignore memory numbers** makes it a first import that only checks everything on the radio is in rflib. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
 - **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
 - **Import:** a file, its options, a dry-run preview, then the import.
 - **Built-in lists** (under the Shared list, for the maintainer) and **shared changes**, as `rflib seed update` and `rflib shared changes` do. Each list shows whether the shared list is up to date with it; reviewing an update lists the channels to add, update, and retire, and any correction it keeps.

@@ -6,6 +6,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, call, download, type Memory, type Radio, type Source } from "../api/client";
+import { CompareRadio } from "../components/CompareRadio";
 import { FilterMenu, QueryBar } from "../components/QueryBar";
 import { SourcePreview } from "../components/SourcePreview";
 import { useLib, useTags } from "../lib/library";
@@ -47,7 +48,7 @@ export function RadioPage() {
     placeholderData: keepPreviousData,
   });
   const tags = useTags(lib);
-  const [facets, setFacets] = useState<Facets>({ scan: null, power: null, override: null, fit: null, export: null });
+  const [facets, setFacets] = useState<Facets>(NO_FACETS);
   const shown = (plan.data?.memories ?? []).filter((m) => matchFacets(m, facets));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
@@ -157,6 +158,7 @@ export function RadioPage() {
         <Tabs.List>
           <Tabs.Tab value="memories">Memories</Tabs.Tab>
           <Tabs.Tab value="sources">Sources</Tabs.Tab>
+          <Tabs.Tab value="compare">Compare with the radio</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="memories" pt="sm">
           {plan.data && plan.data.warnings.length > 0 && (
@@ -171,7 +173,12 @@ export function RadioPage() {
             </Alert>
           )}
           <Stack gap="xs" mb="sm">
-            <QueryBar value={text} onChange={setText} tags={tags} />
+            <QueryBar
+              value={text}
+              onChange={setText}
+              tags={tags}
+              extra={{ active: Object.values(facets).some((v) => v !== null), clear: () => setFacets(NO_FACETS) }}
+            />
             <Group gap={6}>
               <Text size="xs" c="dimmed">
                 On this radio:
@@ -182,6 +189,7 @@ export function RadioPage() {
           <Group mb="xs" mih={30}>
             <Text size="sm" c="dimmed">
               {plan.data && r ? `${shown.length} of ${r.channels} memories` : "Loading…"}
+              {plan.data && <ProgrammedSummary memories={plan.data.memories} />}
             </Text>
             {ids.length > 0 && (
               <>
@@ -246,12 +254,13 @@ export function RadioPage() {
                   <Table.Th>Duplex</Table.Th>
                   <Table.Th>Tone</Table.Th>
                   <Table.Th>Channel</Table.Th>
+                  <Table.Th>Programmed</Table.Th>
                   <Table.Th />
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {shown.map((m, i) => (
-                  <Table.Tr key={m.channel.id} opacity={m.exported ? 1 : 0.5}>
+                  <Table.Tr key={m.channel.id} opacity={m.exported ? 1 : 0.55}>
                     <Table.Td>
                       <Checkbox
                         aria-label={`Select memory ${m.memory}`}
@@ -261,10 +270,18 @@ export function RadioPage() {
                       />
                     </Table.Td>
                     <Table.Td>
-                      {m.section_start && "§"}
-                      {m.memory}
+                      {m.exported ? (
+                        <>
+                          {m.section_start && "§"}
+                          {m.memory}
+                        </>
+                      ) : (
+                        <Text span c="dimmed" aria-label="No memory number">
+                          –
+                        </Text>
+                      )}
                     </Table.Td>
-                    <Table.Td ff="monospace">
+                    <Table.Td ff="monospace" td={m.exported ? undefined : "line-through"}>
                       {m.name}
                       {m.overrides.name && "*"}
                     </Table.Td>
@@ -282,6 +299,9 @@ export function RadioPage() {
                     </Table.Td>
                     <Table.Td>{toneSummary(m.channel)}</Table.Td>
                     <Table.Td>{m.channel.name !== m.name ? m.channel.name : ""}</Table.Td>
+                    <Table.Td>
+                      <Programmed m={m} />
+                    </Table.Td>
                     <Table.Td>
                       <Group gap={4} wrap="nowrap">
                         <Tooltip label="Move to the top">
@@ -307,6 +327,9 @@ export function RadioPage() {
         </Tabs.Panel>
         <Tabs.Panel value="sources" pt="sm">
           <Sources />
+        </Tabs.Panel>
+        <Tabs.Panel value="compare" pt="sm">
+          <CompareRadio lib={lib} radio={radio} />
         </Tabs.Panel>
       </Tabs>
       <Modal opened={preview !== null} onClose={() => setPreview(null)} title="Sync" size="lg">
@@ -480,6 +503,8 @@ function Sources() {
 
 type Facets = { scan: string | null; power: string | null; override: string | null; fit: string | null; export: string | null };
 
+const NO_FACETS: Facets = { scan: null, power: null, override: null, fit: null, export: null };
+
 /** matchFacets applies the filters on this radio's own settings, which a query can't express. */
 function matchFacets(m: Memory, f: Facets): boolean {
   if (f.scan && (f.scan === "on") !== m.scan) return false;
@@ -489,6 +514,7 @@ function matchFacets(m: Memory, f: Facets): boolean {
   if (f.fit === "changed" && m.fit !== "shortened" && m.fit !== "cut") return false;
   if (f.fit === "cut" && m.fit !== "cut") return false;
   if (f.export === "left-out" && m.exported) return false;
+  if (f.export === "rx-only" && !(m.exported && m.receive_only)) return false;
   return true;
 }
 
@@ -519,7 +545,15 @@ function FacetMenus(props: { memories: Memory[]; facets: Facets; onChange: (f: F
         value={props.facets.fit}
         onChange={set("fit")}
       />
-      <FilterMenu label="In export" options={[{ value: "left-out", label: "left out" }]} value={props.facets.export} onChange={set("export")} />
+      <FilterMenu
+        label="Programmed"
+        options={[
+          { value: "left-out", label: "not programmed" },
+          { value: "rx-only", label: "receive only" },
+        ]}
+        value={props.facets.export}
+        onChange={set("export")}
+      />
     </>
   );
 }
@@ -596,5 +630,58 @@ function EditSource(props: { source: Source; onClose: () => void }) {
       </Stack>
     </Modal>
   );
+}
+
+/** Programmed says how a memory is programmed when it isn't an ordinary
+ * one: not at all (it takes no number), receive-only, with the transmit
+ * tone alone, or off the air and so skipped in scans. */
+function Programmed(props: { m: Memory }) {
+  const { m } = props;
+  if (!m.exported)
+    return (
+      <Tooltip label={`It takes no memory number, so the memories after it move up. ${m.not_programmed ?? ""}`} multiline w={280}>
+        <Badge size="xs" color="red" variant="light">
+          Not programmed: {shortReason(m.not_programmed ?? "")}
+        </Badge>
+      </Tooltip>
+    );
+  return (
+    <Group gap={4} wrap="nowrap">
+      {m.receive_only && (
+        <Badge size="xs" color="gray" variant="light">
+          RX only
+        </Badge>
+      )}
+      {m.transmit_tone_only && (
+        <Tooltip label="The radio can't hold this channel's receive tone, so it's programmed with the transmit tone alone">
+          <Badge size="xs" color="yellow" variant="light">
+            TX tone only
+          </Badge>
+        </Tooltip>
+      )}
+      {m.channel.status === "off-air" && (
+        <Badge size="xs" color="orange" variant="light">
+          Off the air
+        </Badge>
+      )}
+    </Group>
+  );
+}
+
+/** shortReason is a not-programmed reason short enough for a badge. */
+function shortReason(why: string): string {
+  if (why.startsWith("retired")) return "retired";
+  if (why.startsWith("the radio doesn't have")) return why.replace("the radio doesn't have", "no");
+  if (why.startsWith("the radio's file can't hold it")) return "can't hold it";
+  return why;
+}
+
+/** ProgrammedSummary counts what an export leaves out or programs
+ * receive-only. */
+function ProgrammedSummary(props: { memories: Memory[] }) {
+  const out = props.memories.filter((m) => !m.exported).length;
+  const rx = props.memories.filter((m) => m.exported && m.receive_only).length;
+  const parts = [out > 0 && `${out} not programmed`, rx > 0 && `${rx} receive only`].filter(Boolean);
+  return parts.length ? <>; {parts.join(", ")}</> : null;
 }
 

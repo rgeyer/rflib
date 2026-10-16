@@ -314,15 +314,15 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 	}
 	c.do("PATCH", L+"/radios/HT/channels/"+wx.ID, map[string]any{"name": "WX", "section_start": 10}, 200, &mems)
 	c.do("POST", L+"/radios/HT/channels/"+wx.ID+"/move", map[string]any{"top": true}, 200, &mems)
-	if mems.Memories[0].Name != "WX" || mems.Memories[0].Memory != 10 || !mems.Memories[0].Overrides.Name {
+	if mems.Memories[0].Name != "WX" || *mems.Memories[0].Memory != 10 || !mems.Memories[0].Overrides.Name {
 		t.Errorf("memories = %+v", mems.Memories[0])
 	}
 	// A search filters the rows but keeps the whole radio's numbering.
 	c.do("GET", L+"/radios/HT/memories", nil, 200, &mems)
 	last := mems.Memories[len(mems.Memories)-1]
 	c.do("GET", L+"/radios/HT/memories?q="+urlQuery("id:"+last.Channel.ID), nil, 200, &mems)
-	if len(mems.Memories) != 1 || mems.Memories[0].Memory != last.Memory {
-		t.Errorf("searched memories = %+v, want memory %d", mems.Memories, last.Memory)
+	if len(mems.Memories) != 1 || *mems.Memories[0].Memory != *last.Memory {
+		t.Errorf("searched memories = %+v, want memory %d", mems.Memories, *last.Memory)
 	}
 	c.do("POST", L+"/radios/HT/sources", map[string]any{"query": "tag:ham", "section_start": 50}, 201, nil)
 	var sync struct {
@@ -504,7 +504,7 @@ func TestOrganizationsSystemsAndPlans(t *testing.T) {
 		Memories []Memory `json:"memories"`
 	}
 	c.do("GET", L+"/radios/HT/memories", nil, 200, &mems)
-	if len(mems.Memories) != 2 || mems.Memories[0].Memory != 50 || mems.Memories[1].Memory != 54 {
+	if len(mems.Memories) != 2 || *mems.Memories[0].Memory != 50 || *mems.Memories[1].Memory != 54 {
 		t.Errorf("memories = %+v", mems.Memories)
 	}
 	c.do("PATCH", "/plans/Fair", map[string]any{"status": "archived", "reason": "over"}, 200, &plan)
@@ -588,5 +588,83 @@ func TestPreviewSource(t *testing.T) {
 	}
 	if code := c.errCode("POST", L+"/radios/HT/sources/preview", map[string]any{"number": 9}, 400); code != "invalid" {
 		t.Errorf("missing source: %s", code)
+	}
+}
+
+// A radio compares with its file, and decisions bring rflib in line.
+func TestCompareRadio(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	c.seedAndLink("us-ham-calling")
+	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	file := "Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment,URCALL,RPT1CALL,RPT2CALL,DVCODE\n" +
+		"3,2m Call,146.520000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,,,,,,\n" +
+		"8,Mystery,146.580000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,,,,,,\n"
+	var got struct {
+		Memories []struct {
+			Memory     *int   `json:"memory"`
+			Status     string `json:"status"`
+			Candidates []struct {
+				Match   string  `json:"match"`
+				Channel Channel `json:"channel"`
+			} `json:"candidates"`
+		} `json:"memories"`
+	}
+	c.do("POST", L+"/radios/HT/compare", map[string]any{"file": file}, 200, &got)
+	if len(got.Memories) != 2 || got.Memories[0].Status != "radio" || len(got.Memories[0].Candidates) == 0 || got.Memories[0].Candidates[0].Match != "exact" {
+		t.Fatalf("compare = %+v", got)
+	}
+	call := got.Memories[0].Candidates[0].Channel
+	body := map[string]any{"file": file, "use": []map[string]any{{"memory": 3, "channel_id": call.ID}}, "keep": []int{8}, "dry_run": true}
+	var res struct {
+		Used, Kept int
+		DryRun     bool `json:"dry_run"`
+	}
+	c.do("POST", L+"/radios/HT/compare/apply", body, 200, &res)
+	if res.Used != 1 || res.Kept != 1 || !res.DryRun {
+		t.Fatalf("dry run = %+v", res)
+	}
+	c.do("POST", L+"/radios/HT/compare", map[string]any{"file": file}, 200, &got)
+	if got.Memories[1].Status != "radio" {
+		t.Fatalf("a dry run changed the radio: %+v", got)
+	}
+	delete(body, "dry_run")
+	c.do("POST", L+"/radios/HT/compare/apply", body, 200, &res)
+	c.do("POST", L+"/radios/HT/compare", map[string]any{"file": file}, 200, &got)
+	for _, m := range got.Memories {
+		if m.Status == "radio" || m.Status == "rflib" {
+			t.Errorf("after applying, memory %v is %s", m.Memory, m.Status)
+		}
+	}
+	if code := c.errCode("POST", L+"/radios/HT/compare/apply", map[string]any{"file": file, "take": []int{5}}, 400); code != "invalid" {
+		t.Errorf("take a memory that isn't changed: %s", code)
+	}
+}
+
+// An empty search is the default one, the channels in use, and the list can
+// say how many more the shared list matches.
+func TestChannelListDefaultAndMoreInShared(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	noaa := c.seedAndLink("us-noaa")
+	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/channels", map[string]any{"ids": []string{noaa[0].ID}}, 200, nil)
+	var list struct {
+		Total int `json:"total"`
+		More  int `json:"more_in_shared"`
+	}
+	for _, q := range []string{"", "&q=" + urlQuery("in:use")} {
+		c.do("GET", L+"/channels?more_in_shared=true"+q, nil, 200, &list)
+		if list.Total != 1 || list.More != len(noaa)-1 {
+			t.Errorf("%q: total %d, more %d; want 1 and %d", q, list.Total, list.More, len(noaa)-1)
+		}
+	}
+	c.do("GET", L+"/channels?more_in_shared=true&q="+urlQuery("in:all"), nil, 200, &list)
+	if list.Total != len(noaa) || list.More != 0 {
+		t.Errorf("in:all: total %d, more %d", list.Total, list.More)
+	}
+	c.do("GET", L+"/channels", nil, 200, &list)
+	if list.More != 0 {
+		t.Errorf("uncounted unless asked: %d", list.More)
 	}
 }

@@ -82,6 +82,7 @@ paths:
         - {name: q, in: query, description: "A query; in:shared searches the whole shared list", schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer, minimum: 0}}
         - {name: offset, in: query, schema: {type: integer, minimum: 0}}
+        - {name: more_in_shared, in: query, description: "Also count the shared channels a search of what's in use (or in:mine) leaves out", schema: {type: boolean}}
       responses:
         "200":
           description: Channels in name order, and how many matched before limit and offset
@@ -89,10 +90,11 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [channels, total]
+                required: [channels, total, more_in_shared]
                 properties:
                   channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}
                   total: {type: integer}
+                  more_in_shared: {type: integer, description: "With more_in_shared: matches in the shared list the search leaves out, less channels you've copied; else 0"}
         default: {$ref: "#/components/responses/Error"}
     post:
       summary: Create a channel
@@ -718,6 +720,82 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/SyncResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/compare:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Compare a radio with a file of what it holds
+      description: >-
+        file is what the radio holds, as its programming software or CHIRP
+        saved it. Each memory is same, changed (rflib has it there, but the
+        radio's differs), radio (only on the radio, with channels it might
+        be), or rflib (only in rflib; the next export programs it).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CompareInput"}
+      responses:
+        "200":
+          description: The comparison, by memory number
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [memories, errors]
+                properties:
+                  memories: {type: array, items: {$ref: "#/components/schemas/MemoryDiff"}}
+                  errors: {type: array, items: {type: string}, description: File rows that couldn't be read}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/compare/apply:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Bring rflib in line with a radio's file
+      description: >-
+        Compares again, then applies the decisions in one go. use puts a
+        channel on the radio for a memory only on the radio, and keep a
+        private channel made from the memory; each keeps its memory number
+        when rflib has nothing there, else goes at the end. take gives rflib
+        a changed memory's values: a private channel changes, a shared one is
+        copied first, and a name or skip becomes the radio's own.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file: {type: string}
+                ignore_numbers: {type: boolean, description: "As for compare; used and kept memories then go at the end of the list"}
+                use:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [memory, channel_id]
+                    properties:
+                      memory: {type: integer}
+                      channel_id: {type: string}
+                keep: {type: array, items: {type: integer}}
+                take: {type: array, items: {type: integer}}
+                dry_run: {type: boolean}
+      responses:
+        "200":
+          description: What was (or would be) done
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [used, kept, taken, at_end, copied, dry_run]
+                properties:
+                  used: {type: integer}
+                  kept: {type: integer}
+                  taken: {type: integer}
+                  at_end: {type: array, items: {type: string}, description: "Memories placed at the end, because rflib uses their numbers"}
+                  copied: {type: array, items: {type: string}, description: "Shared channels copied to take the radio's values"}
+                  dry_run: {type: boolean}
         default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/radios/{radio}/export:
     parameters:
@@ -1374,16 +1452,19 @@ components:
         notes: {type: string}
     Memory:
       type: object
-      required: [memory, section_start, name, fit, deduped, power, scan, exported, overrides, channel]
+      required: [memory, section_start, name, fit, deduped, power, scan, exported, not_programmed, receive_only, transmit_tone_only, overrides, channel]
       properties:
-        memory: {type: integer}
+        memory: {type: integer, nullable: true, description: "The memory number on the radio; null for a memory that isn't programmed, which takes no number"}
         section_start: {type: boolean}
         name: {type: string, description: The name on the radio}
         fit: {type: string, enum: [fits, variant, shortened, cut]}
         deduped: {type: boolean}
         power: {type: string, nullable: true, description: The radio's level label}
         scan: {type: boolean}
-        exported: {type: boolean, description: False for a mode the radio lacks}
+        exported: {type: boolean, description: "Whether the radio's programming file (leaving out what it can't hold) programs this memory"}
+        not_programmed: {type: string, nullable: true, description: "Why the memory isn't programmed: retired, a mode the radio lacks, or something the radio's file can't hold. It takes no number."}
+        receive_only: {type: boolean, description: "Programmed receive-only: the channel is, or it can't transmit there"}
+        transmit_tone_only: {type: boolean, description: "Programmed with the transmit tone alone: the radio can't hold the receive tone, such as split tones"}
         overrides:
           type: object
           required: [name, power, scan]
@@ -1392,6 +1473,46 @@ components:
             power: {type: boolean}
             scan: {type: boolean}
         channel: {$ref: "#/components/schemas/Channel"}
+    CompareInput:
+      type: object
+      additionalProperties: false
+      required: [file]
+      properties:
+        file: {type: string, description: "The radio's file, as its programming software or CHIRP saved it"}
+        ignore_numbers: {type: boolean, description: "Compare only what memories hold, wherever they are: for a first import into a radio rflib lays out its own way"}
+    MemoryValues:
+      type: object
+      required: [name, rx_hz, tx_hz, mode, rx_tone, tx_tone, tone_squelch, skip]
+      properties:
+        name: {type: string}
+        rx_hz: {type: integer, format: int64}
+        tx_hz: {type: integer, format: int64, nullable: true}
+        mode: {type: string}
+        rx_tone: {type: string}
+        tx_tone: {type: string}
+        tone_squelch: {type: boolean}
+        skip: {type: boolean}
+    MemoryDiff:
+      type: object
+      required: [memory, status, rflib_memory, radio, rflib, channel, fields, candidates, unexported]
+      properties:
+        memory: {type: integer, nullable: true, description: "The radio's memory number, or rflib's for status rflib; null for a memory rflib doesn't program"}
+        status: {type: string, enum: [same, changed, radio, rflib]}
+        rflib_memory: {type: integer, nullable: true, description: "Where rflib puts the channel, when that differs"}
+        radio: {allOf: [{$ref: "#/components/schemas/MemoryValues"}], nullable: true}
+        rflib: {allOf: [{$ref: "#/components/schemas/MemoryValues"}], nullable: true}
+        channel: {allOf: [{$ref: "#/components/schemas/Channel"}], nullable: true}
+        fields: {type: array, items: {type: string}, description: "What differs, for changed"}
+        unexported: {type: string, nullable: true, description: "Why rflib's export leaves the memory out, such as tones the radio's format can't hold"}
+        candidates:
+          type: array
+          description: Channels a memory only on the radio might be, best first
+          items:
+            type: object
+            required: [match, channel]
+            properties:
+              match: {type: string, enum: [exact, frequencies, receive]}
+              channel: {$ref: "#/components/schemas/Channel"}
     AddResult:
       type: object
       required: [added, channels, skipped, wrong_mode]

@@ -10,6 +10,7 @@ import { ChannelEditor } from "../components/ChannelEditor";
 import { QueryBar } from "../components/QueryBar";
 import { SourcePreview } from "../components/SourcePreview";
 import { useLib, useTags } from "../lib/library";
+import { setTerm } from "../lib/query";
 import { failed, ok, warn } from "../lib/notify";
 import { duplex, formatMHz, offsetMHz, SERVICES, toneSummary } from "../lib/radio";
 
@@ -36,10 +37,16 @@ export function Channels() {
   });
   const channels = useQuery({
     queryKey: ["channels", lib, q],
-    queryFn: () => call<{ channels: Channel[]; total: number }>(api.GET("/libraries/{lib}/channels", { params: { path: { lib }, query: { q } } })),
+    queryFn: () =>
+      call<{ channels: Channel[]; total: number; more_in_shared: number }>(
+        api.GET("/libraries/{lib}/channels", { params: { path: { lib }, query: { q, more_in_shared: true } } }),
+      ),
     placeholderData: keepPreviousData,
   });
   const maintainer = library.data?.shared === true;
+  // Searching what's in use (or only your own), the shared list may have
+  // more matches: a channel you haven't used yet shouldn't look missing.
+  const more = channels.data?.more_in_shared ?? 0;
   // In the shared list itself, channels change only as corrections.
   const readOnly = maintainer;
   const rows = channels.data?.channels ?? [];
@@ -147,9 +154,16 @@ export function Channels() {
           </Button>
         </Group>
       )}
-      <Text size="sm" c="dimmed">
-        {channels.data ? `${channels.data.total} channel${channels.data.total === 1 ? "" : "s"}` : "Loading…"}
-      </Text>
+      <Group gap="xs">
+        <Text size="sm" c="dimmed">
+          {channels.data ? `${channels.data.total} channel${channels.data.total === 1 ? "" : "s"}` : "Loading…"}
+        </Text>
+        {more > 0 && (
+          <Button size="compact-xs" variant="subtle" onClick={() => setText(setTerm(text, "in", "all"))}>
+            {more} more in the shared list: search there too
+          </Button>
+        )}
+      </Group>
       <Table.ScrollContainer minWidth={800}>
         <Table striped highlightOnHover stickyHeader>
           <Table.Thead>

@@ -162,7 +162,7 @@ held to FRS, GMRS, MURS, and CB limits.
 Sources: a radio can keep searches (rflib radio sources) that radio sync uses
 to add new matching channels, each in its own part of the list.`}
 	cmd.AddCommand(newRadioAddCommand(), newRadioListCommand(), newRadioShowCommand(), newRadioUpdateCommand(), newRadioDeleteCommand(),
-		newRadioChannelsCommand(), newRadioSourcesCommand(), newRadioSyncCommand(), newRadioExportCommand())
+		newRadioChannelsCommand(), newRadioSourcesCommand(), newRadioSyncCommand(), newRadioExportCommand(), newRadioCompareCommand())
 	return cmd
 }
 

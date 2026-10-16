@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
@@ -53,7 +54,11 @@ func (x Parser) Parse(r io.Reader) (importer.Batch, error) {
 			b.Fail(line, err)
 			continue
 		}
-		b.Add(line, c)
+		if loc, ok := x.location(fields); ok {
+			b.AddAt(line, loc, c)
+		} else {
+			b.Add(line, c)
+		}
 	}
 }
 
@@ -81,6 +86,18 @@ func (x Parser) lookup(fields []string) (func(string) string, error) {
 		values[col.Source] = v
 	}
 	return func(src string) string { return values[src] }, nil
+}
+
+// location reads a row's memory number from the profile's location
+// column, if it has one.
+func (x Parser) location(fields []string) (int, bool) {
+	for i, col := range x.Profile.Columns {
+		if col.Source == "location" && i < len(fields) {
+			n, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(fields[i]), col.Suffix)))
+			return n, err == nil
+		}
+	}
+	return 0, false
 }
 
 // ignoredOnImport are sources that don't become channel data: memory

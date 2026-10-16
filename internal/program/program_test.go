@@ -2,6 +2,7 @@ package program
 
 import (
 	"bytes"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -246,13 +247,14 @@ func TestCWNeedsARadioWithCW(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Memories[0].LeftOut != leftOut {
+		if (p.Memories[0].LeftOut != "") != leftOut {
 			t.Errorf("%s: left out = %v, want %v (warnings %q)", name, p.Memories[0].LeftOut, leftOut, p.Warnings)
 		}
 	}
 }
 
-// A memory in a mode the radio lacks keeps its number but isn't exported.
+// A memory in a mode the radio lacks isn't exported and takes no number:
+// the next one takes its place.
 func TestLeavesOutModesTheRadioLacks(t *testing.T) {
 	ssb := ch("2m SSB Call", 144_200_000, 144_200_000, domain.ServiceAmateur)
 	ssb.Mode = "USB"
@@ -261,21 +263,23 @@ func TestLeavesOutModesTheRadioLacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !p.Memories[0].LeftOut || p.Memories[1].LeftOut || !strings.Contains(strings.Join(p.Warnings, "\n"), `memory 1 "2m SSB Call": left out: the radio doesn't have USB`) {
+	if p.Memories[0].Programmed() || !p.Memories[1].Programmed() || !strings.Contains(strings.Join(p.Warnings, "\n"), `"2m SSB Call": not programmed: the radio doesn't have USB`) {
 		t.Fatalf("layout = %+v", p)
 	}
 	var out bytes.Buffer
 	n, err := Write(&out, p, false, &bytes.Buffer{})
 	lines := strings.Split(strings.TrimSpace(out.String()), "\r\n")
-	if err != nil || n != 1 || len(lines) != 2 || !strings.HasPrefix(lines[1], "2,2m FM Call,") {
+	if err != nil || n != 1 || len(lines) != 2 || !strings.HasPrefix(lines[1], "1,2m FM Call,") || p.Memories[0].Location != NoNumber || p.Memories[1].Location != 1 {
 		t.Fatalf("export (%d, %v):\n%s", n, err, out.String())
 	}
-	if p.Memories[0].LeftOut != true {
+	if p.Memories[0].Programmed() {
 		t.Error("Write changed the layout")
 	}
 }
 
-// Off-air channels stay programmed but aren't scanned; retired ones warn.
+// Off-air channels stay programmed but aren't scanned; retired ones aren't
+// programmed at all, their numbers kept empty, and come back if they're
+// un-retired.
 func TestStatusOnTheRadio(t *testing.T) {
 	down := ch("Marian", 147_300_000, 147_900_000, domain.ServiceAmateur)
 	down.Status, down.StatusNote = domain.StatusOffAir, "antenna work"
@@ -289,8 +293,69 @@ func TestStatusOnTheRadio(t *testing.T) {
 		t.Fatal(err)
 	}
 	warnings := strings.Join(p.Warnings, "\n")
-	if !p.Memories[0].Channel.Skip || p.Memories[1].Channel.Skip || p.Memories[0].LeftOut ||
-		!strings.Contains(warnings, `"Marian": off the air (antenna work); programmed but skipped in scans`) || !strings.Contains(warnings, `"Old Rpt": retired`) {
+	if !p.Memories[0].Channel.Skip || !p.Memories[0].Programmed() || p.Memories[1].NotProgrammed() != "retired" ||
+		!strings.Contains(warnings, `"Marian": off the air (antenna work); programmed but skipped in scans`) || !strings.Contains(warnings, `"Old Rpt": not programmed: retired`) {
 		t.Errorf("memories = %+v\n%s", p.Memories, warnings)
+	}
+	var out bytes.Buffer
+	if n, err := Write(&out, p, false, &bytes.Buffer{}); err != nil || n != 1 || strings.Contains(out.String(), "Old Rpt") {
+		t.Errorf("export (%d, %v):\n%s", n, err, out.String())
+	}
+	gone.Status = domain.StatusActive
+	if p, err = Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), entries(down, gone)); err != nil || !p.Memories[1].Programmed() {
+		t.Errorf("un-retired: %+v, %v", p.Memories[1], err)
+	}
+}
+
+// A radio that can't hold split tones programs the transmit tone alone,
+// and a receive-only memory says so.
+func TestMemoriesSayWhatIsProgrammed(t *testing.T) {
+	split := ch("Split", 145_180_000, 144_580_000, domain.ServiceAmateur)
+	split.TransmitTone, split.ReceiveTone, split.ToneSquelch = tone(t, "ctcss:131.8"), tone(t, "ctcss:146.2"), true
+	wx := ch("WX1", 162_550_000, 0, domain.ServiceNOAA)
+	p, err := Build(domain.Radio{Name: "Shack"}, mustModel(t, "yaesu-ftm6000"), entries(split, wx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mem := p.Memories[0]; !mem.Programmed() || !mem.TransmitToneOnly || mem.Channel.ReceiveTone.Kind != domain.ToneNone || mem.Channel.ToneSquelch ||
+		domain.FormatTone(mem.Channel.TransmitTone) != "ctcss:131.800" || !strings.Contains(strings.Join(p.Warnings, "\n"), "programmed with the transmit tone only") {
+		t.Errorf("split tones: %+v\n%s", mem, p.Warnings)
+	}
+	if !p.Memories[1].Programmed() || !p.Memories[1].ReceiveOnly() || p.Memories[0].ReceiveOnly() {
+		t.Errorf("receive only: %+v", p.Memories)
+	}
+}
+
+func tone(t *testing.T, v string) domain.Tone {
+	t.Helper()
+	tn, err := domain.ParseTone(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tn
+}
+
+// A memory that isn't programmed takes no number, so the numbers are the
+// radio's own; a section start on it moves to the next one programmed.
+func TestUnprogrammedMemoriesTakeNoNumber(t *testing.T) {
+	a := ch("A", 146_520_000, 146_520_000, domain.ServiceAmateur)
+	gone := ch("Gone", 146_940_000, 146_340_000, domain.ServiceAmateur)
+	gone.Status = domain.StatusRetired
+	b := ch("B", 146_550_000, 146_550_000, domain.ServiceAmateur)
+	c := ch("C", 146_580_000, 146_580_000, domain.ServiceAmateur)
+	es := entries(a, gone, b, gone, c)
+	es[3].Channel.ID = "Gone2"
+	ten := 10
+	es[3].SectionStart = &ten
+	p, err := Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), es)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, m := range p.Memories {
+		got = append(got, fmt.Sprintf("%s=%d", m.Original.Name, m.Location))
+	}
+	if strings.Join(got, " ") != "A=1 Gone=-1 B=2 Gone=-1 C=10" {
+		t.Errorf("numbers = %s", strings.Join(got, " "))
 	}
 }

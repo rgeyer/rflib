@@ -76,6 +76,8 @@ func (s *server) routes() []route {
 		{"DELETE", R + "/sources/{n}", s.lib(s.removeSource), false},
 		{"POST", R + "/sources/{n}/move", s.lib(s.moveSource), false},
 		{"POST", R + "/sync", s.lib(s.syncRadio), false},
+		{"POST", R + "/compare", s.lib(s.compareRadio), false},
+		{"POST", R + "/compare/apply", s.lib(s.applyComparison), false},
 		{"GET", R + "/export", s.lib(s.exportRadio), false},
 
 		{"GET", "/organizations", s.recordHandler(s.listOrgs), false},
@@ -151,17 +153,26 @@ type channelResult struct {
 }
 
 func (s *server) listChannels(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	var cs []domain.Channel
-	var err error
+	// An empty search is the default one, the channels in use, as with a
+	// query that doesn't say in:.
+	n := query.Join()
 	if q := r.URL.Query().Get("q"); strings.TrimSpace(q) != "" {
-		cs, err = a.Find(ctx(r), q)
-	} else {
-		cs, err = a.ListChannels(ctx(r))
+		var err error
+		if n, err = query.Parse(q); err != nil {
+			return err
+		}
 	}
+	cs, err := a.FindChannels(ctx(r), n)
 	if err != nil {
 		return err
 	}
 	total := len(cs)
+	more := 0
+	if r.URL.Query().Get("more_in_shared") == "true" {
+		if more, err = a.MoreInShared(ctx(r), n, total); err != nil {
+			return err
+		}
+	}
 	offset, err := queryInt(r, "offset")
 	if err != nil {
 		return err
@@ -182,7 +193,7 @@ func (s *server) listChannels(w http.ResponseWriter, r *http.Request, a *app.Ser
 		}
 		cs = cs[:min(*limit, len(cs))]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"channels": newChannels(cs), "total": total})
+	writeJSON(w, http.StatusOK, map[string]any{"channels": newChannels(cs), "total": total, "more_in_shared": more})
 	return nil
 }
 

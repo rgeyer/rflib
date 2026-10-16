@@ -1,0 +1,3 @@
+Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment,URCALL,RPT1CALL,RPT2CALL,DVCODE
+4,Simplex A,146.580000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,,,,,,
+9,Repeater B,147.300000,+,0.600000,Tone,131.8,131.8,023,NN,023,Tone->Tone,FM,5.00,,,,,,,

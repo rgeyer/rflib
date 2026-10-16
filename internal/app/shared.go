@@ -310,28 +310,38 @@ func (s *Service) CopyChannels(ctx context.Context, sel Selection) ([]domain.Cha
 			if c.Link == nil {
 				continue
 			}
-			sharedID := c.Link.SharedID
-			cp := c
-			cp.ID, cp.Tags, cp.Notes, cp.CopiedFrom = "", c.AllTags(), c.AllNotes(), sharedID
-			cp.Link, cp.Status, cp.StatusNote, cp.BackOn, cp.ReplacedBy, cp.Revision = nil, domain.StatusActive, "", nil, "", 0
-			cp.Orgs, cp.Networks = nil, nil
-			saved, err := tx.CreateChannel(ctx, cp)
+			saved, err := copyShared(ctx, tx, c)
 			if err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
-			}
-			if err := tx.ReplaceOnRadios(ctx, sharedID, saved.ID); err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
-			}
-			if c.Annotated() {
-				if err := tx.DeleteChannel(ctx, sharedID); err != nil {
-					return fmt.Errorf("%s: %w", c.Name, err)
-				}
+				return err
 			}
 			out = append(out, saved)
 		}
 		return nil
 	})
 	return out, err
+}
+
+// copyShared makes a private copy of the shared channel c (see
+// CopyChannels).
+func copyShared(ctx context.Context, tx store.Library, c domain.Channel) (domain.Channel, error) {
+	sharedID := c.Link.SharedID
+	cp := c
+	cp.ID, cp.Tags, cp.Notes, cp.CopiedFrom = "", c.AllTags(), c.AllNotes(), sharedID
+	cp.Link, cp.Status, cp.StatusNote, cp.BackOn, cp.ReplacedBy, cp.Revision = nil, domain.StatusActive, "", nil, "", 0
+	cp.Orgs, cp.Networks = nil, nil
+	saved, err := tx.CreateChannel(ctx, cp)
+	if err != nil {
+		return saved, fmt.Errorf("%s: %w", c.Name, err)
+	}
+	if err := tx.ReplaceOnRadios(ctx, sharedID, saved.ID); err != nil {
+		return saved, fmt.Errorf("%s: %w", c.Name, err)
+	}
+	if c.Annotated() {
+		if err := tx.DeleteChannel(ctx, sharedID); err != nil {
+			return saved, fmt.Errorf("%s: %w", c.Name, err)
+		}
+	}
+	return saved, nil
 }
 
 // --- changes ---
