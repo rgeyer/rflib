@@ -256,6 +256,98 @@ CREATE UNIQUE INDEX idx_radios_name ON radios(library_id, name) WHERE draft_of I
 CREATE UNIQUE INDEX idx_radios_draft ON radios(draft_of) WHERE draft_of IS NOT NULL;
 ALTER TABLE radio_sections ADD COLUMN origin TEXT;
 ALTER TABLE radio_sources ADD COLUMN origin TEXT;`},
+	// Private channels record revisions, as shared ones do, and the user's
+	// own notes on a shared channel have a history of their own, by shared
+	// channel. What's there now becomes revision 1, as of the upgrade.
+	{version: 19, after: firstRevisions, sql: `
+CREATE TABLE annotation_revisions (library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, shared_id TEXT NOT NULL, revision INTEGER NOT NULL, changed_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', record TEXT NOT NULL, PRIMARY KEY(library_id, shared_id, revision));`},
+	// Radio revisions: a radio as saved by hand or by an export. Each radio
+	// starts with revision 1 as it is, counted as exported: the radios are
+	// taken to hold what rflib has now.
+	{version: 20, after: firstRadioRevisions, sql: `
+CREATE TABLE radio_revisions (radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, revision INTEGER NOT NULL, saved_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', exported INTEGER NOT NULL DEFAULT 0, record TEXT NOT NULL, PRIMARY KEY(radio_id, revision));`},
+}
+
+// firstRadioRevisions finishes migration 20: each radio (not a draft) gets
+// revision 1 as it is, marked exported.
+func firstRadioRevisions(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, library_id FROM radios WHERE draft_of IS NULL`)
+	if err != nil {
+		return err
+	}
+	type radio struct{ id, library string }
+	var rs []radio
+	for rows.Next() {
+		var r radio
+		if err := rows.Scan(&r.id, &r.library); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		rs = append(rs, r)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	ctx = store.WithChange(ctx, "as of the upgrade", "")
+	for _, r := range rs {
+		l := &library{q: tx, tx: tx, id: r.library}
+		snap, err := l.RadioSnapshot(ctx, r.id)
+		if err != nil {
+			return err
+		}
+		if _, err := l.SaveRadioRevision(ctx, r.id, snap, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// firstRevisions finishes migration 19: each private library's own
+// channels, and its notes on shared channels, get revision 1 as they are.
+func firstRevisions(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM libraries WHERE kind<>?`, sharedKind)
+	if err != nil {
+		return err
+	}
+	var libs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		libs = append(libs, id)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	ctx = store.WithChange(ctx, "as of the upgrade", "")
+	for _, id := range libs {
+		l := &library{q: tx, tx: tx, id: id}
+		cs, err := l.ListChannels(ctx)
+		if err != nil {
+			return err
+		}
+		for _, c := range cs {
+			if c.Link != nil {
+				rec := notesRecord{c.Tags, strings.TrimSpace(c.Notes), c.ShortNames}
+				if len(rec.Tags)+len(rec.ShortNames) > 0 || rec.Notes != "" {
+					if err := l.recordNotes(ctx, c.Link.SharedID, rec); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			c.Revision = 1
+			if _, err := tx.ExecContext(ctx, `UPDATE channels SET revision=1 WHERE id=?`, c.ID); err != nil {
+				return err
+			}
+			if err := l.recordRevision(ctx, c); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // sectionRadios finishes migration 17: each radio's list becomes sections,
@@ -694,7 +786,18 @@ func (d *DB) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		_ = tx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	return commit(ctx, d.db, tx)
+}
+
+// commit commits tx. A commit that fails can leave SQLite's transaction
+// open on the connection, where the next one couldn't begin, so it's
+// rolled back there.
+func commit(ctx context.Context, db *sql.DB, tx *sql.Tx) error {
+	err := tx.Commit()
+	if err != nil && !errors.Is(err, sql.ErrTxDone) {
+		_, _ = db.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+	}
+	return err
 }
 
 // assignIdentity fills in an ID and timestamps that the caller left empty.
@@ -875,4 +978,9 @@ func scanLibrary(r scanner) (domain.Library, error) {
 }
 
 // Library returns the library with the given ID.
-func (d *DB) Library(id string) store.Library { return &library{db: d.db, q: d.db, id: id} }
+// Library's reads, like its transactions' statements (see library.inTx),
+// ignore a canceled request: interrupting a statement on the database's one
+// connection could leave it unable to commit the next transaction.
+func (d *DB) Library(id string) store.Library {
+	return &library{db: d.db, q: uncanceledDB{d.db}, id: id}
+}

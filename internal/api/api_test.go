@@ -896,3 +896,64 @@ func TestRadioDrafts(t *testing.T) {
 		t.Errorf("sync changes = %+v", radio.SyncChanges)
 	}
 }
+
+// Radio revisions: an export saves one, a channel's change makes the radio
+// need programming, and a revision compares with now and restores into
+// the draft.
+func TestRadioRevisions(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	c.seedAndLink("us-noaa")
+	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
+	c.do("POST", L+"/radios/HT/channels", map[string]any{"query": `name:"NOAA WX1"`}, 200, nil)
+	c.do("POST", L+"/radios/HT/draft/save", nil, 200, nil)
+	var radio Radio
+	c.do("GET", L+"/radios/HT", nil, 200, &radio)
+	if radio.Revision != 0 || !radio.NeedsProgramming || !radio.ChangedSinceRevision {
+		t.Errorf("before exporting = %+v", radio)
+	}
+	var csv string
+	h := c.do("GET", L+"/radios/HT/export?reason=first", nil, 200, &csv)
+	if h.Get("X-Rflib-Revision") != "1" || h.Get("X-Rflib-Revision-Saved") != "true" {
+		t.Errorf("export headers = %v", h)
+	}
+	if h := c.do("GET", L+"/radios/HT/export", nil, 200, &csv); h.Get("X-Rflib-Revision-Saved") != "" {
+		t.Errorf("an unchanged export saved a revision: %v", h)
+	}
+	c.do("GET", L+"/radios/HT", nil, 200, &radio)
+	if radio.Revision != 1 || radio.NeedsProgramming || radio.ChangedSinceRevision {
+		t.Errorf("after exporting = %+v", radio)
+	}
+	c.do("POST", L+"/radios/HT/revisions", map[string]any{"reason": "same"}, 400, nil)
+
+	c.do("POST", L+"/radios/HT/draft", nil, 201, nil)
+	c.do("POST", L+"/radios/HT/channels", map[string]any{"query": `name:"NOAA WX2"`}, 200, nil)
+	c.do("POST", L+"/radios/HT/draft/save", nil, 200, nil)
+	var rev RadioRevision
+	c.do("POST", L+"/radios/HT/revisions", map[string]any{"reason": "added WX2"}, 201, &rev)
+	if rev.Number != 2 || rev.Exported || rev.Memories != 2 {
+		t.Errorf("saved = %+v", rev)
+	}
+	var revs struct {
+		Revisions []RadioRevision `json:"revisions"`
+	}
+	c.do("GET", L+"/radios/HT/revisions", nil, 200, &revs)
+	if len(revs.Revisions) != 2 || revs.Revisions[0].Reason != "first" || !revs.Revisions[0].Exported {
+		t.Errorf("revisions = %+v", revs)
+	}
+	var cmp struct {
+		Changes struct {
+			Added []Channel `json:"added"`
+		} `json:"changes"`
+	}
+	c.do("GET", L+"/radios/HT/revisions/1/compare", nil, 200, &cmp)
+	if len(cmp.Changes.Added) != 1 || cmp.Changes.Added[0].Name != "NOAA WX2" {
+		t.Errorf("compare = %+v", cmp)
+	}
+	var d Draft
+	c.do("POST", L+"/radios/HT/revisions/1/restore", map[string]any{}, 200, &d)
+	c.do("POST", L+"/radios/HT/revisions/2/restore", map[string]any{}, 409, nil)
+	c.do("POST", L+"/radios/HT/revisions/2/restore", map[string]any{"replace_draft": true}, 200, nil)
+	c.do("GET", L+"/radios/HT/revisions/9/compare", nil, 404, nil)
+}

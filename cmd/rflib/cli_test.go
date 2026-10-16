@@ -1226,3 +1226,52 @@ func TestRadioDrafts(t *testing.T) {
 	c.fails("HT has no draft", "radio", "draft", "HT", "--save")
 	c.fails("if any flags in the group [start save discard] are set none of the others can be", "radio", "draft", "HT", "--start", "--save")
 }
+
+func TestRadioRevisions(t *testing.T) {
+	c := newCLI(t)
+	a := c.ok("channel", "add", "--name", "Alpha", "--rx", "146.52")
+	b := c.ok("channel", "add", "--name", "Bravo", "--rx", "146.55")
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
+	c.ok("radio", "channels", "add", "HT", "--id", a)
+	c.ok("radio", "draft", "HT", "--save")
+	if got := c.ok("radio", "list", "--fields", "name,programming"); got != "HT\tneeds programming" {
+		t.Errorf("before exporting = %q", got)
+	}
+	// An export saves a revision, with the CLI's reason unless one's given.
+	if _, stderr, err := c.exec("radio", "export", "HT"); err != nil || !strings.Contains(stderr, "Saved revision 1 of HT: ") || !strings.Contains(stderr, "saved automatically by CLI export") {
+		t.Errorf("export = %q, %v", stderr, err)
+	}
+	if _, stderr, _ := c.exec("radio", "export", "HT", "--reason", "again"); strings.Contains(stderr, "Saved revision") {
+		t.Errorf("an unchanged export saved a revision: %q", stderr)
+	}
+	if got := c.ok("radio", "list", "--fields", "name,programming"); got != "HT" {
+		t.Errorf("after exporting = %q", got)
+	}
+	c.fails("nothing changed on HT since revision 1", "radio", "revisions", "save", "HT", "--reason", "same")
+
+	// A channel's own change needs programming, and shows in compare.
+	c.ok("channel", "update", "--id", a, "--tx-tone", "ctcss:100.0")
+	if got := c.ok("radio", "list", "--fields", "programming"); got != "needs programming" {
+		t.Errorf("after a channel change = %q", got)
+	}
+	c.ok("radio", "draft", "HT", "--start")
+	c.ok("radio", "channels", "add", "HT", "--id", b)
+	c.ok("radio", "draft", "HT", "--save")
+	c.ok("radio", "revisions", "save", "HT", "--reason", "added Bravo")
+	if got := c.ok("radio", "revisions", "list", "HT"); !strings.Contains(got, "1  ") || !strings.Contains(got, "exported  1 memories") || !strings.Contains(got, "2 memories  added Bravo") {
+		t.Errorf("revisions = %q", got)
+	}
+	if got := c.ok("radio", "revisions", "compare", "HT", "1"); !strings.Contains(got, "added  Bravo") || !strings.Contains(got, "channel changed  Alpha") {
+		t.Errorf("compare = %q", got)
+	}
+
+	// Restoring puts a revision into the draft; over an open draft it needs
+	// --replace-draft.
+	c.ok("radio", "revisions", "restore", "HT", "1")
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "name"); got != "Alpha" {
+		t.Errorf("restored draft = %q", got)
+	}
+	c.fails("add --replace-draft", "radio", "revisions", "restore", "HT", "2")
+	c.ok("radio", "revisions", "restore", "HT", "2", "--replace-draft")
+}

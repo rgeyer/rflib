@@ -189,15 +189,18 @@ func started(d domain.Radio) string {
 type DraftChanges struct {
 	Added, Removed, Changed []domain.Channel
 	Moved, Renumbered       []MovedMemory
-	SectionsAdded           []string
-	SectionsRemoved         []string
-	SourcesAdded            []string
-	SourcesRemoved          []string
+	// Channels are channels on both whose own values differ, as when
+	// comparing with a revision; a draft shares its radio's channels.
+	Channels        []ChannelChange
+	SectionsAdded   []string
+	SectionsRemoved []string
+	SourcesAdded    []string
+	SourcesRemoved  []string
 }
 
 // Empty reports whether the draft changes nothing.
 func (c DraftChanges) Empty() bool {
-	return len(c.Added)+len(c.Removed)+len(c.Changed)+len(c.Moved)+len(c.Renumbered)+len(c.SectionsAdded)+len(c.SectionsRemoved)+len(c.SourcesAdded)+len(c.SourcesRemoved) == 0
+	return len(c.Added)+len(c.Removed)+len(c.Changed)+len(c.Moved)+len(c.Renumbered)+len(c.Channels)+len(c.SectionsAdded)+len(c.SectionsRemoved)+len(c.SourcesAdded)+len(c.SourcesRemoved) == 0
 }
 
 // MovedMemory is a memory the draft renumbers or moves to another section:
@@ -212,92 +215,115 @@ type MovedMemory struct {
 // CompareDraft returns a radio's draft (nil when none is open), and what
 // it changes.
 func (s *Service) CompareDraft(ctx context.Context, ref string) (domain.Radio, *domain.Radio, DraftChanges, error) {
-	var out DraftChanges
 	r, d, err := s.Draft(ctx, ref)
 	if err != nil || d == nil {
-		return r, d, out, err
+		return r, d, DraftChanges{}, err
 	}
+	before, err := s.currentList(ctx, r.ID)
+	if err != nil {
+		return r, d, DraftChanges{}, err
+	}
+	after, err := s.currentList(ctx, d.ID)
+	if err != nil {
+		return r, d, DraftChanges{}, err
+	}
+	return r, d, diffLists(before, after), nil
+}
+
+// list is a radio's list to compare: its memories in order, with their
+// numbers, and its sections' names and sources' labels.
+type list struct {
+	entries  []domain.RadioEntry
+	numbers  []int
+	sections []string
+	sources  []string
+}
+
+// currentList is a radio's (or draft's) list as it is now.
+func (s *Service) currentList(ctx context.Context, radioID string) (list, error) {
+	var out list
+	p, es, err := s.Layout(ctx, radioID)
+	if err != nil {
+		// A list that doesn't lay out still compares, without numbers.
+		if es, err = s.lib.RadioEntries(ctx, radioID); err != nil {
+			return out, err
+		}
+		p = program.Layout{}
+	}
+	out.entries = es
+	for i := range es {
+		n := program.NoNumber
+		if i < len(p.Memories) {
+			n = p.Memories[i].Location
+		}
+		out.numbers = append(out.numbers, n)
+	}
+	secs, err := s.lib.RadioSections(ctx, radioID)
+	if err != nil {
+		return out, err
+	}
+	srcs, err := s.lib.RadioSources(ctx, radioID)
+	if err != nil {
+		return out, err
+	}
+	for _, x := range secs {
+		out.sections = append(out.sections, x.Name)
+	}
+	for _, x := range srcs {
+		out.sources = append(out.sources, SourceLabel(x))
+	}
+	return out, nil
+}
+
+// diffLists is what changes from one list to another.
+func diffLists(before, after list) DraftChanges {
+	var out DraftChanges
 	type memory struct {
 		entry  domain.RadioEntry
 		number int
 	}
-	memories := func(id string) (map[string]memory, []string, error) {
-		p, es, err := s.Layout(ctx, id)
-		if err != nil {
-			// A list that doesn't lay out still compares, without numbers.
-			if es, err = s.lib.RadioEntries(ctx, id); err != nil {
-				return nil, nil, err
-			}
-			p = program.Layout{}
+	index := func(l list) map[string]memory {
+		m := make(map[string]memory, len(l.entries))
+		for i, e := range l.entries {
+			m[e.Channel.ID] = memory{e, l.numbers[i]}
 		}
-		m := make(map[string]memory, len(es))
-		order := make([]string, len(es))
-		for i, e := range es {
-			n := program.NoNumber
-			if i < len(p.Memories) {
-				n = p.Memories[i].Location
-			}
-			m[e.Channel.ID] = memory{e, n}
-			order[i] = e.Channel.ID
-		}
-		return m, order, nil
+		return m
 	}
-	before, beforeOrder, err := memories(r.ID)
-	if err != nil {
-		return r, d, out, err
-	}
-	after, afterOrder, err := memories(d.ID)
-	if err != nil {
-		return r, d, out, err
-	}
-	for _, id := range afterOrder {
-		a := after[id]
-		b, ok := before[id]
+	b, a := index(before), index(after)
+	for _, e := range after.entries {
+		x := a[e.Channel.ID]
+		y, ok := b[e.Channel.ID]
 		switch {
 		case !ok:
-			out.Added = append(out.Added, a.entry.Channel)
-		case a.entry.Section.Name != b.entry.Section.Name:
-			out.Moved = append(out.Moved, MovedMemory{Channel: a.entry.Channel, From: b.number, To: a.number, FromSec: b.entry.Section.Name, ToSec: a.entry.Section.Name})
-		case a.number != b.number:
-			out.Renumbered = append(out.Renumbered, MovedMemory{Channel: a.entry.Channel, From: b.number, To: a.number, FromSec: b.entry.Section.Name, ToSec: a.entry.Section.Name})
-		case a.entry.Name != b.entry.Name || a.entry.Power != b.entry.Power || !sameSkip(a.entry.Skip, b.entry.Skip):
-			out.Changed = append(out.Changed, a.entry.Channel)
+			out.Added = append(out.Added, x.entry.Channel)
+		case x.entry.Section.Name != y.entry.Section.Name:
+			out.Moved = append(out.Moved, MovedMemory{Channel: x.entry.Channel, From: y.number, To: x.number, FromSec: y.entry.Section.Name, ToSec: x.entry.Section.Name})
+		case x.number != y.number:
+			out.Renumbered = append(out.Renumbered, MovedMemory{Channel: x.entry.Channel, From: y.number, To: x.number, FromSec: y.entry.Section.Name, ToSec: x.entry.Section.Name})
+		case x.entry.Name != y.entry.Name || x.entry.Power != y.entry.Power || !sameSkip(x.entry.Skip, y.entry.Skip):
+			out.Changed = append(out.Changed, x.entry.Channel)
+		}
+		if ok {
+			if changes := domain.SharedChanges(y.entry.Channel, x.entry.Channel); len(changes) > 0 {
+				out.Channels = append(out.Channels, ChannelChange{Channel: x.entry.Channel, Changes: changes})
+			}
 		}
 	}
-	for _, id := range beforeOrder {
-		if _, ok := after[id]; !ok {
-			out.Removed = append(out.Removed, before[id].entry.Channel)
+	for _, e := range before.entries {
+		if _, ok := a[e.Channel.ID]; !ok {
+			out.Removed = append(out.Removed, e.Channel)
 		}
 	}
-	names := func(id string) ([]string, []string, error) {
-		secs, err := s.lib.RadioSections(ctx, id)
-		if err != nil {
-			return nil, nil, err
-		}
-		srcs, err := s.lib.RadioSources(ctx, id)
-		if err != nil {
-			return nil, nil, err
-		}
-		var sn, qn []string
-		for _, x := range secs {
-			sn = append(sn, x.Name)
-		}
-		for _, x := range srcs {
-			qn = append(qn, SourceLabel(x))
-		}
-		return sn, qn, nil
-	}
-	bs, bq, err := names(r.ID)
-	if err != nil {
-		return r, d, out, err
-	}
-	as, aq, err := names(d.ID)
-	if err != nil {
-		return r, d, out, err
-	}
-	out.SectionsAdded, out.SectionsRemoved = missing(as, bs), missing(bs, as)
-	out.SourcesAdded, out.SourcesRemoved = missing(aq, bq), missing(bq, aq)
-	return r, d, out, nil
+	out.SectionsAdded, out.SectionsRemoved = missing(after.sections, before.sections), missing(before.sections, after.sections)
+	out.SourcesAdded, out.SourcesRemoved = missing(after.sources, before.sources), missing(before.sources, after.sources)
+	return out
+}
+
+// ChannelChange is a channel whose own values differ between two lists,
+// such as a corrected tone: what changed.
+type ChannelChange struct {
+	Channel domain.Channel
+	Changes []string
 }
 
 // missing returns what a has and b doesn't, in a's order.

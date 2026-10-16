@@ -115,6 +115,10 @@ type Library interface {
 	// ReplaceOnRadios puts newID in oldID's place on the library's radios,
 	// keeping each entry's overrides; a radio holding both keeps newID's.
 	ReplaceOnRadios(ctx context.Context, oldID, newID string) error
+	// NotesRevision is the revision of the library's own notes (tags,
+	// notes, and short names) on a shared channel: 0 for none ever, and a
+	// new one each time they change, kept even when they're removed.
+	NotesRevision(ctx context.Context, sharedID string) (int, error)
 	// SeedChannels returns the library's channels that came from built-in
 	// lists (see domain.SeedChannel); SetSeedChannel records or replaces
 	// one. A record goes when its channel is deleted.
@@ -147,6 +151,25 @@ type Library interface {
 	SaveRadioDraft(ctx context.Context, radioID string) error
 	// DiscardRadioDraft removes a radio's draft.
 	DiscardRadioDraft(ctx context.Context, radioID string) error
+
+	// RadioSnapshot is a radio as it is now (see domain.RadioSnapshot).
+	RadioSnapshot(ctx context.Context, radioID string) (domain.RadioSnapshot, error)
+	// SaveRadioRevision saves a radio revision, numbered after the last,
+	// with the reason and author in ctx (see WithChange).
+	SaveRadioRevision(ctx context.Context, radioID string, snap domain.RadioSnapshot, exported bool) (domain.RadioRevision, error)
+	// RadioRevisions returns a radio's revisions, oldest first.
+	RadioRevisions(ctx context.Context, radioID string) ([]domain.RadioRevision, error)
+	// MarkRadioRevisionExported marks a revision as one an export saw.
+	MarkRadioRevisionExported(ctx context.Context, radioID string, revision int) error
+	// ChannelAt returns a channel as it was at a revision, from its
+	// history; NotesAt, the library's notes on a shared channel at one of
+	// their revisions (none at 0).
+	ChannelAt(ctx context.Context, id string, revision int) (domain.Channel, error)
+	NotesAt(ctx context.Context, sharedID string, revision int) (tags []string, notes string, shortNames []string, err error)
+	// ReplaceRadioList replaces a radio's sections, sources, and channels
+	// with a snapshot's (its settings stay); each section and source
+	// remembers the one it restores, as a draft's do (see SaveRadioDraft).
+	ReplaceRadioList(ctx context.Context, radioID string, snap domain.RadioSnapshot) error
 
 	// RadioSections returns a radio's sections in order.
 	RadioSections(ctx context.Context, radioID string) ([]domain.RadioSection, error)

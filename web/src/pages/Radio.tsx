@@ -11,6 +11,8 @@ import { CompareRadios } from "../components/CompareRadios";
 import { CopyRadio } from "../components/CopyRadio";
 import { DraftBar, ExportChoice } from "../components/Drafts";
 import { DeleteRadio, EditRadio } from "../components/RadioSettings";
+import { RevisionsTab } from "../components/Revisions";
+import { ReasonModal } from "../components/Records";
 import { FilterMenu, QueryBar } from "../components/QueryBar";
 import { confirmMerge, SectionEditor, SectionHeader, useMergeSection, useSections } from "../components/Sections";
 import { SourcePreview } from "../components/SourcePreview";
@@ -198,14 +200,27 @@ export function RadioPage() {
     onError: failed,
   });
   const exportFile = useMutation({
-    mutationFn: () => download(`/libraries/${encodeURIComponent(lib)}/radios/${encodeURIComponent(radio)}/export?skip_invalid=true`),
+    mutationFn: (reason: string) =>
+      download(
+        `/libraries/${encodeURIComponent(lib)}/radios/${encodeURIComponent(radio)}/export?skip_invalid=true${reason ? `&reason=${encodeURIComponent(reason)}` : ""}`,
+      ),
     onSuccess: (h) => {
-      ok(`Exported ${h.get("X-Rflib-Count")} memories`);
+      const saved = h.get("X-Rflib-Revision-Saved") === "true";
+      ok(`Exported ${h.get("X-Rflib-Count")} memories${saved ? `; saved revision ${h.get("X-Rflib-Revision")}` : ""}`);
       const skipped = h.get("X-Rflib-Skipped");
       if (skipped) warn([`Left out: ${skipped}`]);
+      void client.invalidateQueries();
     },
     onError: failed,
   });
+  // An export that saves a revision (the radio changed since its last)
+  // asks why first.
+  const [askingReason, setAskingReason] = useState(false);
+  const startExport = async () => {
+    const fresh = await info.refetch();
+    if (fresh.data?.changed_since_revision) setAskingReason(true);
+    else exportFile.mutate("");
+  };
   const scan = useMutation({
     mutationFn: (m: Memory) =>
       call(api.PATCH("/libraries/{lib}/radios/{radio}/channels/{id}", { params: { path: { ...path, id: m.channel.id } }, body: { scan: !m.scan } })),
@@ -224,6 +239,13 @@ export function RadioPage() {
         <div>
           <Group gap="xs">
             <Title order={2}>{radio}</Title>
+            {info.data?.needs_programming && (
+              <Tooltip label="The saved radio differs from what it was last exported with, so program it again">
+                <Badge color="orange" variant="light">
+                  Needs programming
+                </Badge>
+              </Tooltip>
+            )}
             {info.data?.sync_changes != null && info.data.sync_changes > 0 && (
               <Tooltip label="A sync of the saved radio would add or take off this many channels">
                 <Badge variant="light">Sync would change {info.data.sync_changes}</Badge>
@@ -246,7 +268,7 @@ export function RadioPage() {
           </Button>
           <Button
             leftSection={<IconDownload size={16} />}
-            onClick={() => (info.data?.draft ? setChoosingExport(true) : exportFile.mutate())}
+            onClick={() => (info.data?.draft ? setChoosingExport(true) : void startExport())}
             loading={exportFile.isPending}
           >
             Export
@@ -275,6 +297,7 @@ export function RadioPage() {
           <Tabs.Tab value="memories">Memories</Tabs.Tab>
           <Tabs.Tab value="sources">Sources</Tabs.Tab>
           <Tabs.Tab value="compare">Compare</Tabs.Tab>
+          <Tabs.Tab value="revisions">Revisions</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="memories" pt="sm">
           {drag?.kind === "section" && sections.length > 1 && (
@@ -634,12 +657,27 @@ export function RadioPage() {
           />
           {compareWith === "file" ? <CompareRadio lib={lib} radio={radio} /> : <CompareRadios lib={lib} radio={radio} />}
         </Tabs.Panel>
+        <Tabs.Panel value="revisions" pt="sm">
+          <RevisionsTab lib={lib} radio={radio} info={info.data} />
+        </Tabs.Panel>
       </Tabs>
       {copying && <CopyRadio lib={lib} radio={radio} onClose={() => setCopying(false)} />}
       {managing === "edit" && r && <EditRadio lib={lib} radio={r} onClose={() => setManaging(null)} />}
       {choosingExport && info.data?.draft && (
-        <ExportChoice lib={lib} radio={radio} draft={info.data.draft} onExport={() => exportFile.mutate()} onClose={() => setChoosingExport(false)} />
+        <ExportChoice lib={lib} radio={radio} draft={info.data.draft} onExport={() => void startExport()} onClose={() => setChoosingExport(false)} />
       )}
+      <ReasonModal
+        opened={askingReason}
+        title={`Export ${radio}`}
+        loading={exportFile.isPending}
+        onClose={() => setAskingReason(false)}
+        onConfirm={(reason) => {
+          setAskingReason(false);
+          exportFile.mutate(reason);
+        }}
+      >
+        <Text size="sm">{radio} changed since its last revision, so this export saves a new one. Why are you programming it?</Text>
+      </ReasonModal>
       {managing === "delete" && r && <DeleteRadio lib={lib} radio={r} onClose={() => setManaging(null)} />}
       <Modal opened={preview !== null} onClose={() => setPreview(null)} title="Sync" size="lg">
         {preview && (
