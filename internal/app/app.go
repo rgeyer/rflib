@@ -213,6 +213,36 @@ func (s *Service) FindChannels(ctx context.Context, n query.Node) ([]domain.Chan
 	return out, nil
 }
 
+// MoreInShared counts the channels a search of what's in use (or of your
+// own channels) leaves out that the whole shared list matches: shared
+// channels you haven't used yet, less those you've copied. found is how
+// many the search found. It's 0 for a search of the shared list, and in the
+// shared library itself.
+func (s *Service) MoreInShared(ctx context.Context, n query.Node, found int) (int, error) {
+	scope, rest, err := query.SplitScope(n)
+	if err != nil || s.info.Shared || (scope != "" && scope != "use" && scope != "mine") {
+		return 0, err
+	}
+	if rest == nil {
+		rest = query.Join()
+	}
+	m, err := query.Compile(rest, s.QueryEnv(ctx))
+	if err != nil {
+		return 0, err
+	}
+	all, err := s.scoped(ctx, "all", true)
+	if err != nil {
+		return 0, err
+	}
+	matched := 0
+	for _, c := range all {
+		if m(c) {
+			matched++
+		}
+	}
+	return max(matched-found, 0), nil
+}
+
 // Find parses query text and returns the matching channels.
 func (s *Service) Find(ctx context.Context, text string) ([]domain.Channel, error) {
 	n, err := query.Parse(text)

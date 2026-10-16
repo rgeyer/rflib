@@ -184,15 +184,37 @@ func memoryColumns() []field[memory] {
 		byName[f.name] = f
 	}
 	return []field[m]{
-		{name: "memory", text: func(m m) string { return mark(m.entry.SectionStart != nil, "§") + fmt.Sprint(m.Location) }, json: func(m m) any { return m.Location }},
+		{name: "memory", text: func(m m) string {
+			if m.Location == program.NoNumber {
+				return "-" // not programmed: no number
+			}
+			return mark(m.entry.SectionStart != nil, "§") + fmt.Sprint(m.Location)
+		}, json: func(m m) any { return m.Location }},
 		{name: "section_start", text: func(m m) string { return yesNo(m.entry.SectionStart != nil) }, json: func(m m) any { return m.entry.SectionStart != nil }},
 		{name: "name", text: func(m m) string { return m.Channel.Name + mark(m.entry.Name != "", "*") }, json: func(m m) any { return m.Channel.Name }},
 		{name: "fit", text: func(m m) string { return string(m.Name.Method) }},
 		{name: "power", text: func(m m) string { return powerLabel(m.Memory) + mark(m.entry.Power != "", "*") }, json: func(m m) any { return powerLabel(m.Memory) }},
 		{name: "scan", text: func(m m) string { return scanText(m.Channel.Skip) + mark(m.entry.Skip != nil, "*") }, json: func(m m) any { return !m.Channel.Skip }},
 		channel(byName["rx"]), channel(byName["tx"]), channel(byName["duplex"]), channel(byName["offset"]),
-		channel(byName["tone"]), channel(byName["mode"]), channel(byName["rxonly"]),
-		{name: "exported", text: func(m m) string { return yesNo(!m.LeftOut) }, json: func(m m) any { return !m.LeftOut }},
+		channel(byName["tone"]), channel(byName["mode"]),
+		{name: "rxonly", text: func(m m) string { return yesNo(m.ReceiveOnly()) }, json: func(m m) any { return m.ReceiveOnly() }},
+		// What the export (leaving out what the file can't hold) programs
+		// differently from an ordinary memory: nothing, and why, or
+		// receive-only. Empty for an ordinary memory.
+		{name: "programmed", text: func(m m) string {
+			if why := m.NotProgrammed(); why != "" {
+				return "not programmed: " + why
+			}
+			var notes []string
+			if m.ReceiveOnly() {
+				notes = append(notes, "rx only")
+			}
+			if m.TransmitToneOnly {
+				notes = append(notes, "tx tone only")
+			}
+			return strings.Join(notes, ", ")
+		}, json: func(m m) any { return m.Programmed() }},
+		{name: "exported", text: func(m m) string { return yesNo(m.Programmed()) }, json: func(m m) any { return m.Programmed() }},
 		// The library channel's name, shown in text only when the radio's
 		// differs.
 		{name: "channel", text: func(m m) string {
@@ -207,5 +229,5 @@ func memoryColumns() []field[memory] {
 
 var memoryListing = listing[memory]{
 	fields:   memoryColumns(),
-	defaults: []string{"memory", "name", "fit", "power", "scan", "rx", "duplex", "offset", "tone", "channel", "id"},
+	defaults: []string{"memory", "name", "fit", "power", "scan", "rx", "duplex", "offset", "tone", "programmed", "channel", "id"},
 }

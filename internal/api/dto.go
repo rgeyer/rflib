@@ -385,16 +385,21 @@ type Overrides struct {
 
 // Memory is one memory as a radio will be programmed.
 type Memory struct {
-	Memory       int       `json:"memory"`
-	SectionStart bool      `json:"section_start"`
-	Name         string    `json:"name"`
-	Fit          string    `json:"fit"`
-	Deduped      bool      `json:"deduped"`
-	Power        *string   `json:"power"`
-	Scan         bool      `json:"scan"`
-	Exported     bool      `json:"exported"`
-	Overrides    Overrides `json:"overrides"`
-	Channel      Channel   `json:"channel"`
+	Memory       *int    `json:"memory"`
+	SectionStart bool    `json:"section_start"`
+	Name         string  `json:"name"`
+	Fit          string  `json:"fit"`
+	Deduped      bool    `json:"deduped"`
+	Power        *string `json:"power"`
+	Scan         bool    `json:"scan"`
+	Exported     bool    `json:"exported"`
+	// NotProgrammed says why an export doesn't program the memory.
+	NotProgrammed *string `json:"not_programmed"`
+	ReceiveOnly   bool    `json:"receive_only"`
+	// TransmitToneOnly: the radio can't hold the receive tone.
+	TransmitToneOnly bool      `json:"transmit_tone_only"`
+	Overrides        Overrides `json:"overrides"`
+	Channel          Channel   `json:"channel"`
 }
 
 func newMemories(p program.Layout, es []domain.RadioEntry) []Memory {
@@ -405,8 +410,12 @@ func newMemories(p program.Layout, es []domain.RadioEntry) []Memory {
 		if m.Channel.ProgrammedPower != nil {
 			power = &m.Channel.ProgrammedPower.Label
 		}
-		out[i] = Memory{m.Location, e.SectionStart != nil, m.Channel.Name, string(m.Name.Method), m.Name.Deduped, power, !m.Channel.Skip, !m.LeftOut,
-			Overrides{e.Name != "", e.Power != "", e.Skip != nil}, newChannel(m.Original)}
+		var why *string
+		if r := m.NotProgrammed(); r != "" {
+			why = &r
+		}
+		out[i] = Memory{number(m.Location), e.SectionStart != nil, m.Channel.Name, string(m.Name.Method), m.Name.Deduped, power, !m.Channel.Skip, m.Programmed(),
+			why, m.ReceiveOnly(), m.TransmitToneOnly, Overrides{e.Name != "", e.Power != "", e.Skip != nil}, newChannel(m.Original)}
 	}
 	return out
 }

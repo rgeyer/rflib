@@ -302,4 +302,18 @@ func TestScopes(t *testing.T) {
 		}
 	}
 	_ = unused
+	// What the shared list adds to a search: unused shared channels, not
+	// the originals of copies.
+	for _, tc := range []struct {
+		q    string
+		want int
+	}{{"", 1}, {"in:mine", 3}, {"in:shared", 0}, {"in:all", 0}, {"name:unused", 1}, {"name:copied", 0}} {
+		cs, err := s.Find(ctx, tc.q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if more, err := s.MoreInShared(ctx, mustParse(t, tc.q), len(cs)); err != nil || more != tc.want {
+			t.Errorf("more in shared for %q = %d, %v; want %d", tc.q, more, err, tc.want)
+		}
+	}
 }

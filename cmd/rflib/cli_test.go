@@ -443,14 +443,14 @@ func TestProfileCommands(t *testing.T) {
 	c.fails("unknown source", "profile", "validate", bad)
 
 	c.ok("channel", "add", "--name", "Metro Repeater", "--rx", "146.94", "--tx", "146.34", "--tx-tone", "ctcss:127.3", "--power", "low")
-	c.ok("channel", "add", "--name", "Club TSQL", "--rx", "147.00", "--tx", "147.60", "--tx-tone", "ctcss:100", "--rx-tone", "ctcss:100", "--tone-squelch")
+	c.ok("channel", "add", "--name", "Club Split", "--rx", "147.00", "--tx", "147.60", "--tx-tone", "ctcss:100", "--rx-tone", "ctcss:88.5", "--tone-squelch")
 
 	_, _, err := c.exec("export", "profile", "yaesu-ftm6000")
-	if err == nil || !strings.Contains(err.Error(), "tone squelch") {
+	if err == nil || !strings.Contains(err.Error(), "different transmit and receive CTCSS tones") {
 		t.Fatalf("err = %v", err)
 	}
 	out, stderr, err := c.exec("export", "profile", "yaesu-ftm6000", "--skip-invalid", "--start", "5")
-	if err != nil || !strings.Contains(stderr, `skipped "Club TSQL"`) {
+	if err != nil || !strings.Contains(stderr, `skipped "Club Split"`) {
 		t.Fatalf("err = %v, stderr = %q", err, stderr)
 	}
 	first := strings.SplitN(out, "\n", 2)[0]
@@ -548,9 +548,9 @@ func TestRadioWorkflow(t *testing.T) {
 		t.Fatalf("listing:\n%s", out)
 	}
 	for _, want := range []string{
-		"0\tGMRS 1\tfits\tHigh\tscan\t462.562500\tsimplex\t\t\t\t" + ids["GMRS 1"],  // capped at 5 W: High (4 W) is fine
-		"1\tGMRS15R\tshortened\tHigh\tscan\t462.550000\t+\t5.000000\t\tGMRS 15R\t", // 7 characters
-		"§20\tKIDS*\tfits\tLow\tskip*\t467.562500\tsimplex\t\t\tGMRS 8\t",          // 0.5 W cap: lowest level, warned
+		"0\tGMRS 1\tfits\tHigh\tscan\t462.562500\tsimplex\t\t\t\t\t" + ids["GMRS 1"],  // capped at 5 W: High (4 W) is fine
+		"1\tGMRS15R\tshortened\tHigh\tscan\t462.550000\t+\t5.000000\t\t\tGMRS 15R\t", // 7 characters
+		"§20\tKIDS*\tfits\tLow\tskip*\t467.562500\tsimplex\t\t\t\tGMRS 8\t",          // 0.5 W cap: lowest level, warned
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("listing missing %q:\n%s", want, out)
@@ -825,7 +825,7 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	}
 	// It's on the radio but left out of the export.
 	exported, stderr, err := c.exec("radio", "export", "HT")
-	if err != nil || strings.Contains(exported, "CB 19") || !strings.Contains(stderr, `"CB 19": left out: the radio doesn't have AM (it has FM, NFM)`) {
+	if err != nil || strings.Contains(exported, "CB 19") || !strings.Contains(stderr, `"CB 19": not programmed: the radio doesn't have AM (it has FM, NFM)`) {
 		t.Errorf("export: %v\n%s\n%s", err, stderr, exported)
 	}
 	if _, stderr, err := c.exec("radio", "export", "HT", "--output", filepath.Join(t.TempDir(), "ht.csv")); err != nil || !strings.Contains(stderr, "Exported 7 channels") {
@@ -1108,4 +1108,28 @@ func TestGenericChirpRadioAndUserModels(t *testing.T) {
 	bad := writeFile(t, "name: x\nformat: chirp\nmemories: {first: 5, last: 1}\n")
 	c.fails("memories must run", "model", "validate", bad)
 	c.ok("radio", "update", "HT", "--model", "my-ht")
+}
+
+// radio compare reports a radio against its file, and its decisions start
+// an empty radio from it, memory numbers kept.
+func TestRadioCompare(t *testing.T) {
+	c := newCLI(t, "--no-seed")
+	file := writeFile(t, "Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,RxDtcsCode,CrossMode,Mode,TStep,Skip,Power,Comment,URCALL,RPT1CALL,RPT2CALL,DVCODE\n"+
+		"3,Calling,146.520000,,0.000000,,88.5,88.5,023,NN,023,Tone->Tone,FM,5.00,,,,,,,\n"+
+		"8,Metro,146.940000,-,0.600000,Tone,127.3,127.3,023,NN,023,Tone->Tone,FM,5.00,,,,,,,\n")
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	out := c.ok("radio", "compare", "HT", file)
+	if !strings.Contains(out, "0 same, 0 changed, 2 only on the radio, 0 only in rflib") {
+		t.Fatalf("compare:\n%s", out)
+	}
+	c.fails("isn't changed on the radio", "radio", "compare", "HT", file, "--take", "3")
+	if s := c.status("radio", "compare", "HT", file, "--keep", "all", "--dry-run"); !strings.Contains(s, "Would have: used 0, kept 2") {
+		t.Errorf("dry run: %s", s)
+	}
+	if s := c.status("radio", "compare", "HT", file, "--keep", "all"); !strings.Contains(s, "kept 2") {
+		t.Errorf("keep: %s", s)
+	}
+	if out := c.ok("radio", "compare", "HT", file); !strings.Contains(out, "2 same, 0 changed, 0 only on the radio, 0 only in rflib") {
+		t.Errorf("compare again:\n%s", out)
+	}
 }

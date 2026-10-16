@@ -364,3 +364,89 @@ test("add a search as a radio source, with a preview", async ({ page, request })
   await expect(page.getByText("Source moved")).toBeVisible();
   await expect(page.getByRole("row").nth(1)).toContainText("2m FM Call");
 });
+
+test("compare a radio with its file, and start it from that", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Adopted", model: "baofeng-uv5rm" } });
+  await page.goto("/l/default/radios/Adopted");
+  await page.getByRole("tab", { name: "Compare with the radio" }).click();
+  // A CHIRP file of what the radio holds: memories 4 and 9.
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByLabel("The radio's file").click();
+  await (await chooser).setFiles("e2e/fixtures/adopted-radio.csv");
+  await expect(page.getByText("2 only on the radio")).toBeVisible();
+  // The first test's Marian repeater programs exactly as memory 9 does, so
+  // it's chosen; memory 4 matches nothing and is kept as programmed.
+  await expect(page.getByRole("combobox", { name: "Memory 9" })).toHaveValue("Use Marian (exact match)");
+  await expect(page.getByRole("combobox", { name: "Memory 4" })).toHaveValue("Keep as programmed");
+  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByText(/Used 1, kept 1/)).toBeVisible();
+  // Compared again: nothing is only on the radio; Marian's name differs.
+  await expect(page.getByText("0 only on the radio")).toBeVisible();
+  await expect(page.getByText("1 changed")).toBeVisible();
+  // Each memory kept its number, each starting a section (§).
+  await page.getByRole("tab", { name: "Memories" }).click();
+  await expect(page.getByRole("row", { name: /Simplex A/ }).getByRole("cell").nth(1)).toHaveText("§4");
+  await expect(page.getByRole("row", { name: /Marian/ }).getByRole("cell").nth(1)).toHaveText("§9");
+});
+
+test("a first import ignores memory numbers", async ({ page, request }) => {
+  // rflib already has Marian first on this radio; the radio holds it at 9.
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Imported", model: "baofeng-uv5rm" } });
+  await request.post("/api/v1/libraries/default/radios/Imported/channels", { data: { query: "name:Marian" } });
+  await page.goto("/l/default/radios/Imported");
+  await page.getByRole("tab", { name: "Compare with the radio" }).click();
+  await page.getByRole("switch", { name: "Ignore memory numbers" }).check({ force: true });
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByLabel("The radio's file").click();
+  await (await chooser).setFiles("e2e/fixtures/adopted-radio.csv");
+  await expect(page.getByText("1 only on the radio")).toBeVisible();
+  await expect(page.getByText("0 only in rflib")).toBeVisible();
+  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByText("0 only on the radio")).toBeVisible();
+  // What was missing joined the end; rflib's order stands.
+  await page.getByRole("tab", { name: "Memories" }).click();
+  await expect(page.getByRole("row", { name: /Marian/ }).getByRole("cell").nth(1)).toHaveText("1");
+  await expect(page.getByRole("row", { name: /Simplex A/ }).getByRole("cell").nth(1)).toHaveText("2");
+});
+
+test("the default search says what more the shared list has", async ({ page }) => {
+  await page.goto("/l/default/channels");
+  // Source reads as its default, not as Any.
+  await expect(page.getByRole("button", { name: "Source filter" })).toHaveText("Source: in use");
+  await page.getByLabel("Search", { exact: true }).fill("aprs");
+  const more = page.getByRole("button", { name: /\d+ more in the shared list/ });
+  await expect(more).toBeVisible();
+  await more.click();
+  await expect(page.getByLabel("Search", { exact: true })).toHaveValue(/in:all/);
+  await expect(page.getByRole("row", { name: /APRS/ }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Source filter" })).toHaveText("Source: mine and the shared list");
+  await expect(more).toHaveCount(0);
+});
+
+test("the memories tab shows what is actually programmed", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Reference", model: "baofeng-uv5rm" } });
+  await request.post("/api/v1/libraries/default/radios/Reference/channels", { data: { query: 'name:"NOAA WX2" OR name:"NOAA WX3" OR name:"NOAA WX4"' } });
+  const found = await (await request.get(`/api/v1/libraries/shared/channels?q=${encodeURIComponent('name:"NOAA WX3"')}`)).json();
+  const wx3 = found.channels[0].id as string;
+  const status = (s: string) => request.post(`/api/v1/libraries/shared/channels/${wx3}/status`, { data: { status: s, reason: "test" } });
+  await status("retired");
+
+  await page.goto("/l/default/radios/Reference");
+  await expect(page.getByText(/1 not programmed, 2 receive only/)).toBeVisible();
+  // Retired: listed, but not programmed, so it takes no number and the
+  // memories after it move up, as on the programmed radio.
+  const wx3Row = page.getByRole("row", { name: /NOAA WX3/ });
+  await expect(wx3Row.getByText("Not programmed: retired")).toBeVisible();
+  await expect(wx3Row.getByRole("cell").nth(1)).toHaveText("–");
+  await expect(page.getByRole("row", { name: /NOAA WX4/ }).getByRole("cell").nth(1)).toHaveText("2");
+  await expect(page.getByRole("row", { name: /NOAA WX2/ }).getByText("RX only")).toBeVisible();
+
+  // Back in service, it's programmed again.
+  await status("active");
+  await page.reload();
+  await expect(page.getByRole("row", { name: /NOAA WX3/ }).getByText("RX only")).toBeVisible();
+  await expect(page.getByRole("row", { name: /NOAA WX4/ }).getByRole("cell").nth(1)).toHaveText("3");
+  await expect(page.getByText(/not programmed/)).toHaveCount(0);
+});

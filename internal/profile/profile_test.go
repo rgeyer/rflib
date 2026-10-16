@@ -280,3 +280,28 @@ func TestStepChoice(t *testing.T) {
 		t.Error("expected no step to fit 146.521 MHz")
 	}
 }
+
+// The FTM-6000 writes tone squelch as TONE SQL and reads it back; split
+// CTCSS tones still can't be written, as it holds one CTCSS frequency.
+func TestFTM6000ToneSquelch(t *testing.T) {
+	p := builtin(t, "yaesu-ftm6000")
+	tx := int64(146_160_000)
+	c := domain.Channel{Name: "SYPK", ReceiveHz: 146_760_000, TransmitHz: &tx, Mode: "FM",
+		TransmitTone: tone(t, "ctcss:127.3"), ReceiveTone: tone(t, "ctcss:127.3"), ToneSquelch: true}
+	var out bytes.Buffer
+	if err := (Exporter{Profile: p}).Export(&out, []domain.Channel{c}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), ",TONE SQL,127.3 Hz,") {
+		t.Errorf("row = %s", strings.SplitN(out.String(), "\n", 2)[0])
+	}
+	back := channels(t, p, out.String())
+	if len(back) != 1 || !back[0].ToneSquelch || domain.FormatTone(back[0].ReceiveTone) != "ctcss:127.300" || domain.FormatTone(back[0].TransmitTone) != "ctcss:127.300" {
+		t.Errorf("read back = %+v", back)
+	}
+	split := c
+	split.ReceiveTone = tone(t, "ctcss:146.2")
+	if err := (Exporter{Profile: p}).Validate(split); err == nil || !strings.Contains(err.Error(), "tone_tone") {
+		t.Errorf("split tones: %v", err)
+	}
+}

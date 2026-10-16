@@ -13,25 +13,63 @@ import (
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
+	"github.com/ryan/rflib/internal/importer"
 	"github.com/ryan/rflib/internal/model"
 	"github.com/ryan/rflib/internal/naming"
 	"github.com/ryan/rflib/internal/profile"
 )
 
-// Memory is one programmed memory.
+// Memory is one memory of a radio's list, as it will be programmed.
 type Memory struct {
+	// Location is the memory number, or NoNumber for a memory the radio's
+	// programming leaves out: it takes no number, so the numbers are the
+	// radio's own once it's programmed.
 	Location int
-	// Channel is the export copy: name fitted, scan and power resolved.
+	// Channel is the export copy: name fitted, scan and power resolved,
+	// and tones as the radio's file holds them.
 	Channel domain.Channel
 	// Original is the library channel it came from.
 	Original domain.Channel
 	Name     naming.Result
 	// Power is the effective intent before the model mapped it.
 	Power domain.PowerIntent
-	// LeftOut is set when the radio can't use the channel's mode; the
-	// memory is listed, with a warning, but not exported.
-	LeftOut bool
+	// LeftOut says why the memory isn't programmed: the channel is retired,
+	// or the radio can't use its mode. The memory is listed, with a
+	// warning, but not exported, and takes no memory number.
+	LeftOut string
+	// Invalid is why the radio's file can't hold the memory even with its
+	// transmit tone alone; an export fails on it, or leaves it out with
+	// skipInvalid. Such a memory takes no number either.
+	Invalid error
+	// TransmitToneOnly is set when the radio's file can't hold the
+	// channel's receive tone (such as split tones), so the memory is
+	// programmed with its transmit tone alone.
+	TransmitToneOnly bool
 }
+
+// NoNumber is the Location of a memory that isn't programmed. Some radios
+// number memories from 0.
+const NoNumber = -1
+
+// Programmed reports whether an export (leaving out invalid memories)
+// programs the memory.
+func (m Memory) Programmed() bool { return m.LeftOut == "" && m.Invalid == nil }
+
+// NotProgrammed says why an export (leaving out invalid memories) doesn't
+// program the memory; empty when it does.
+func (m Memory) NotProgrammed() string {
+	if m.LeftOut != "" {
+		return m.LeftOut
+	}
+	if m.Invalid != nil {
+		return "the radio's file can't hold it: " + m.Invalid.Error()
+	}
+	return ""
+}
+
+// ReceiveOnly reports whether the memory is programmed receive-only: the
+// channel is, or it was made so because it can't transmit there.
+func (m Memory) ReceiveOnly() bool { return m.Channel.RXOnly || m.Channel.TransmitHz == nil }
 
 // Layout is a radio's computed memories: what an export writes.
 type Layout struct {
@@ -44,32 +82,27 @@ type Layout struct {
 // Build lays out a radio's memories. It fails when the list doesn't fit the
 // model's memories; everything else that can't be honored is a warning.
 // Memories transmit only where domain.PersonalTransmitAllowed; any other
-// channel is programmed receive-only, whatever its service.
+// channel is programmed receive-only, whatever its service. Memories the
+// programming leaves out stay in the list but take no number; a section
+// start on one moves to the next memory that's programmed.
 func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, error) {
 	p := Layout{Radio: r, Model: m}
-	locs, err := domain.MemoryNumbers(entries, m.Memories.First)
-	if err != nil {
-		return p, err
-	}
-	if n := len(locs); n > 0 && locs[n-1] > m.Memories.Last {
-		return p, domain.Invalidf("%q would be memory %d, but the %s has memories %d-%d", entries[n-1].Channel.Name, locs[n-1], m.Description, m.Memories.First, m.Memories.Last)
-	}
 	dedupe, err := naming.ParseDedupe(orNone(r.Dedupe))
 	if err != nil {
 		return p, err
 	}
 	copies := make([]domain.Channel, len(entries))
+	notes := make([][]string, len(entries))
 	p.Memories = make([]Memory, len(entries))
 	for i, e := range entries {
 		c := e.Channel
-		warn := func(format string, args ...any) {
-			p.Warnings = append(p.Warnings, fmt.Sprintf("memory %d %q: %s", locs[i], c.Name, fmt.Sprintf(format, args...)))
-		}
+		warn := func(format string, args ...any) { notes[i] = append(notes[i], fmt.Sprintf(format, args...)) }
 		if e.Skip != nil {
 			c.Skip = *e.Skip
 		}
-		switch c.Status.OrActive() {
-		case domain.StatusOffAir:
+		leftOut := ""
+		switch {
+		case c.Status.OrActive() == domain.StatusOffAir:
 			// Kept, so it needs no reprogramming when it's back, but not
 			// scanned while it's silent.
 			c.Skip = true
@@ -78,8 +111,13 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, 
 				back = ", expected back " + c.BackOn.Format("2006-01-02")
 			}
 			warn("off the air%s%s; programmed but skipped in scans", noteSuffix(c.StatusNote), back)
-		case domain.StatusRetired:
-			warn("retired%s; see rflib shared changes", noteSuffix(c.StatusNote))
+		case c.Status.OrActive() == domain.StatusRetired:
+			leftOut = "retired" + noteSuffix(c.StatusNote)
+			warn("not programmed: retired%s; see rflib shared changes", noteSuffix(c.StatusNote))
+		}
+		if leftOut == "" && !m.HasMode(c.Mode) {
+			leftOut = fmt.Sprintf("the radio doesn't have %s", c.Mode)
+			warn("not programmed: the radio doesn't have %s (it has %s)", c.Mode, strings.Join(m.Modes, ", "))
 		}
 		if e.Name != "" {
 			c.Name, c.ShortNames = e.Name, nil
@@ -90,10 +128,6 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, 
 			c.RXOnly = true
 			warn("programmed receive-only: transmit %s MHz is outside the amateur bands and FRS, GMRS, MURS, and CB channels", domain.FormatFrequencyMHz(*c.TransmitHz))
 		}
-		leftOut := !m.HasMode(c.Mode)
-		if leftOut {
-			warn("left out: the radio doesn't have %s (it has %s)", c.Mode, strings.Join(m.Modes, ", "))
-		}
 		if !m.Tunes(c.ReceiveHz) {
 			warn("%s MHz is outside the radio's bands", domain.FormatFrequencyMHz(c.ReceiveHz))
 		}
@@ -101,7 +135,7 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, 
 			warn("transmit %s MHz is outside the radio's bands", domain.FormatFrequencyMHz(*c.TransmitHz))
 		}
 		copies[i] = c
-		p.Memories[i] = Memory{Location: locs[i], Original: e.Channel, Power: intent, LeftOut: leftOut}
+		p.Memories[i] = Memory{Location: NoNumber, Original: e.Channel, Power: intent, LeftOut: leftOut}
 	}
 	rules := m.NameRules()
 	if r.NameLength > 0 {
@@ -111,6 +145,58 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, 
 	for i := range p.Memories {
 		p.Memories[i].Channel = named[i]
 		p.Memories[i].Name = results[i]
+	}
+	// What the radio's file can't hold, as the export will find it. When
+	// it's the receive tone (such as split tones), the transmit tone wins:
+	// it's what opens a repeater.
+	ex, err := ExporterFor(p)
+	if err != nil {
+		return p, err
+	}
+	for i := range p.Memories {
+		mem := &p.Memories[i]
+		if mem.LeftOut != "" {
+			continue
+		}
+		if mem.Invalid = ex.Validate(mem.Channel); mem.Invalid == nil || mem.Channel.ReceiveTone.Kind == domain.ToneNone {
+			continue
+		}
+		c := mem.Channel
+		c.ReceiveTone, c.ToneSquelch = domain.Tone{Kind: domain.ToneNone}, false
+		if ex.Validate(c) == nil {
+			notes[i] = append(notes[i], fmt.Sprintf("programmed with the transmit tone only: the radio can't hold receive tone %s (%v)", domain.FormatTone(mem.Channel.ReceiveTone), mem.Invalid))
+			mem.Channel, mem.Invalid, mem.TransmitToneOnly = c, nil, true
+		}
+	}
+	// Number the memories that are programmed.
+	next, pending := m.Memories.First, (*int)(nil)
+	for i, e := range entries {
+		if e.SectionStart != nil {
+			pending = e.SectionStart
+		}
+		if !p.Memories[i].Programmed() {
+			continue
+		}
+		if pending != nil {
+			if *pending < next {
+				return p, domain.Invalidf("%q starts a section at memory %d, but the channels before it already reach memory %d", e.Channel.Name, *pending, next-1)
+			}
+			next, pending = *pending, nil
+		}
+		if next > m.Memories.Last {
+			return p, domain.Invalidf("%q would be memory %d, but the %s has memories %d-%d", e.Channel.Name, next, m.Description, m.Memories.First, m.Memories.Last)
+		}
+		p.Memories[i].Location = next
+		next++
+	}
+	for i, mem := range p.Memories {
+		where := ""
+		if mem.Programmed() {
+			where = fmt.Sprintf("memory %d ", mem.Location)
+		}
+		for _, n := range notes[i] {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%s%q: %s", where, copies[i].Name, n))
+		}
 	}
 	for _, g := range naming.Duplicates(results) {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%d memories are named %q; set the radio's dedupe to index or freq, or give them names", len(g), results[g[0]].Name))
@@ -190,21 +276,30 @@ func ExporterFor(p Layout) (Exporter, error) {
 	return export.CHIRP{Locations: locs}, nil
 }
 
+// Parse reads a file in a model's format, as its programming software or
+// CHIRP saves it, keeping each memory's number.
+func Parse(m model.Model, r io.Reader) (importer.Batch, error) {
+	if name, ok := m.ProfileName(); ok {
+		e, err := profile.Find(name)
+		if err != nil {
+			return importer.Batch{}, err
+		}
+		return profile.Parser{Profile: e.Profile}.Parse(r)
+	}
+	return importer.ParseCHIRP(r)
+}
+
 // Write exports a layout. Memories marked LeftOut are not written (Build
 // warned about them). With skipInvalid, memories the format can't
-// represent are left out too and described on warn; otherwise any of them
-// fails the export. Left-out memories' numbers stay empty.
+// represent (Invalid) are left out too and described on warn; otherwise
+// any of them fails the export. Left-out memories' numbers stay empty.
 func Write(w io.Writer, p Layout, skipInvalid bool, warn io.Writer) (int, error) {
-	p.Memories = slices.DeleteFunc(slices.Clone(p.Memories), func(mem Memory) bool { return mem.LeftOut })
+	p.Memories = slices.DeleteFunc(slices.Clone(p.Memories), func(mem Memory) bool { return mem.LeftOut != "" })
 	if skipInvalid {
 		var kept []Memory
-		ex, err := ExporterFor(p)
-		if err != nil {
-			return 0, err
-		}
 		for _, mem := range p.Memories {
-			if err := ex.Validate(mem.Channel); err != nil {
-				fmt.Fprintf(warn, "skipped memory %d %q: %v\n", mem.Location, mem.Original.Name, err)
+			if mem.Invalid != nil {
+				fmt.Fprintf(warn, "skipped memory %d %q: %v\n", mem.Location, mem.Original.Name, mem.Invalid)
 				continue
 			}
 			kept = append(kept, mem)

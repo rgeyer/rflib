@@ -2,12 +2,13 @@ package importer
 
 import (
 	"io"
+	"strings"
 
 	"github.com/ryan/rflib/internal/chirp"
 )
 
-// ParseCHIRP reads a CHIRP generic CSV export. Memory locations are not kept;
-// rows without a frequency (empty memories) are ignored.
+// ParseCHIRP reads a CHIRP generic CSV export, keeping each record's memory
+// location; rows without a frequency (empty memories) are ignored.
 func ParseCHIRP(r io.Reader) (Batch, error) {
 	var b Batch
 	err := readCSV(r, []string{"frequency"}, func(row int, get func(string) string) {
@@ -24,7 +25,11 @@ func ParseCHIRP(r io.Reader) (Batch, error) {
 			b.fail(row, "%v", err)
 			return
 		}
-		b.finish(row, c)
+		if strings.TrimSpace(get("location")) == "" {
+			b.finish(row, c)
+			return
+		}
+		b.AddAt(row, m.Location, c)
 	}, &b)
 	return b, err
 }

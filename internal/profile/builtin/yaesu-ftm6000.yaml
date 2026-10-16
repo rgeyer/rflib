@@ -11,9 +11,12 @@ notes: |
   Receive-only channels are written as simplex: the FTM-6000 has no
   per-memory transmit inhibit, and it only transmits on 2 m and 70 cm.
 
-  Only the tone modes seen in ADMS-13 exports are mapped (OFF, TONE, DCS).
-  Tone squelch and split tones fail the export until their ADMS spelling is
-  confirmed; a copy of this profile in your profile directory can add them.
+  Tone modes: OFF, TONE, and DCS are as seen in ADMS-13 exports. Tone squelch
+  is written TONE SQL, as the radio shows it and Yaesu's other ADMS programs
+  write it; not yet seen in an ADMS-13 export. The radio holds one CTCSS
+  frequency per memory, so split tones (different transmit and receive CTCSS)
+  can't be written. A copy of this profile in your profile directory can
+  change any of these.
 header: false
 line_ending: lf
 start: 1
@@ -35,7 +38,7 @@ columns:
   - {name: Name, source: name}
   - name: Tone Mode
     source: tone_mode
-    map: {none: "OFF", tone: TONE, dcs: DCS}
+    map: {none: "OFF", tone: TONE, tsql: TONE SQL, dcs: DCS}
   - {name: CTCSS Frequency, source: ctcss_hz, decimals: 1, suffix: " Hz", default: 100.0 Hz}
   - {name: DCS Code, source: dcs_code, default: "023"}
   - {name: User CTCSS, source: const, value: 1500 Hz}

@@ -2,27 +2,32 @@ import { Button, Group, Menu, TextInput } from "@mantine/core";
 import { IconChevronDown, IconSearch } from "@tabler/icons-react";
 import { getTerm, setTerm } from "../lib/query";
 
-export type Option = { value: string; label: string };
+/** Option is a filter's value; short, when set, labels the button. */
+export type Option = { value: string; label: string; short?: string };
 
-/** FilterMenu is a button that picks one value for a filter, or Any. */
-export function FilterMenu(props: { label: string; options: Option[]; value: string | null; onChange: (v: string | null) => void }) {
-  const current = props.options.find((o) => o.value === props.value);
+/** FilterMenu is a button that picks one value for a filter, or Any. A
+ * filter with a default (unset, the value no term means) shows that value
+ * when no term is set, and offers it in place of Any. */
+export function FilterMenu(props: { label: string; options: Option[]; value: string | null; onChange: (v: string | null) => void; unset?: string }) {
+  const value = props.value ?? props.unset ?? null;
+  const current = props.options.find((o) => o.value === value);
+  const shown = current?.short ?? current?.label;
   return (
     <Menu position="bottom-start" withinPortal>
       <Menu.Target>
         <Button
           size="compact-sm"
-          variant={current ? "light" : "default"}
+          variant={props.value !== null && props.value !== props.unset ? "light" : "default"}
           rightSection={<IconChevronDown size={14} />}
           aria-label={`${props.label} filter`}
         >
-          {current ? `${props.label}: ${current.label}` : props.label}
+          {current ? `${props.label}: ${shown}` : props.label}
         </Button>
       </Menu.Target>
       <Menu.Dropdown mah={320} style={{ overflowY: "auto" }}>
-        <Menu.Item onClick={() => props.onChange(null)}>Any</Menu.Item>
+        {!props.unset && <Menu.Item onClick={() => props.onChange(null)}>Any</Menu.Item>}
         {props.options.map((o) => (
-          <Menu.Item key={o.value} onClick={() => props.onChange(o.value)} fw={o.value === props.value ? 600 : undefined}>
+          <Menu.Item key={o.value} onClick={() => props.onChange(o.value === props.unset ? null : o.value)} fw={o.value === value ? 600 : undefined}>
             {o.label}
           </Menu.Item>
         ))}
@@ -34,7 +39,7 @@ export function FilterMenu(props: { label: string; options: Option[]; value: str
 const opts = (values: string[]): Option[] => values.map((v) => ({ value: v, label: v }));
 
 /** The guided filters: each sets one field's term in the query. */
-const FILTERS: { field: string; label: string; options: Option[] }[] = [
+const FILTERS: { field: string; label: string; options: Option[]; unset?: string }[] = [
   { field: "band", label: "Band", options: opts(["2m", "1.25m", "70cm", "6m", "10m", "gmrs", "frs", "murs", "cb", "noaa", "air", "marine"]) },
   {
     field: "service",
@@ -68,8 +73,9 @@ const FILTERS: { field: string; label: string; options: Option[] }[] = [
 const SOURCE = {
   field: "in",
   label: "Source",
+  unset: "use",
   options: [
-    { value: "use", label: "in use (default)" },
+    { value: "use", label: "in use (default)", short: "in use" },
     { value: "mine", label: "mine only" },
     { value: "shared", label: "the shared list" },
     { value: "all", label: "mine and the shared list" },
@@ -100,6 +106,7 @@ export function QueryBar(props: { value: string; onChange: (v: string) => void; 
             label={f.label}
             options={f.options}
             value={getTerm(props.value, f.field)}
+            unset={"unset" in f ? f.unset : undefined}
             onChange={(v) => props.onChange(setTerm(props.value, f.field, v))}
           />
         ))}
