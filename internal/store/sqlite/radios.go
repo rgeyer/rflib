@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -22,12 +23,20 @@ func (l *library) CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio
 	if err := assignIdentity(&r.ID, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return r, err
 	}
-	_, err := l.q.ExecContext(ctx, `INSERT INTO radios (library_id,`+radioColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		l.id, r.ID, r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.NameLength, r.Notes, timestamp(r.CreatedAt), timestamp(r.UpdatedAt))
-	if err != nil {
-		return r, conflict(fmt.Errorf("create radio: %w", err), "a radio named %q", r.Name)
-	}
-	return r, nil
+	return r, l.inTx(ctx, func(tx *library) error {
+		_, err := tx.q.ExecContext(ctx, `INSERT INTO radios (library_id,`+radioColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			tx.id, r.ID, r.Name, r.Model, string(r.DefaultPower), r.Dedupe, r.NameLength, r.Notes, timestamp(r.CreatedAt), timestamp(r.UpdatedAt))
+		if err != nil {
+			return conflict(fmt.Errorf("create radio: %w", err), "a radio named %q", r.Name)
+		}
+		// Every radio has a default section, for channels added by hand.
+		var id string
+		if err := assignIdentity(&id, new(time.Time), new(time.Time)); err != nil {
+			return err
+		}
+		_, err = tx.q.ExecContext(ctx, `INSERT INTO radio_sections (`+sectionColumns+`) VALUES (?,?,0,'Other',NULL,NULL,'',1)`, id, r.ID)
+		return err
+	})
 }
 
 func (l *library) GetRadio(ctx context.Context, idOrName string) (domain.Radio, error) {
@@ -101,7 +110,17 @@ func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.Ra
 	if err := l.ownsRadio(ctx, radioID); err != nil {
 		return nil, err
 	}
-	rows, err := l.q.QueryContext(ctx, `SELECT channel_id,section_start,name,power,skip,source_id FROM radio_channels WHERE radio_id=? ORDER BY position`, radioID)
+	sections, err := listSections(ctx, l.q, radioID)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]domain.RadioSection{}
+	for _, sec := range sections {
+		byID[sec.ID] = sec
+	}
+	rows, err := l.q.QueryContext(ctx, `SELECT rc.channel_id, rc.section_id, rc.name, rc.power, rc.skip, coalesce(rc.source_id,''), rc.plan_number,
+		coalesce(src.plan_numbers,'') FROM radio_channels rc JOIN radio_sections s ON s.id=rc.section_id LEFT JOIN radio_sources src ON src.id=rc.source_id
+		WHERE rc.radio_id=? ORDER BY s.position, rc.position`, radioID)
 	if err != nil {
 		return nil, fmt.Errorf("list radio channels: %w", err)
 	}
@@ -109,23 +128,22 @@ func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.Ra
 	var ids []string
 	for rows.Next() {
 		var e domain.RadioEntry
-		var id string
-		var section sql.NullInt64
+		var id, section, numbers string
 		var skip sql.NullBool
-		var source sql.NullString
-		if err := rows.Scan(&id, &section, &e.Name, &e.Power, &skip, &source); err != nil {
+		var plan sql.NullInt64
+		if err := rows.Scan(&id, &section, &e.Name, &e.Power, &skip, &e.SourceID, &plan, &numbers); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		if section.Valid {
-			v := int(section.Int64)
-			e.SectionStart = &v
-		}
+		e.Section = byID[section]
 		if skip.Valid {
 			e.Skip = &skip.Bool
 		}
-		e.SourceID = source.String
-		e.Position = len(entries)
+		if plan.Valid {
+			v := int(plan.Int64)
+			e.PlanNumber = &v
+		}
+		e.MatchPlan = numbers == domain.PlanNumbersMatch
 		entries = append(entries, e)
 		ids = append(ids, id)
 	}
@@ -138,13 +156,13 @@ func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.Ra
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[string]domain.Channel, len(ids))
+	byChannel := make(map[string]domain.Channel, len(ids))
 	for _, c := range channels {
-		byID[c.ID] = c
+		byChannel[c.ID] = c
 	}
 	var shared []string
 	for _, id := range ids {
-		if _, ok := byID[id]; !ok {
+		if _, ok := byChannel[id]; !ok {
 			shared = append(shared, id)
 		}
 	}
@@ -153,10 +171,27 @@ func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.Ra
 		return nil, err
 	}
 	for id, v := range views {
-		byID[id] = v
+		byChannel[id] = v
 	}
 	for i, id := range ids {
-		entries[i].Channel = byID[id]
+		entries[i].Channel = byChannel[id]
+	}
+	// A sorted section's channels are in its order, whatever their places.
+	for i := 0; i < len(entries); {
+		j := i
+		for j < len(entries) && entries[j].Section.ID == entries[i].Section.ID {
+			j++
+		}
+		switch entries[i].Section.Sort {
+		case "name":
+			slices.SortStableFunc(entries[i:j], func(a, b domain.RadioEntry) int { return domain.CompareChannels(a.Channel, b.Channel) })
+		case "freq":
+			slices.SortStableFunc(entries[i:j], func(a, b domain.RadioEntry) int { return cmp.Compare(a.Channel.ReceiveHz, b.Channel.ReceiveHz) })
+		}
+		i = j
+	}
+	for i := range entries {
+		entries[i].Position = i
 	}
 	return entries, nil
 }
@@ -180,25 +215,8 @@ func (l *library) canHold(ctx context.Context, id string) error {
 	return fmt.Errorf("channel %q: %w", id, store.ErrNotFound)
 }
 
-// radioOrder returns a radio's channel IDs in memory order.
-func radioOrder(ctx context.Context, q querier, radioID string) ([]string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT channel_id FROM radio_channels WHERE radio_id=? ORDER BY position`, radioID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// renumber stores ids' order as positions 0, 1, 2...
+// renumber stores ids' order as positions 0, 1, 2... Positions order a
+// section's channels; the list is in section order first.
 func renumber(ctx context.Context, ex execer, radioID string, ids []string) error {
 	for i, id := range ids {
 		if _, err := ex.ExecContext(ctx, `UPDATE radio_channels SET position=? WHERE radio_id=? AND channel_id=?`, i, radioID, id); err != nil {
@@ -208,79 +226,72 @@ func renumber(ctx context.Context, ex execer, radioID string, ids []string) erro
 	return nil
 }
 
-func (l *library) AddRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error) {
-	return l.insertRadioChannels(ctx, radioID, nil, channelIDs)
+// entryIDs returns a radio's channel IDs and their sections in list order.
+func (l *library) entryIDs(ctx context.Context, radioID string) (ids, sections []string, err error) {
+	es, err := l.RadioEntries(ctx, radioID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, e := range es {
+		ids, sections = append(ids, e.Channel.ID), append(sections, e.Section.ID)
+	}
+	return ids, sections, nil
+}
+
+func (l *library) AddRadioChannels(ctx context.Context, radioID, sectionID string, channelIDs []string) (int, error) {
+	return l.insertRadioChannels(ctx, radioID, sectionID, "", channelIDs)
 }
 
 func (l *library) AddSourceChannels(ctx context.Context, src domain.RadioSource, channelIDs []string) (int, error) {
-	return l.insertRadioChannels(ctx, src.RadioID, &src, channelIDs)
+	return l.insertRadioChannels(ctx, src.RadioID, src.SectionID, src.ID, channelIDs)
 }
 
-type orderRow struct {
-	channelID, sourceID string
-}
-
-func (l *library) insertRadioChannels(ctx context.Context, radioID string, src *domain.RadioSource, channelIDs []string) (int, error) {
+func (l *library) insertRadioChannels(ctx context.Context, radioID, sectionID, sourceID string, channelIDs []string) (int, error) {
 	added := 0
 	err := l.inTx(ctx, func(tx *library) error {
 		if err := tx.ownsRadio(ctx, radioID); err != nil {
 			return err
 		}
-		rows, err := radioRows(ctx, tx.q, radioID)
+		section, err := tx.sectionOf(ctx, radioID, sectionID)
 		if err != nil {
 			return err
 		}
-		have := make(map[string]bool, len(rows))
-		for _, r := range rows {
-			have[r.channelID] = true
-		}
-		var add []orderRow
-		for _, id := range channelIDs {
-			if !have[id] {
-				if err := tx.canHold(ctx, id); err != nil {
-					return err
-				}
-				have[id] = true
-				add = append(add, orderRow{channelID: id})
-			}
-		}
-		at := len(rows)
-		sourceID := ""
-		if src != nil {
-			sourceID = src.ID
-			if at, err = sourceInsertAt(ctx, tx.q, *src, rows); err != nil {
-				return err
-			}
-			for i := range add {
-				add[i].sourceID = src.ID
-			}
-		}
-		for i, r := range add {
-			if _, err := tx.q.ExecContext(ctx, `INSERT INTO radio_channels(radio_id,channel_id,position,source_id) VALUES(?,?,?,?)`,
-				radioID, r.channelID, at+i, nullable(sourceID)); err != nil {
-				return fmt.Errorf("add channel %q: %w", r.channelID, err)
-			}
-		}
-		added = len(add)
-		order := make([]string, 0, len(rows)+len(add))
-		for _, r := range rows[:at] {
-			order = append(order, r.channelID)
-		}
-		for _, r := range add {
-			order = append(order, r.channelID)
-		}
-		for _, r := range rows[at:] {
-			order = append(order, r.channelID)
-		}
-		if err := renumber(ctx, tx.q, radioID, order); err != nil {
+		have, err := tx.RadioChannelIDs(ctx, radioID)
+		if err != nil {
 			return err
 		}
-		if src != nil && src.SectionStart != nil {
-			return keepSectionStart(ctx, tx.q, *src)
+		var next int
+		if err := tx.q.QueryRowContext(ctx, `SELECT coalesce(max(position),-1)+1 FROM radio_channels WHERE radio_id=?`, radioID).Scan(&next); err != nil {
+			return err
+		}
+		for _, id := range channelIDs {
+			if have[id] {
+				continue
+			}
+			if err := tx.canHold(ctx, id); err != nil {
+				return err
+			}
+			if _, err := tx.q.ExecContext(ctx, `INSERT INTO radio_channels(radio_id,channel_id,position,section_id,source_id) VALUES(?,?,?,?,?)`,
+				radioID, id, next, section, nullable(sourceID)); err != nil {
+				return fmt.Errorf("add channel %q: %w", id, err)
+			}
+			have[id] = true
+			next++
+			added++
 		}
 		return nil
 	})
 	return added, err
+}
+
+// sectionOf checks a section is the radio's; "" is its default section.
+func (l *library) sectionOf(ctx context.Context, radioID, sectionID string) (string, error) {
+	var id string
+	err := l.q.QueryRowContext(ctx, `SELECT id FROM radio_sections WHERE radio_id=? AND (id=? OR (?='' AND is_default=1))`, radioID, sectionID, sectionID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("section %q: %w", sectionID, store.ErrNotFound)
+	}
+	return id, err
 }
 
 func nullable(s string) any {
@@ -288,65 +299,6 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
-}
-
-// radioRows returns a radio's channels and their sources in memory order.
-func radioRows(ctx context.Context, q querier, radioID string) ([]orderRow, error) {
-	rows, err := q.QueryContext(ctx, `SELECT channel_id,coalesce(source_id,'') FROM radio_channels WHERE radio_id=? ORDER BY position`, radioID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []orderRow
-	for rows.Next() {
-		var r orderRow
-		if err := rows.Scan(&r.channelID, &r.sourceID); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// sourceInsertAt is the list index a source's new channels go at; see
-// AddSourceChannels.
-func sourceInsertAt(ctx context.Context, q querier, src domain.RadioSource, rows []orderRow) (int, error) {
-	for i := len(rows) - 1; i >= 0; i-- {
-		if rows[i].sourceID == src.ID {
-			return i + 1, nil
-		}
-	}
-	sources, err := listRadioSources(ctx, q, src.RadioID)
-	if err != nil {
-		return 0, err
-	}
-	pos := map[string]int{}
-	for _, x := range sources {
-		pos[x.ID] = x.Position
-	}
-	at := -1
-	for i, r := range rows {
-		if p, ok := pos[r.sourceID]; ok && r.sourceID != "" && p < src.Position {
-			at = i + 1
-		}
-	}
-	if at >= 0 {
-		return at, nil
-	}
-	for i, r := range rows {
-		if p, ok := pos[r.sourceID]; ok && r.sourceID != "" && p > src.Position {
-			return i, nil
-		}
-	}
-	return len(rows), nil
-}
-
-// keepSectionStart puts a source's section start on its first channel.
-func keepSectionStart(ctx context.Context, ex execer, src domain.RadioSource) error {
-	_, err := ex.ExecContext(ctx, `UPDATE radio_channels SET section_start=? WHERE radio_id=? AND channel_id=
-		(SELECT channel_id FROM radio_channels WHERE radio_id=? AND source_id=? ORDER BY position LIMIT 1)`,
-		*src.SectionStart, src.RadioID, src.RadioID, src.ID)
-	return err
 }
 
 func (l *library) RemoveRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error) {
@@ -363,66 +315,61 @@ func (l *library) RemoveRadioChannels(ctx context.Context, radioID string, chann
 			n, _ := res.RowsAffected()
 			removed += int(n)
 		}
-		order, err := radioOrder(ctx, tx.q, radioID)
-		if err != nil {
-			return err
-		}
-		return renumber(ctx, tx.q, radioID, order)
+		return nil
 	})
 	return removed, err
 }
 
-func (l *library) MoveRadioChannel(ctx context.Context, radioID, channelID string, to int) error {
+func (l *library) MoveRadioChannel(ctx context.Context, radioID, channelID, sectionID string, to int) error {
 	return l.inTx(ctx, func(tx *library) error {
-		if err := tx.ownsRadio(ctx, radioID); err != nil {
-			return err
-		}
-		order, err := radioOrder(ctx, tx.q, radioID)
+		ids, sections, err := tx.entryIDs(ctx, radioID)
 		if err != nil {
 			return err
 		}
-		from := -1
-		for i, id := range order {
-			if id == channelID {
-				from = i
-			}
-		}
+		from := slices.Index(ids, channelID)
 		if from < 0 {
 			return fmt.Errorf("channel %q is not on this radio: %w", channelID, store.ErrNotFound)
 		}
-		order = append(order[:from], order[from+1:]...)
-		to = max(0, min(to, len(order)))
-		order = append(order[:to], append([]string{channelID}, order[to:]...)...)
-		// A channel placed by hand is no longer its source's to place.
-		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET source_id=NULL WHERE radio_id=? AND channel_id=?`, radioID, channelID); err != nil {
+		target := sections[from]
+		if sectionID != "" {
+			if target, err = tx.sectionOf(ctx, radioID, sectionID); err != nil {
+				return err
+			}
+		}
+		ids = slices.Delete(ids, from, from+1)
+		sections = slices.Delete(sections, from, from+1)
+		// Where the section's channels are now, and the to'th of them.
+		at, n := -1, 0
+		for i, sec := range sections {
+			if sec != target {
+				continue
+			}
+			if n == to {
+				at = i
+				break
+			}
+			n++
+			at = i + 1
+		}
+		if at < 0 {
+			at = len(ids) // an empty section: its place doesn't matter
+		}
+		ids = slices.Insert(ids, at, channelID)
+		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET section_id=? WHERE radio_id=? AND channel_id=?`, target, radioID, channelID); err != nil {
 			return err
 		}
-		return renumber(ctx, tx.q, radioID, order)
+		return renumber(ctx, tx.q, radioID, ids)
 	})
 }
 
 func (l *library) ReorderRadioChannels(ctx context.Context, radioID string, channelIDs []string) error {
 	return l.inTx(ctx, func(tx *library) error {
-		if err := tx.ownsRadio(ctx, radioID); err != nil {
-			return err
-		}
-		order, err := radioOrder(ctx, tx.q, radioID)
+		ids, _, err := tx.entryIDs(ctx, radioID)
 		if err != nil {
 			return err
 		}
-		if !slices.Equal(slices.Sorted(slices.Values(order)), slices.Sorted(slices.Values(channelIDs))) {
+		if !slices.Equal(slices.Sorted(slices.Values(ids)), slices.Sorted(slices.Values(channelIDs))) {
 			return domain.Invalidf("a new order must list the radio's channels exactly once each")
-		}
-		sections := make([]sql.NullInt64, len(order))
-		for i, id := range order {
-			if err := tx.q.QueryRowContext(ctx, `SELECT section_start FROM radio_channels WHERE radio_id=? AND channel_id=?`, radioID, id).Scan(&sections[i]); err != nil {
-				return err
-			}
-		}
-		for i, id := range channelIDs {
-			if _, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET section_start=? WHERE radio_id=? AND channel_id=?`, sections[i], radioID, id); err != nil {
-				return err
-			}
 		}
 		return renumber(ctx, tx.q, radioID, channelIDs)
 	})
@@ -435,18 +382,12 @@ func (l *library) SetRadioEntry(ctx context.Context, radioID string, e domain.Ra
 	if _, err := domain.ParsePowerIntent(string(e.Power)); err != nil {
 		return err
 	}
-	if e.SectionStart != nil && *e.SectionStart < 0 {
-		return domain.Invalidf("section start must not be negative")
-	}
-	var section, skip any
-	if e.SectionStart != nil {
-		section = *e.SectionStart
-	}
+	var skip any
 	if e.Skip != nil {
 		skip = *e.Skip
 	}
-	res, err := l.q.ExecContext(ctx, `UPDATE radio_channels SET section_start=?,name=?,power=?,skip=? WHERE radio_id=? AND channel_id=?`,
-		section, strings.TrimSpace(e.Name), string(e.Power), skip, radioID, e.Channel.ID)
+	res, err := l.q.ExecContext(ctx, `UPDATE radio_channels SET name=?,power=?,skip=?,plan_number=? WHERE radio_id=? AND channel_id=?`,
+		strings.TrimSpace(e.Name), string(e.Power), skip, intOrNil(e.PlanNumber), radioID, e.Channel.ID)
 	if err != nil {
 		return fmt.Errorf("update radio channel: %w", err)
 	}
@@ -456,10 +397,201 @@ func (l *library) SetRadioEntry(ctx context.Context, radioID string, e domain.Ra
 	return nil
 }
 
-const sourceColumns = `id,radio_id,position,query,sort,section_start,keep_sorted,plan_id`
+// --- sections ---
 
-// sourceSelect reads sourceColumns and the plan's name.
-const sourceSelect = sourceColumns + `,coalesce((SELECT name FROM plans WHERE plans.id=radio_sources.plan_id),'')`
+const sectionColumns = `id,radio_id,position,name,start,size,sort,is_default`
+
+func listSections(ctx context.Context, q querier, radioID string) ([]domain.RadioSection, error) {
+	rows, err := q.QueryContext(ctx, `SELECT `+sectionColumns+` FROM radio_sections WHERE radio_id=? ORDER BY position`, radioID)
+	if err != nil {
+		return nil, fmt.Errorf("list radio sections: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.RadioSection
+	for rows.Next() {
+		var sec domain.RadioSection
+		var start, size sql.NullInt64
+		if err := rows.Scan(&sec.ID, &sec.RadioID, &sec.Position, &sec.Name, &start, &size, &sec.Sort, &sec.Default); err != nil {
+			return nil, err
+		}
+		sec.Start, sec.Size = optionalInt(start), optionalInt(size)
+		out = append(out, sec)
+	}
+	return out, rows.Err()
+}
+
+func optionalInt(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	n := int(v.Int64)
+	return &n
+}
+
+func (l *library) RadioSections(ctx context.Context, radioID string) ([]domain.RadioSection, error) {
+	if err := l.ownsRadio(ctx, radioID); err != nil {
+		return nil, err
+	}
+	return listSections(ctx, l.q, radioID)
+}
+
+func (l *library) CreateRadioSection(ctx context.Context, sec domain.RadioSection) (domain.RadioSection, error) {
+	if err := domain.ValidateRadioSection(sec); err != nil {
+		return sec, err
+	}
+	err := l.inTx(ctx, func(tx *library) error {
+		if err := tx.ownsRadio(ctx, sec.RadioID); err != nil {
+			return err
+		}
+		sections, err := listSections(ctx, tx.q, sec.RadioID)
+		if err != nil {
+			return err
+		}
+		var unused time.Time
+		if err := assignIdentity(&sec.ID, &unused, &unused); err != nil {
+			return err
+		}
+		sec.Position = len(sections)
+		if n := len(sections); n > 0 && sections[n-1].Default {
+			sec.Position = n - 1
+		}
+		if sec.Default {
+			if _, err := tx.q.ExecContext(ctx, `UPDATE radio_sections SET is_default=0 WHERE radio_id=?`, sec.RadioID); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.q.ExecContext(ctx, `INSERT INTO radio_sections (`+sectionColumns+`) VALUES (?,?,?,?,?,?,?,?)`,
+			sec.ID, sec.RadioID, len(sections), sec.Name, intOrNil(sec.Start), intOrNil(sec.Size), sec.Sort, sec.Default); err != nil {
+			return fmt.Errorf("add radio section: %w", err)
+		}
+		ids := make([]string, 0, len(sections)+1)
+		for _, x := range sections {
+			ids = append(ids, x.ID)
+		}
+		return renumberSections(ctx, tx.q, slices.Insert(ids, sec.Position, sec.ID))
+	})
+	return sec, err
+}
+
+func renumberSections(ctx context.Context, ex execer, ids []string) error {
+	for i, id := range ids {
+		if _, err := ex.ExecContext(ctx, `UPDATE radio_sections SET position=? WHERE id=?`, i, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// section returns one of a radio's sections, and all of them.
+func (l *library) section(ctx context.Context, radioID, sectionID string) (domain.RadioSection, []domain.RadioSection, error) {
+	if err := l.ownsRadio(ctx, radioID); err != nil {
+		return domain.RadioSection{}, nil, err
+	}
+	sections, err := listSections(ctx, l.q, radioID)
+	if err != nil {
+		return domain.RadioSection{}, nil, err
+	}
+	i := slices.IndexFunc(sections, func(x domain.RadioSection) bool { return x.ID == sectionID })
+	if i < 0 {
+		return domain.RadioSection{}, nil, fmt.Errorf("section %q: %w", sectionID, store.ErrNotFound)
+	}
+	return sections[i], sections, nil
+}
+
+func (l *library) UpdateRadioSection(ctx context.Context, sec domain.RadioSection) error {
+	if err := domain.ValidateRadioSection(sec); err != nil {
+		return err
+	}
+	return l.inTx(ctx, func(tx *library) error {
+		old, _, err := tx.section(ctx, sec.RadioID, sec.ID)
+		if err != nil {
+			return err
+		}
+		if old.Default && !sec.Default {
+			return domain.Invalidf("%q is the default section; make another section the default instead", old.Name)
+		}
+		if sec.Default && !old.Default {
+			if _, err := tx.q.ExecContext(ctx, `UPDATE radio_sections SET is_default=0 WHERE radio_id=?`, sec.RadioID); err != nil {
+				return err
+			}
+		}
+		_, err = tx.q.ExecContext(ctx, `UPDATE radio_sections SET name=?,start=?,size=?,sort=?,is_default=? WHERE id=?`,
+			sec.Name, intOrNil(sec.Start), intOrNil(sec.Size), sec.Sort, sec.Default, sec.ID)
+		return err
+	})
+}
+
+func (l *library) MoveRadioSection(ctx context.Context, radioID, sectionID string, to int) error {
+	return l.inTx(ctx, func(tx *library) error {
+		_, sections, err := tx.section(ctx, radioID, sectionID)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for _, x := range sections {
+			if x.ID != sectionID {
+				ids = append(ids, x.ID)
+			}
+		}
+		to = max(0, min(to, len(ids)))
+		return renumberSections(ctx, tx.q, slices.Insert(ids, to, sectionID))
+	})
+}
+
+func (l *library) DeleteRadioSection(ctx context.Context, radioID, sectionID string) error {
+	return l.inTx(ctx, func(tx *library) error {
+		sec, sections, err := tx.section(ctx, radioID, sectionID)
+		if err != nil {
+			return err
+		}
+		if sec.Default {
+			return domain.Invalidf("%q is the default section; make another section the default before deleting it", sec.Name)
+		}
+		def, err := tx.sectionOf(ctx, radioID, "")
+		if err != nil {
+			return err
+		}
+		// Its channels go to the end of the default section, in order.
+		var next int
+		if err := tx.q.QueryRowContext(ctx, `SELECT coalesce(max(position),-1)+1 FROM radio_channels WHERE radio_id=?`, radioID).Scan(&next); err != nil {
+			return err
+		}
+		ids, secs, err := tx.entryIDs(ctx, radioID)
+		if err != nil {
+			return err
+		}
+		for i, id := range ids {
+			if secs[i] != sectionID {
+				continue
+			}
+			if _, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET section_id=?, position=? WHERE radio_id=? AND channel_id=?`, def, next, radioID, id); err != nil {
+				return err
+			}
+			next++
+		}
+		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_sources SET section_id=? WHERE section_id=?`, def, sectionID); err != nil {
+			return err
+		}
+		if _, err := tx.q.ExecContext(ctx, `DELETE FROM radio_sections WHERE id=?`, sectionID); err != nil {
+			return err
+		}
+		var rest []string
+		for _, x := range sections {
+			if x.ID != sectionID {
+				rest = append(rest, x.ID)
+			}
+		}
+		return renumberSections(ctx, tx.q, rest)
+	})
+}
+
+// --- sources ---
+
+const sourceColumns = `id,radio_id,position,query,sort,plan_id,section_id,plan_numbers`
+
+// sourceSelect reads sourceColumns, the plan's name, and the section's.
+const sourceSelect = sourceColumns + `,coalesce((SELECT name FROM plans WHERE plans.id=radio_sources.plan_id),''),
+	coalesce((SELECT name FROM radio_sections WHERE radio_sections.id=radio_sources.section_id),'')`
 
 func listRadioSources(ctx context.Context, q querier, radioID string) ([]domain.RadioSource, error) {
 	rows, err := q.QueryContext(ctx, `SELECT `+sourceSelect+` FROM radio_sources WHERE radio_id=? ORDER BY position`, radioID)
@@ -488,13 +620,33 @@ func (l *library) AddRadioSource(ctx context.Context, src domain.RadioSource) (d
 		if err := assignIdentity(&src.ID, &unused, &unused); err != nil {
 			return err
 		}
+		if src.SectionID == "" {
+			name := src.Query
+			if src.PlanID != "" {
+				var plan string
+				if err := tx.q.QueryRowContext(ctx, `SELECT coalesce((SELECT name FROM plans WHERE id=?),'')`, src.PlanID).Scan(&plan); err != nil {
+					return err
+				}
+				name = "Plan: " + plan
+			}
+			if len(name) > 40 {
+				name = name[:39] + "…"
+			}
+			sec, err := tx.CreateRadioSection(ctx, domain.RadioSection{RadioID: src.RadioID, Name: name})
+			if err != nil {
+				return err
+			}
+			src.SectionID = sec.ID
+		} else if _, err := tx.sectionOf(ctx, src.RadioID, src.SectionID); err != nil {
+			return err
+		}
 		existing, err := listRadioSources(ctx, tx.q, src.RadioID)
 		if err != nil {
 			return err
 		}
 		src.Position = len(existing)
 		_, err = tx.q.ExecContext(ctx, `INSERT INTO radio_sources (`+sourceColumns+`) VALUES (?,?,?,?,?,?,?,?)`,
-			src.ID, src.RadioID, src.Position, src.Query, src.Sort, intOrNil(src.SectionStart), src.KeepSorted, nullable(src.PlanID))
+			src.ID, src.RadioID, src.Position, src.Query, src.Sort, nullable(src.PlanID), src.SectionID, cmp.Or(src.PlanNumbers, domain.PlanNumbersCompact))
 		if err != nil {
 			return fmt.Errorf("add radio source: %w", err)
 		}
@@ -511,26 +663,17 @@ func (l *library) UpdateRadioSource(ctx context.Context, src domain.RadioSource)
 		if err := tx.ownsRadio(ctx, src.RadioID); err != nil {
 			return err
 		}
-		sources, err := listRadioSources(ctx, tx.q, src.RadioID)
+		section, err := tx.sectionOf(ctx, src.RadioID, src.SectionID)
 		if err != nil {
 			return err
 		}
-		i := slices.IndexFunc(sources, func(x domain.RadioSource) bool { return x.ID == src.ID })
-		if i < 0 {
-			return fmt.Errorf("radio source %q: %w", src.ID, store.ErrNotFound)
-		}
-		old := sources[i]
-		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_sources SET query=?,sort=?,section_start=?,keep_sorted=? WHERE id=?`,
-			src.Query, src.Sort, intOrNil(src.SectionStart), src.KeepSorted, src.ID); err != nil {
+		res, err := tx.q.ExecContext(ctx, `UPDATE radio_sources SET query=?,sort=?,section_id=?,plan_numbers=? WHERE id=? AND radio_id=?`,
+			src.Query, src.Sort, section, cmp.Or(src.PlanNumbers, domain.PlanNumbersCompact), src.ID, src.RadioID)
+		if err != nil {
 			return fmt.Errorf("update radio source: %w", err)
 		}
-		switch {
-		case src.SectionStart != nil:
-			return keepSectionStart(ctx, tx.q, src)
-		case old.SectionStart != nil:
-			_, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET section_start=NULL WHERE radio_id=? AND source_id=? AND section_start=?`,
-				src.RadioID, src.ID, *old.SectionStart)
-			return err
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("radio source %q: %w", src.ID, store.ErrNotFound)
 		}
 		return nil
 	})
@@ -550,6 +693,9 @@ func (l *library) RemoveRadioSource(ctx context.Context, src domain.RadioSource,
 			n, _ := res.RowsAffected()
 			removed = int(n)
 		}
+		if _, err := tx.q.ExecContext(ctx, `UPDATE radio_channels SET plan_number=NULL WHERE radio_id=? AND source_id=?`, src.RadioID, src.ID); err != nil {
+			return err
+		}
 		res, err := tx.q.ExecContext(ctx, `DELETE FROM radio_sources WHERE id=? AND radio_id=?`, src.ID, src.RadioID)
 		if err != nil {
 			return err
@@ -561,14 +707,7 @@ func (l *library) RemoveRadioSource(ctx context.Context, src domain.RadioSource,
 		if err != nil {
 			return err
 		}
-		if err := renumberSources(ctx, tx.q, sources); err != nil {
-			return err
-		}
-		order, err := radioOrder(ctx, tx.q, src.RadioID)
-		if err != nil {
-			return err
-		}
-		return renumber(ctx, tx.q, src.RadioID, order)
+		return renumberSources(ctx, tx.q, sources)
 	})
 	return removed, err
 }
@@ -616,16 +755,11 @@ func scanSources(rows *sql.Rows) ([]domain.RadioSource, error) {
 	var out []domain.RadioSource
 	for rows.Next() {
 		var src domain.RadioSource
-		var section sql.NullInt64
-		var plan sql.NullString
-		if err := rows.Scan(&src.ID, &src.RadioID, &src.Position, &src.Query, &src.Sort, &section, &src.KeepSorted, &plan, &src.PlanName); err != nil {
+		var plan, section sql.NullString
+		if err := rows.Scan(&src.ID, &src.RadioID, &src.Position, &src.Query, &src.Sort, &plan, &section, &src.PlanNumbers, &src.PlanName, &src.SectionName); err != nil {
 			return nil, err
 		}
-		src.PlanID = plan.String
-		if section.Valid {
-			v := int(section.Int64)
-			src.SectionStart = &v
-		}
+		src.PlanID, src.SectionID = plan.String, section.String
 		out = append(out, src)
 	}
 	return out, rows.Err()
@@ -639,8 +773,8 @@ func intOrNil(v *int) any {
 }
 
 // ReplaceOnRadios puts newID in oldID's place on every radio of the library
-// that holds oldID, keeping its overrides and section start; a radio that
-// holds newID already just drops oldID.
+// that holds oldID, keeping its section and overrides; a radio that holds
+// newID already just drops oldID.
 func (l *library) ReplaceOnRadios(ctx context.Context, oldID, newID string) error {
 	return l.inTx(ctx, func(tx *library) error {
 		if err := tx.canHold(ctx, newID); err != nil {
@@ -674,13 +808,6 @@ func (l *library) ReplaceOnRadios(ctx context.Context, oldID, newID string) erro
 				continue
 			}
 			if _, err := tx.q.ExecContext(ctx, `DELETE FROM radio_channels WHERE radio_id=? AND channel_id=?`, r, oldID); err != nil {
-				return err
-			}
-			order, err := radioOrder(ctx, tx.q, r)
-			if err != nil {
-				return err
-			}
-			if err := renumber(ctx, tx.q, r, order); err != nil {
 				return err
 			}
 		}

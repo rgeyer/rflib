@@ -533,11 +533,18 @@ func TestRadioWorkflow(t *testing.T) {
 		t.Fatalf("re-adding = %q", out)
 	}
 
-	// Move GMRS 1 to the top, and start GMRS 8 a section at memory 20.
+	// Move GMRS 1 to the top, and GMRS 8 into a section at memory 20, after
+	// the default section; the weather source's section goes last.
 	c.ok("radio", "channels", "move", "HT", "--id", ids["GMRS 1"], "--top")
-	c.ok("radio", "channels", "set", "HT", "--id", ids["GMRS 8"], "--section-start", "20", "--scan", "no", "--name", "Kids")
-	c.fails("already reach memory", "radio", "channels", "set", "HT", "--id", ids["GMRS 15R"], "--section-start", "0")
-	c.ok("radio", "channels", "set", "HT", "--id", ids["GMRS 15R"], "--section-start", "")
+	c.ok("radio", "sections", "add", "HT", "Kids", "--start", "20")
+	c.ok("radio", "sections", "move", "HT", "kids", "--to", "3")
+	c.ok("radio", "sections", "move", "HT", "service:noaa", "--to", "3")
+	c.ok("radio", "channels", "move", "HT", "--id", ids["GMRS 8"], "--section", "Kids")
+	c.ok("radio", "channels", "set", "HT", "--id", ids["GMRS 8"], "--scan", "no", "--name", "Kids")
+	c.fails("already reach memory", "radio", "sections", "set", "HT", "Kids", "--start", "0")
+	if out := c.ok("radio", "sections", "list", "HT"); !strings.Contains(out, "1\tOther*\t\t\t0-8\tmanual\t9") || !strings.Contains(out, "2\tKids\t20\t\t20-20\tmanual\t1") {
+		t.Errorf("sections list = %q", out)
+	}
 
 	out, stderr, err := c.exec("radio", "channels", "list", "HT")
 	if err != nil {
@@ -548,9 +555,9 @@ func TestRadioWorkflow(t *testing.T) {
 		t.Fatalf("listing:\n%s", out)
 	}
 	for _, want := range []string{
-		"0\tGMRS 1\tfits\tHigh\tscan\t462.562500\tsimplex\t\t\t\t\t" + ids["GMRS 1"],  // capped at 5 W: High (4 W) is fine
-		"1\tGMRS15R\tshortened\tHigh\tscan\t462.550000\t+\t5.000000\t\t\tGMRS 15R\t", // 7 characters
-		"§20\tKIDS*\tfits\tLow\tskip*\t467.562500\tsimplex\t\t\t\tGMRS 8\t",          // 0.5 W cap: lowest level, warned
+		"0\tOther\tGMRS 1\tfits\tHigh\tscan\t462.562500\tsimplex\t\t\t\t\t" + ids["GMRS 1"],  // capped at 5 W: High (4 W) is fine
+		"1\tOther\tGMRS15R\tshortened\tHigh\tscan\t462.550000\t+\t5.000000\t\t\tGMRS 15R\t", // 7 characters
+		"20\tKids\tKIDS*\tfits\tLow\tskip*\t467.562500\tsimplex\t\t\t\tGMRS 8\t",          // 0.5 W cap: lowest level, warned
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("listing missing %q:\n%s", want, out)
@@ -697,28 +704,31 @@ func TestRadioSources(t *testing.T) {
 	c.sharedIDs("us-gmrs", "us-noaa")
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
 	c.fails("no sources", "radio", "sync", "HT")
-	c.ok("radio", "sources", "add", "HT", "band:noaa", "--sort", "freq", "--section-start", "100")
+	c.ok("radio", "sources", "add", "HT", "band:noaa", "--sort", "freq")
+	c.ok("radio", "sections", "set", "HT", "band:noaa", "--start", "100")
 	c.ok("radio", "sources", "add", "HT", "service:gmrs -is:repeater", "--sort", "freq")
 	c.fails("unknown field", "radio", "sources", "add", "HT", "frq:1")
 	c.fails("unknown sort", "radio", "sources", "add", "HT", "tag:x", "--sort", "size")
-	// Make GMRS first: it claims its channels first and goes at the top.
+	// Make GMRS first: it claims its channels first, and its section goes
+	// at the top.
 	c.ok("radio", "sources", "move", "HT", "2", "--to", "1")
+	c.ok("radio", "sections", "move", "HT", "service:gmrs -is:repeater", "--to", "1")
 	if got := c.status("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (service:gmrs -is:repeater): added 22") || !strings.HasSuffix(got, "Added 29 channels to HT") {
 		t.Fatalf("sync = %q", got)
 	}
-	// A hand-added channel goes at the end and stays there.
+	// A hand-added channel goes in the default section, last.
 	hand := c.ok("channel", "add", "--name", "Hand", "--rx", "146.52")
 	c.ok("radio", "channels", "add", "HT", "--id", hand)
-	// New matches for the first source go after its channels, not at the end.
+	// New matches for the first source go in its section, not at the end.
 	newGMRS := c.ok("channel", "add", "--name", "AAA New", "--rx", "462.7125", "--service", "gmrs")
 	c.ok("radio", "sync", "HT")
 
 	type row struct {
-		Memory       int    `json:"memory"`
-		SectionStart bool   `json:"section_start"`
-		ChannelID    string `json:"id"`
-		ChannelName  string `json:"channel"`
-		ReceiveMHz   string `json:"rx"`
+		Memory      int    `json:"memory"`
+		Section     string `json:"section"`
+		ChannelID   string `json:"id"`
+		ChannelName string `json:"channel"`
+		ReceiveMHz  string `json:"rx"`
 	}
 	var rows []row
 	if err := json.Unmarshal([]byte(c.ok("radio", "channels", "list", "HT", "--format", "json")), &rows); err != nil {
@@ -733,53 +743,44 @@ func TestRadioSources(t *testing.T) {
 	if rows[22].ChannelID != newGMRS || rows[22].Memory != 23 {
 		t.Errorf("new GMRS match = %+v, want memory 23", rows[22])
 	}
-	if !rows[23].SectionStart || rows[23].Memory != 100 || rows[23].ReceiveMHz != "162.400000" {
+	if rows[23].Section != "band:noaa" || rows[23].Memory != 100 || rows[23].ReceiveMHz != "162.400000" {
 		t.Errorf("NOAA section = %+v", rows[23])
 	}
-	if rows[30].ChannelID != hand || rows[30].Memory != 107 {
+	if rows[30].ChannelID != hand || rows[30].Memory != 107 || rows[30].Section != "Other" {
 		t.Errorf("hand-added = %+v", rows[30])
 	}
 
-	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t\tfreq\tno\t23\tservice:gmrs -is:repeater") ||
-		!strings.Contains(out, "2\t100\tfreq\tno\t7\tband:noaa") {
+	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\tservice:gmrs -is:repeater\tfreq\t\t23\tservice:gmrs -is:repeater") ||
+		!strings.Contains(out, "2\tband:noaa\tfreq\t\t7\tband:noaa") {
 		t.Errorf("sources list = %q", out)
 	}
 	if out := c.ok("radio", "show", "HT"); !strings.Contains(out, "sources:\n1\t") {
 		t.Errorf("radio show = %q", out)
 	}
-	// Re-sorting by name puts numbers in order; the NOAA section and the
-	// hand-added channel stay where they are.
-	c.ok("radio", "sources", "set", "HT", "1", "--sort", "name", "--keep-sorted")
-	if out := c.ok("radio", "sources", "list", "HT"); !strings.Contains(out, "1\t\tname\tyes\t23\t") {
-		t.Errorf("sources list = %q", out)
-	}
-	if got := c.ok("radio", "sync", "HT", "--dry-run"); !strings.Contains(got, "would re-sort\tsource 1\t") || strings.Contains(got, "source 2\t") {
-		t.Errorf("dry run = %q", got)
-	}
-	if got := c.status("radio", "sync", "HT"); !strings.Contains(got, "Source 1 (service:gmrs -is:repeater): re-sorted") || !strings.HasSuffix(got, "program the radio again") {
-		t.Errorf("sync = %q", got)
-	}
+	// Sorting the section by name puts numbers in order; the NOAA section
+	// and the hand-added channel stay where they are.
+	c.ok("radio", "sections", "set", "HT", "service:gmrs -is:repeater", "--sort", "name")
 	rows = nil
 	if err := json.Unmarshal([]byte(c.ok("radio", "channels", "list", "HT", "--format", "json")), &rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows[0].ChannelName != "AAA New" || rows[1].ChannelName != "GMRS 1" || rows[2].ChannelName != "GMRS 2" || rows[10].ChannelName != "GMRS 10" ||
 		rows[22].ChannelName != "GMRS 22" || rows[23].Memory != 100 || rows[30].ChannelID != hand {
-		t.Errorf("after re-sort: %+v", rows)
+		t.Errorf("sorted: %+v", rows)
 	}
 	if got := c.status("radio", "sync", "HT"); got != "Added 0 channels to HT" {
-		t.Errorf("sorted source re-sorted again: %q", got)
+		t.Errorf("sync after sorting: %q", got)
 	}
-	c.ok("radio", "sources", "set", "HT", "1", "--keep-sorted=false")
 
-	// Moving the section start applies now; removing it clears it.
-	c.ok("radio", "sources", "set", "HT", "2", "--section-start", "50")
-	if !strings.Contains(c.ok("radio", "channels", "list", "HT"), "§50\t") {
+	// A section's start applies now; one behind the sections before it is
+	// refused; without one, it follows them.
+	c.ok("radio", "sections", "set", "HT", "band:noaa", "--start", "50")
+	if !strings.Contains(c.ok("radio", "channels", "list", "HT"), "50\tband:noaa\t") {
 		t.Error("section start not moved")
 	}
-	c.fails("already reach memory", "radio", "sources", "set", "HT", "2", "--section-start", "5")
-	c.ok("radio", "sources", "set", "HT", "2", "--section-start", "")
-	if strings.Contains(c.ok("radio", "channels", "list", "HT"), "§") {
+	c.fails("already reach memory", "radio", "sections", "set", "HT", "band:noaa", "--start", "5")
+	c.ok("radio", "sections", "set", "HT", "band:noaa", "--start", "")
+	if !strings.Contains(c.ok("radio", "channels", "list", "HT"), "24\tband:noaa\t") {
 		t.Error("section start not cleared")
 	}
 	c.fails("has sources 1-2", "radio", "sources", "remove", "HT", "3")
@@ -790,6 +791,12 @@ func TestRadioSources(t *testing.T) {
 	if out := c.ok("radio", "list"); !strings.Contains(out, "HT\tbaofeng-uv5rm\t24") {
 		t.Errorf("channels kept after removing a source: %q", out)
 	}
+	// A section that isn't the default can go; its channels join the
+	// default section.
+	if out := c.status("radio", "sections", "remove", "HT", "service:gmrs -is:repeater"); !strings.Contains(out, "end of the default section") {
+		t.Errorf("remove section = %q", out)
+	}
+	c.fails("default section", "radio", "sections", "remove", "HT", "other")
 }
 
 func TestRadioSkipsOutOfBandChannels(t *testing.T) {

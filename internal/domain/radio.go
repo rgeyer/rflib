@@ -27,16 +27,65 @@ type Radio struct {
 	UpdatedAt  time.Time
 }
 
-// RadioSource is one of a radio's searches, or a plan. For a search, `radio
-// sync` appends the channels it matches that aren't on the radio yet to the
-// source's part of the list, in Sort order. For a plan, the source's part
-// of the list follows the plan: its channels, order, and names.
+// RadioSection is a named part of a radio's list. Sections come in order;
+// every memory belongs to one. A section starts at Start, or right after
+// the section before it; Size, when set, reserves that many memories, so
+// the next section without a start of its own begins after them (a
+// section holding more spills over, with a warning). Its memories are in
+// the order they're placed (Sort empty), or sorted by name or freq. A
+// radio has one default section, where channels added by hand go.
+type RadioSection struct {
+	ID       string
+	RadioID  string
+	Position int
+	Name     string
+	Start    *int
+	Size     *int
+	Sort     string
+	Default  bool
+}
+
+// SectionSorts are a section's orders: manual (empty), name, or freq.
+var SectionSorts = []string{"", "name", "freq"}
+
+func ValidateRadioSection(sec RadioSection) error {
+	if strings.TrimSpace(sec.Name) == "" {
+		return Invalidf("a section needs a name")
+	}
+	if sec.Start != nil && *sec.Start < 0 {
+		return Invalidf("a section's start must not be negative")
+	}
+	if sec.Size != nil && *sec.Size < 1 {
+		return Invalidf("a section's size must be at least 1")
+	}
+	if !slices.Contains(SectionSorts, sec.Sort) {
+		return Invalidf("unknown section order %q; use manual, name, or freq", sec.Sort)
+	}
+	return nil
+}
+
+// Plan numbering on a radio: compact numbers a plan's channels in plan
+// order without gaps; match keeps the plan's numbers, memory = the
+// section's first memory + Ch # - 1.
+const (
+	PlanNumbersCompact = "compact"
+	PlanNumbersMatch   = "match"
+)
+
+// RadioSource is one of a radio's searches, or a plan, feeding a section.
+// For a search, `radio sync` adds the channels it matches that aren't on
+// the radio yet to the source's section, in Sort order (a sorted section
+// keeps its own order). For a plan, the source's channels follow the plan:
+// its channels, order, and names.
 type RadioSource struct {
 	ID      string
 	RadioID string
 	// Position orders a radio's sources, from 0. Earlier sources claim a
 	// channel first.
 	Position int
+	// SectionID is the section the source feeds; SectionName is filled in
+	// on reads.
+	SectionID, SectionName string
 	// Query is the search, in package query's language; empty for a plan.
 	Query string
 	// PlanID is the plan, from the shared library; empty for a search.
@@ -44,12 +93,9 @@ type RadioSource struct {
 	PlanID, PlanName string
 	// Sort orders the channels a sync adds: name or freq.
 	Sort string
-	// SectionStart, when set, starts the source's first channel at that
-	// memory number.
-	SectionStart *int
-	// KeepSorted re-sorts the source's channels on every sync, as
-	// `radio sync --resort` does.
-	KeepSorted bool
+	// PlanNumbers is how a plan's numbers carry onto the radio: compact
+	// (the default) or match.
+	PlanNumbers string
 }
 
 // SortOrders are the orders channels can be added in.
@@ -62,8 +108,10 @@ func ValidateRadioSource(src RadioSource) error {
 	if !slices.Contains(SortOrders, src.Sort) {
 		return sortError(src.Sort)
 	}
-	if src.SectionStart != nil && *src.SectionStart < 0 {
-		return Invalidf("section start must not be negative")
+	switch src.PlanNumbers {
+	case "", PlanNumbersCompact, PlanNumbersMatch:
+	default:
+		return Invalidf("unknown plan numbering %q; use compact or match", src.PlanNumbers)
 	}
 	return nil
 }
@@ -110,36 +158,22 @@ func ValidateSavedSearch(s SavedSearch) error {
 // it. Unset overrides fall back to the channel.
 type RadioEntry struct {
 	Channel Channel
-	// Position is the entry's index in the radio's list, from 0.
+	// Position is the entry's index in the radio's list, from 0, with the
+	// list in section order.
 	Position int
-	// SectionStart, when set, starts this entry at that memory number; the
-	// entries after it continue from there.
-	SectionStart *int
-	Name         string
-	Power        PowerIntent
-	Skip         *bool
+	// Section is the section the entry is in, filled in on reads.
+	Section RadioSection
+	Name    string
+	Power   PowerIntent
+	Skip    *bool
 	// SourceID is the radio source that added the entry; empty for
 	// channels added by hand.
 	SourceID string
-}
-
-// MemoryNumbers assigns memory numbers to entries in list order: contiguous
-// from first, jumping ahead at each section start. A section start that
-// would move backwards is an error.
-func MemoryNumbers(entries []RadioEntry, first int) ([]int, error) {
-	out := make([]int, len(entries))
-	next := first
-	for i, e := range entries {
-		if e.SectionStart != nil {
-			if *e.SectionStart < next {
-				return nil, Invalidf("%q starts a section at memory %d, but the channels before it already reach memory %d", e.Channel.Name, *e.SectionStart, next-1)
-			}
-			next = *e.SectionStart
-		}
-		out[i] = next
-		next++
-	}
-	return out, nil
+	// PlanNumber is a plan source's Ch # for the entry; with MatchPlan
+	// (the source matches plan numbers), the entry goes at its section's
+	// first memory + PlanNumber - 1.
+	PlanNumber *int
+	MatchPlan  bool
 }
 
 // MaxRadioNameLength bounds a radio's name length override.

@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -44,21 +43,5 @@ func TestServiceCapWatts(t *testing.T) {
 		if got != tc.want || ok != tc.ok {
 			t.Errorf("%s at %v: got %v, %v; want %v, %v", tc.c.Service, tc.c.TransmitHz, got, ok, tc.want, tc.ok)
 		}
-	}
-}
-
-func TestMemoryNumbers(t *testing.T) {
-	at := func(n int) *int { return &n }
-	es := []RadioEntry{{}, {SectionStart: at(10)}, {}, {SectionStart: at(12)}, {}}
-	got, err := MemoryNumbers(es, 1)
-	if err != nil || len(got) != 5 || got[0] != 1 || got[1] != 10 || got[2] != 11 || got[3] != 12 || got[4] != 13 {
-		t.Fatalf("got %v, %v", got, err)
-	}
-	es[3].SectionStart = at(11)
-	if _, err := MemoryNumbers(es, 1); err == nil || !strings.Contains(err.Error(), "already reach memory 11") {
-		t.Fatalf("backwards section: %v", err)
-	}
-	if got, _ := MemoryNumbers([]RadioEntry{{}, {}}, 0); got[0] != 0 || got[1] != 1 {
-		t.Fatalf("zero-based: %v", got)
 	}
 }

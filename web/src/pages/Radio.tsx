@@ -1,13 +1,14 @@
-import { ActionIcon, Alert, Badge, Spoiler, Button, Checkbox, Group, List, Menu, Modal, NumberInput, Select, Stack, Switch, Table, Tabs, Text, TextInput, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Affix, Alert, Badge, Paper, Spoiler, Button, Checkbox, Group, List, Menu, Modal, Select, Stack, Switch, Table, Tabs, Text, TextInput, Title, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconArrowDown, IconArrowUp, IconChevronDown, IconDownload, IconPencil, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { IconArrowDown, IconArrowUp, IconChevronDown, IconDots, IconDownload, IconGripVertical, IconPencil, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, call, download, type Memory, type Radio, type Source } from "../api/client";
+import { api, call, download, type Memory, type Radio, type Section, type Source } from "../api/client";
 import { CompareRadio } from "../components/CompareRadio";
 import { FilterMenu, QueryBar } from "../components/QueryBar";
+import { SectionEditor, SectionHeader, useSections } from "../components/Sections";
 import { SourcePreview } from "../components/SourcePreview";
 import { useLib, useTags } from "../lib/library";
 import { failed, ok, warn } from "../lib/notify";
@@ -44,9 +45,59 @@ export function RadioPage() {
   const plan = useQuery({
     queryKey: ["memories", lib, radio, q],
     queryFn: () =>
-      call<{ memories: Memory[]; warnings: string[] }>(api.GET("/libraries/{lib}/radios/{radio}/memories", { params: { path, query: { q } } })),
+      call<{ memories: Memory[]; sections: Section[]; warnings: string[] }>(
+        api.GET("/libraries/{lib}/radios/{radio}/memories", { params: { path, query: { q } } }),
+      ),
     placeholderData: keepPreviousData,
   });
+  const sources = useQuery({
+    queryKey: ["sources", lib, radio],
+    queryFn: () => call<{ sources: Source[] }>(api.GET("/libraries/{lib}/radios/{radio}/sources", { params: { path } })),
+  });
+  const sections = plan.data?.sections ?? [];
+  const [editingSection, setEditingSection] = useState<Section | "new" | null>(null);
+  // Drag and drop: a memory onto a memory (before or after it), onto a
+  // section's header (its top), or into an empty section; a section's
+  // header onto another's (its place).
+  const [drag, setDrag] = useState<{ kind: "memory" | "section"; id: string } | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const moveMemory = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: { section?: string; before?: string; after?: string; top?: boolean } }) =>
+      call(api.POST("/libraries/{lib}/radios/{radio}/channels/{id}/move", { params: { path: { ...path, id } }, body })),
+    onSuccess: refreshAll,
+    onError: failed,
+  });
+  const moveSection = useMutation({
+    mutationFn: ({ id, to }: { id: string; to: number }) =>
+      call(api.POST("/libraries/{lib}/radios/{radio}/sections/{section}/move", { params: { path: { ...path, section: id } }, body: { to } })),
+    onSuccess: refreshAll,
+    onError: failed,
+  });
+  function refreshAll() {
+    void client.invalidateQueries();
+  }
+  const dropOnMemory = (target: Memory, e: React.DragEvent) => {
+    e.preventDefault();
+    setOver(null);
+    if (drag?.kind !== "memory" || drag.id === target.channel.id) return;
+    const box = e.currentTarget.getBoundingClientRect();
+    const after = e.clientY > box.top + box.height / 2;
+    moveMemory.mutate({ id: drag.id, body: after ? { after: target.channel.id } : { before: target.channel.id } });
+    setDrag(null);
+  };
+  const dropOnSection = (target: Section, e: React.DragEvent) => {
+    e.preventDefault();
+    setOver(null);
+    if (drag?.kind === "memory") moveMemory.mutate({ id: drag.id, body: { section: target.id, top: true } });
+    if (drag?.kind === "section" && drag.id !== target.id) moveSection.mutate({ id: drag.id, to: target.number });
+    setDrag(null);
+  };
+  const dragOver = (key: string) => (e: React.DragEvent) => {
+    if (!drag) return;
+    e.preventDefault();
+    setOver(key);
+  };
+  useAutoScroll(drag !== null);
   const tags = useTags(lib);
   const [facets, setFacets] = useState<Facets>(NO_FACETS);
   const shown = (plan.data?.memories ?? []).filter((m) => matchFacets(m, facets));
@@ -89,17 +140,16 @@ export function RadioPage() {
   });
   const refresh = () => void client.invalidateQueries();
   const [preview, setPreview] = useState<SyncResult | null>(null);
-  const [resort, setResort] = useState(false);
   const sync = useMutation({
     mutationFn: (dryRun: boolean) =>
-      call<SyncResult>(api.POST("/libraries/{lib}/radios/{radio}/sync", { params: { path }, body: { dry_run: dryRun, resort } })),
+      call<SyncResult>(api.POST("/libraries/{lib}/radios/{radio}/sync", { params: { path }, body: { dry_run: dryRun } })),
     onSuccess: (r, dryRun) => {
       if (dryRun) {
         setPreview(r);
         return;
       }
       setPreview(null);
-      ok(`Added ${r.added} channels${r.resorted ? `, re-sorted ${r.resorted}; program the radio again` : ""}`);
+      ok(`Added ${r.added} channels${r.resorted ? `, moved ${r.resorted} into their plans' order; program the radio again` : ""}`);
       if (r.layout_error) warn([r.layout_error]);
       refresh();
     },
@@ -112,11 +162,6 @@ export function RadioPage() {
       const skipped = h.get("X-Rflib-Skipped");
       if (skipped) warn([`Left out: ${skipped}`]);
     },
-    onError: failed,
-  });
-  const top = useMutation({
-    mutationFn: (id: string) => call(api.POST("/libraries/{lib}/radios/{radio}/channels/{id}/move", { params: { path: { ...path, id } }, body: { top: true } })),
-    onSuccess: refresh,
     onError: failed,
   });
   const scan = useMutation({
@@ -144,7 +189,6 @@ export function RadioPage() {
           )}
         </div>
         <Group>
-          <Switch label="Re-sort" checked={resort} onChange={(e) => setResort(e.currentTarget.checked)} />
           <Button variant="light" leftSection={<IconRefresh size={16} />} onClick={() => sync.mutate(true)} loading={sync.isPending}>
             Sync
           </Button>
@@ -161,6 +205,38 @@ export function RadioPage() {
           <Tabs.Tab value="compare">Compare with the radio</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="memories" pt="sm">
+          {drag?.kind === "memory" && (
+            // Every section, in reach wherever the memory is on the page.
+            <Affix position={{ top: 8, left: "50%" }} style={{ transform: "translateX(-50%)" }} zIndex={300}>
+              <Paper shadow="md" p="xs" withBorder>
+                <Group gap={6} wrap="wrap" maw="90vw">
+                  <Text size="xs" c="dimmed">
+                    Drop into section:
+                  </Text>
+                  {sections.map((sec) => (
+                    <Badge
+                      key={sec.id}
+                      size="lg"
+                      variant={over === `bar-${sec.id}` ? "filled" : "light"}
+                      tt="none"
+                      style={{ cursor: "copy" }}
+                      onDragOver={dragOver(`bar-${sec.id}`)}
+                      onDragLeave={() => setOver(null)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setOver(null);
+                        moveMemory.mutate({ id: drag.id, body: { section: sec.id } });
+                        setDrag(null);
+                      }}
+                      data-drop-section={sec.name}
+                    >
+                      {sec.name}
+                    </Badge>
+                  ))}
+                </Group>
+              </Paper>
+            </Affix>
+          )}
           {plan.data && plan.data.warnings.length > 0 && (
             <Alert color="yellow" title={`${plan.data.warnings.length} warnings`} mb="sm">
               <Spoiler maxHeight={66} showLabel="Show all" hideLabel="Show fewer">
@@ -191,6 +267,9 @@ export function RadioPage() {
               {plan.data && r ? `${shown.length} of ${r.channels} memories` : "Loading…"}
               {plan.data && <ProgrammedSummary memories={plan.data.memories} />}
             </Text>
+            <Button size="compact-sm" variant="light" leftSection={<IconPlus size={14} />} onClick={() => setEditingSection("new")}>
+              Add section
+            </Button>
             {ids.length > 0 && (
               <>
                 <Text size="sm">{ids.length} selected</Text>
@@ -245,6 +324,7 @@ export function RadioPage() {
                       onChange={() => setSelected(allShown ? new Set() : new Set(shown.map((m) => m.channel.id)))}
                     />
                   </Table.Th>
+                  <Table.Th w={28} />
                   <Table.Th>Memory</Table.Th>
                   <Table.Th>Name on radio</Table.Th>
                   <Table.Th>Fit</Table.Th>
@@ -259,71 +339,152 @@ export function RadioPage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {shown.map((m, i) => (
-                  <Table.Tr key={m.channel.id} opacity={m.exported ? 1 : 0.55}>
-                    <Table.Td>
-                      <Checkbox
-                        aria-label={`Select memory ${m.memory}`}
-                        checked={selected.has(m.channel.id)}
-                        onChange={() => undefined}
-                        onClick={(e) => pick(i, e.shiftKey)}
-                      />
-                    </Table.Td>
-                    <Table.Td>
-                      {m.exported ? (
-                        <>
-                          {m.section_start && "§"}
-                          {m.memory}
-                        </>
-                      ) : (
-                        <Text span c="dimmed" aria-label="No memory number">
-                          –
-                        </Text>
-                      )}
-                    </Table.Td>
-                    <Table.Td ff="monospace" td={m.exported ? undefined : "line-through"}>
-                      {m.name}
-                      {m.overrides.name && "*"}
-                    </Table.Td>
-                    <Table.Td>{m.fit !== "fits" && <Badge size="xs" variant="light">{m.fit}</Badge>}</Table.Td>
-                    <Table.Td>
-                      {m.power ?? "-"}
-                      {m.overrides.power && "*"}
-                    </Table.Td>
-                    <Table.Td>
-                      <Switch size="xs" aria-label={`Scan ${m.channel.name}`} checked={m.scan} onChange={() => scan.mutate(m)} />
-                    </Table.Td>
-                    <Table.Td ff="monospace">{formatMHz(m.channel.rx_hz)}</Table.Td>
-                    <Table.Td>
-                      {duplex(m.channel.rx_hz, m.channel.tx_hz)} {offsetMHz(m.channel.rx_hz, m.channel.tx_hz)}
-                    </Table.Td>
-                    <Table.Td>{toneSummary(m.channel)}</Table.Td>
-                    <Table.Td>{m.channel.name !== m.name ? m.channel.name : ""}</Table.Td>
-                    <Table.Td>
-                      <Programmed m={m} />
-                    </Table.Td>
-                    <Table.Td>
-                      <Group gap={4} wrap="nowrap">
-                        <Tooltip label="Move to the top">
-                          <ActionIcon variant="subtle" size="sm" aria-label="Move to the top" onClick={() => top.mutate(m.channel.id)}>
-                            <IconArrowUp size={14} />
-                          </ActionIcon>
-                        </Tooltip>
-                        <Tooltip label="Take off this radio">
-                          <ActionIcon variant="subtle" color="red" size="sm" aria-label="Take off this radio" onClick={() => takeOff.mutate(m.channel.id)}>
-                            <IconTrash size={14} />
-                          </ActionIcon>
-                        </Tooltip>
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
+                {sections.map((sec) => {
+                  const rows = shown.filter((m) => m.section === sec.id);
+                  const headerKey = `section-${sec.id}`;
+                  return [
+                    <Table.Tr
+                      key={headerKey}
+                      bg={over === headerKey ? "var(--mantine-color-blue-light)" : "var(--mantine-color-default-hover)"}
+                      onDragOver={dragOver(headerKey)}
+                      onDragLeave={() => setOver(null)}
+                      onDrop={(e) => dropOnSection(sec, e)}
+                      data-section={sec.name}
+                    >
+                      <Table.Td colSpan={14}>
+                        <SectionHeader
+                          section={sec}
+                          sources={(sources.data?.sources ?? []).filter((src) => src.section_id === sec.id)}
+                          onEdit={() => setEditingSection(sec)}
+                          dragHandle={{
+                            draggable: true,
+                            onDragStart: () => setDrag({ kind: "section", id: sec.id }),
+                            onDragEnd: () => setDrag(null),
+                          }}
+                        />
+                      </Table.Td>
+                    </Table.Tr>,
+                    rows.length === 0 && (
+                      <Table.Tr key={`empty-${sec.id}`} onDragOver={dragOver(`empty-${sec.id}`)} onDrop={(e) => dropOnSection(sec, e)}>
+                        <Table.Td colSpan={14}>
+                          <Text size="xs" c="dimmed" ta="center" bg={over === `empty-${sec.id}` ? "var(--mantine-color-blue-light)" : undefined}>
+                            {q || Object.values(facets).some((v) => v !== null) ? "Nothing shown here" : "No channels yet: drag memories here"}
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    ),
+                    ...rows.map((m) => {
+                      const i = shown.indexOf(m);
+                      return (
+                        <Table.Tr
+                          key={m.channel.id}
+                          opacity={m.exported ? (drag?.id === m.channel.id ? 0.4 : 1) : 0.55}
+                          onDragOver={dragOver(m.channel.id)}
+                          onDragLeave={() => setOver(null)}
+                          onDrop={(e) => dropOnMemory(m, e)}
+                          style={over === m.channel.id ? { boxShadow: "inset 0 2px 0 var(--mantine-color-blue-filled)" } : undefined}
+                        >
+                          <Table.Td>
+                            <Checkbox
+                              aria-label={`Select memory ${m.memory ?? m.channel.name}`}
+                              checked={selected.has(m.channel.id)}
+                              onChange={() => undefined}
+                              onClick={(e) => pick(i, e.shiftKey)}
+                            />
+                          </Table.Td>
+                          <Table.Td
+                            draggable
+                            onDragStart={() => setDrag({ kind: "memory", id: m.channel.id })}
+                            onDragEnd={() => {
+                              setDrag(null);
+                              setOver(null);
+                            }}
+                            style={{ cursor: "grab" }}
+                            aria-label={`Drag ${m.channel.name}`}
+                          >
+                            <IconGripVertical size={14} color="var(--mantine-color-dimmed)" />
+                          </Table.Td>
+                          <Table.Td>
+                            {m.exported ? (
+                              m.memory
+                            ) : (
+                              <Text span c="dimmed" aria-label="No memory number">
+                                –
+                              </Text>
+                            )}
+                          </Table.Td>
+                          <Table.Td ff="monospace" td={m.exported ? undefined : "line-through"}>
+                            {m.name}
+                            {m.overrides.name && "*"}
+                            {m.plan_number != null && (
+                              <Text span size="xs" c="dimmed" ff="text" ml={6}>
+                                Ch {m.plan_number}
+                              </Text>
+                            )}
+                          </Table.Td>
+                          <Table.Td>{m.fit !== "fits" && <Badge size="xs" variant="light">{m.fit}</Badge>}</Table.Td>
+                          <Table.Td>
+                            {m.power ?? "-"}
+                            {m.overrides.power && "*"}
+                          </Table.Td>
+                          <Table.Td>
+                            <Switch size="xs" aria-label={`Scan ${m.channel.name}`} checked={m.scan} onChange={() => scan.mutate(m)} />
+                          </Table.Td>
+                          <Table.Td ff="monospace">{formatMHz(m.channel.rx_hz)}</Table.Td>
+                          <Table.Td>
+                            {duplex(m.channel.rx_hz, m.channel.tx_hz)} {offsetMHz(m.channel.rx_hz, m.channel.tx_hz)}
+                          </Table.Td>
+                          <Table.Td>{toneSummary(m.channel)}</Table.Td>
+                          <Table.Td>{m.channel.name !== m.name ? m.channel.name : ""}</Table.Td>
+                          <Table.Td>
+                            <Programmed m={m} />
+                          </Table.Td>
+                          <Table.Td>
+                            <Group gap={4} wrap="nowrap">
+                              <Menu position="bottom-end" withinPortal>
+                                <Menu.Target>
+                                  <ActionIcon variant="subtle" size="sm" aria-label={`Move ${m.channel.name}`}>
+                                    <IconDots size={14} />
+                                  </ActionIcon>
+                                </Menu.Target>
+                                <Menu.Dropdown>
+                                  <Menu.Item leftSection={<IconArrowUp size={14} />} onClick={() => moveMemory.mutate({ id: m.channel.id, body: { top: true } })}>
+                                    Top of its section
+                                  </Menu.Item>
+                                  <Menu.Label>Move to section</Menu.Label>
+                                  {sections
+                                    .filter((x) => x.id !== m.section)
+                                    .map((x) => (
+                                      <Menu.Item key={x.id} onClick={() => moveMemory.mutate({ id: m.channel.id, body: { section: x.id } })}>
+                                        {x.name}
+                                      </Menu.Item>
+                                    ))}
+                                </Menu.Dropdown>
+                              </Menu>
+                              <Tooltip label="Take off this radio">
+                                <ActionIcon variant="subtle" color="red" size="sm" aria-label="Take off this radio" onClick={() => takeOff.mutate(m.channel.id)}>
+                                  <IconTrash size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </Group>
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    }),
+                  ];
+                })}
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>
           <Text size="xs" c="dimmed" mt="xs">
-            § starts a section at that memory; * marks this radio's override. Shift-click selects a range. Add channels from the Channels page, or with sources; reorder them with sources and re-sort.
+            Drag memories within and between sections, and drag a section by its handle to reorder sections; while dragging, the bar at the top takes a
+            memory to any section, and the page scrolls near the window's edges. Placing a memory in a section sorted by name or frequency makes it
+            manual. * marks this radio's override; Ch is a plan's channel number. Shift-click selects a range. Add channels from the
+            Channels page, or with sources.
           </Text>
+          {editingSection && (
+            <SectionEditor lib={lib} radio={radio} section={editingSection === "new" ? null : editingSection} onClose={() => setEditingSection(null)} />
+          )}
         </Tabs.Panel>
         <Tabs.Panel value="sources" pt="sm">
           <Sources />
@@ -341,7 +502,7 @@ export function RadioPage() {
                 {s.note || `${s.channels.length} to add`}
                 {s.removed.length > 0 && `, ${s.removed.length} to take off`}
                 {s.skipped.length + s.wrong_mode.length > 0 && `, ${s.skipped.length + s.wrong_mode.length} skipped`}
-                {s.resorted > 0 && `, ${s.resorted} to re-sort`}
+                {s.resorted > 0 && `, ${s.resorted} to put in the plan's order`}
               </Text>
             ))}
             {preview.sources.length === 0 && <Text size="sm">This radio has no sources; add one on the Sources tab.</Text>}
@@ -364,7 +525,13 @@ function Sources() {
   const [plan, setPlan] = useState<string | null>(null);
   const plans = usePlans();
   const [sort, setSort] = useState<string>("name");
-  const [section, setSection] = useState<number | string>("");
+  const [section, setSection] = useState<string>("");
+  const [planNumbers, setPlanNumbers] = useState<string>("compact");
+  const sections = useSections(lib, radio);
+  const sectionChoices = [
+    { value: "", label: "A new section of its own" },
+    ...(sections.data?.sections ?? []).map((x) => ({ value: x.id, label: x.name })),
+  ];
   const sources = useQuery({
     queryKey: ["sources", lib, radio],
     queryFn: () => call<{ sources: Source[] }>(api.GET("/libraries/{lib}/radios/{radio}/sources", { params: { path } })),
@@ -374,13 +541,14 @@ function Sources() {
       call(
         api.POST("/libraries/{lib}/radios/{radio}/sources", {
           params: { path },
-          body: { ...(plan ? { plan } : { query, sort }), section_start: section === "" ? null : Number(section) },
+          body: { ...(plan ? { plan, plan_numbers: planNumbers as Source["plan_numbers"] } : { query, sort }), ...(section ? { section } : {}) },
         }),
       ),
     onSuccess: () => {
       setQuery("");
       setPlan(null);
       setSection("");
+      setPlanNumbers("compact");
       ok("Source added; sync to add its channels");
       void client.invalidateQueries();
     },
@@ -405,8 +573,8 @@ function Sources() {
   return (
     <Stack>
       <Text size="sm" c="dimmed">
-        Sync adds each query source's new matches to its part of the list, in its sort order; earlier sources claim a channel first. A plan
-        source follows its plan: its channels, order, and names, numbered from the section start as the plan numbers them.
+        Sync adds each query source's new matches to its section, in its sort order (a sorted section keeps its own); earlier sources claim a
+        channel first. A plan source follows its plan: its channels, order, and names, numbered without gaps or matching the plan's numbers.
       </Text>
       <Table>
         <Table.Thead>
@@ -424,11 +592,8 @@ function Sources() {
             <Table.Tr key={s.id}>
               <Table.Td>{s.number}</Table.Td>
               <Table.Td ff={s.plan ? undefined : "monospace"}>{s.plan ? `Plan: ${s.plan}` : s.query}</Table.Td>
-              <Table.Td>
-                {s.sort}
-                {s.keep_sorted && " (kept sorted)"}
-              </Table.Td>
-              <Table.Td>{s.section_start ?? ""}</Table.Td>
+              <Table.Td>{s.plan ? (s.plan_numbers === "match" ? "plan numbers" : "plan order") : s.sort}</Table.Td>
+              <Table.Td>{s.section}</Table.Td>
               <Table.Td>{s.channels}</Table.Td>
               <Table.Td>
                 <Group gap={2} wrap="nowrap">
@@ -490,7 +655,20 @@ function Sources() {
           onChange={setPlan}
         />
         <Select label="Sort" w={100} data={["name", "freq"]} value={sort} allowDeselect={false} disabled={plan !== null} onChange={(v) => v && setSort(v)} />
-        <NumberInput label="Section start" w={120} min={0} value={section} onChange={setSection} />
+        {plan !== null && (
+          <Select
+            label="Plan numbers"
+            w={170}
+            data={[
+              { value: "compact", label: "In order, no gaps" },
+              { value: "match", label: "Match the plan's" },
+            ]}
+            value={planNumbers}
+            allowDeselect={false}
+            onChange={(v) => v && setPlanNumbers(v)}
+          />
+        )}
+        <Select label="Section" w={200} data={sectionChoices} value={section} allowDeselect={false} onChange={(v) => setSection(v ?? "")} />
         <Button onClick={() => add.mutate()} loading={add.isPending} disabled={!query.trim() && !plan}>
           Add source
         </Button>
@@ -588,14 +766,15 @@ function EditSource(props: { source: Source; onClose: () => void }) {
   const s = props.source;
   const [query, setQuery] = useState(s.query);
   const [sort, setSort] = useState(s.sort);
-  const [section, setSection] = useState<number | string>(s.section_start ?? "");
-  const [keepSorted, setKeepSorted] = useState(s.keep_sorted);
+  const [section, setSection] = useState(s.section_id);
+  const [planNumbers, setPlanNumbers] = useState<string>(s.plan_numbers);
+  const sections = useSections(lib, radio);
   const save = useMutation({
     mutationFn: () =>
       call(
         api.PATCH("/libraries/{lib}/radios/{radio}/sources/{n}", {
           params: { path: { lib, radio, n: s.number } },
-          body: { ...(s.plan ? {} : { query, sort, keep_sorted: keepSorted }), section_start: section === "" ? null : Number(section) },
+          body: { ...(s.plan ? { plan_numbers: planNumbers as Source["plan_numbers"] } : { query, sort }), section },
         }),
       ),
     onSuccess: () => {
@@ -609,17 +788,40 @@ function EditSource(props: { source: Source; onClose: () => void }) {
     <Modal opened onClose={props.onClose} title={`Edit source ${s.number}`} size="lg">
       <Stack>
         {s.plan ? (
-          <Text size="sm">Plan: {s.plan}. A plan source follows its plan; only its section start changes here.</Text>
+          <>
+            <Text size="sm">Plan: {s.plan}. A plan source follows its plan: its channels, order, and names.</Text>
+            <Select
+              label="Plan numbers"
+              data={[
+                { value: "compact", label: "In the plan's order, without gaps" },
+                { value: "match", label: "Match the plan's: the section's first memory + Ch # − 1" },
+              ]}
+              value={planNumbers}
+              allowDeselect={false}
+              onChange={(v) => v && setPlanNumbers(v)}
+            />
+          </>
         ) : (
           <>
             <TextInput label="Query" ff="monospace" value={query} onChange={(e) => setQuery(e.currentTarget.value)} data-autofocus />
-            <Group grow>
-              <Select label="Sort" data={["name", "freq"]} value={sort} allowDeselect={false} onChange={(v) => v && setSort(v)} />
-              <Switch mt="lg" label="Keep sorted" checked={keepSorted} onChange={(e) => setKeepSorted(e.currentTarget.checked)} />
-            </Group>
+            <Select
+              label="Sort"
+              description="The order a sync adds its channels in; a sorted section keeps its own order"
+              data={["name", "freq"]}
+              value={sort}
+              allowDeselect={false}
+              onChange={(v) => v && setSort(v)}
+            />
           </>
         )}
-        <NumberInput label="Section start" min={0} value={section} onChange={setSection} />
+        <Select
+          label="Section"
+          description="Where a sync adds its channels; those already on the radio stay where they are"
+          data={(sections.data?.sections ?? []).map((x) => ({ value: x.id, label: x.name }))}
+          value={section}
+          allowDeselect={false}
+          onChange={(v) => v && setSection(v)}
+        />
         {!s.plan && <SourcePreview lib={lib} radio={radio} query={query} sort={sort} number={s.number} maxHeight={320} />}
         <Text size="xs" c="dimmed">
           Channels the source already put on the radio stay; a sync adds the changed source's new matches.
@@ -659,6 +861,13 @@ function Programmed(props: { m: Memory }) {
           </Badge>
         </Tooltip>
       )}
+      {m.overflow && (
+        <Tooltip label="Past the end of its section's size, so it spills into the memories after the section">
+          <Badge size="xs" color="orange" variant="light">
+            Past section end
+          </Badge>
+        </Tooltip>
+      )}
       {m.channel.status === "off-air" && (
         <Badge size="xs" color="orange" variant="light">
           Off the air
@@ -683,5 +892,33 @@ function ProgrammedSummary(props: { memories: Memory[] }) {
   const rx = props.memories.filter((m) => m.exported && m.receive_only).length;
   const parts = [out > 0 && `${out} not programmed`, rx > 0 && `${rx} receive only`].filter(Boolean);
   return parts.length ? <>; {parts.join(", ")}</> : null;
+}
+
+/** useAutoScroll scrolls the page while something is dragged near the top
+ * or bottom of the window, faster nearer the edge, since a browser's own
+ * drag doesn't reliably scroll it. */
+function useAutoScroll(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    const edge = 80;
+    let speed = 0;
+    let frame = 0;
+    const onDragOver = (e: DragEvent) => {
+      const h = window.innerHeight;
+      if (e.clientY < edge) speed = -Math.ceil(((edge - e.clientY) / edge) * 24);
+      else if (e.clientY > h - edge) speed = Math.ceil(((e.clientY - (h - edge)) / edge) * 24);
+      else speed = 0;
+    };
+    const tick = () => {
+      if (speed !== 0) window.scrollBy(0, speed);
+      frame = requestAnimationFrame(tick);
+    };
+    document.addEventListener("dragover", onDragOver);
+    frame = requestAnimationFrame(tick);
+    return () => {
+      document.removeEventListener("dragover", onDragOver);
+      cancelAnimationFrame(frame);
+    };
+  }, [active]);
 }
 

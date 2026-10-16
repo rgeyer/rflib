@@ -205,7 +205,10 @@ func TestSyncPlacesAndClaims(t *testing.T) {
 	}
 }
 
-func TestSyncResorts(t *testing.T) {
+// A section sorted by name keeps its channels in order, whatever order
+// they were added in; placing one by hand makes it manual, in the order it
+// had; and a change that would run sections together is refused.
+func TestSortedSections(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newService(t)
 	for _, n := range []string{"GMRS 15", "GMRS 2", "GMRS 1", "GMRS 10"} {
@@ -215,52 +218,69 @@ func TestSyncResorts(t *testing.T) {
 	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
 		t.Fatal(err)
 	}
-	twenty := 20
-	_, src, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "service:gmrs", Sort: "name", SectionStart: &twenty})
+	twenty, name := 20, "name"
+	gmrs, err := s.AddSection(ctx, "HT", domain.RadioSection{Name: "GMRS", Start: &twenty})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Put the source's channels out of order, as an older sort left them,
-	// with a hand-added channel among them.
-	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil {
+	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "service:gmrs", Sort: "freq", SectionID: gmrs.ID}); err != nil {
 		t.Fatal(err)
 	}
-	_, es, _ := s.RadioEntries(ctx, "HT")
-	order := []string{es[3].Channel.ID, es[2].Channel.ID, es[1].Channel.ID, es[0].Channel.ID}
-	if err := s.lib.ReorderRadioChannels(ctx, src.RadioID, order); err != nil {
+	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{mine.ID}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.lib.ReorderRadioChannels(ctx, src.RadioID, []string{order[0], order[1], mine.ID, order[2], order[3]}); err != nil {
+	memories := func() string {
+		t.Helper()
+		l, _, err := s.Layout(ctx, "HT")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, m := range l.Memories {
+			out = append(out, fmt.Sprintf("%d %s", m.Location, m.Original.Name))
+		}
+		return strings.Join(out, ", ")
+	}
+	// Out of order, as placed by hand.
+	_, es, _ := s.RadioEntries(ctx, "HT")
+	if err := s.lib.ReorderRadioChannels(ctx, es[0].Section.RadioID, []string{es[3].Channel.ID, es[1].Channel.ID, es[0].Channel.ID, es[2].Channel.ID, es[4].Channel.ID}); err != nil {
 		t.Fatal(err)
 	}
-	listed := func() string {
-		_, es, _ := s.RadioEntries(ctx, "HT")
-		var out []string
-		for _, e := range es {
-			out = append(out, e.Channel.Name)
-		}
-		return strings.Join(out, ",")
+	if got := memories(); got != "20 GMRS 15, 21 GMRS 2, 22 GMRS 1, 23 GMRS 10, 24 Mine" {
+		t.Fatalf("as placed = %s", got)
 	}
-	before := listed()
-	if dry, err := s.Sync(ctx, "HT", SyncOptions{DryRun: true, Resort: true}); err != nil || dry.Resorted() != 4 || listed() != before {
-		t.Fatalf("dry run: %d moved, %v; list %s", dry.Resorted(), err, listed())
+	if _, err := s.UpdateSection(ctx, "HT", "gmrs", SectionEdit{Sort: &name}); err != nil {
+		t.Fatal(err)
 	}
-	if plain, _ := s.Sync(ctx, "HT", SyncOptions{}); plain.Resorted() != 0 {
-		t.Errorf("a plain sync re-sorted %d", plain.Resorted())
-	}
-	res, err := s.Sync(ctx, "HT", SyncOptions{Resort: true})
-	if err != nil || res.Resorted() != 4 || res.LayoutErr != nil {
-		t.Fatalf("resort: %+v, %v", res, err)
-	}
-	if got := listed(); got != "GMRS 1,GMRS 2,Mine,GMRS 10,GMRS 15" {
-		t.Errorf("after resort: %s", got)
+	if got := memories(); got != "20 GMRS 1, 21 GMRS 2, 22 GMRS 10, 23 GMRS 15, 24 Mine" {
+		t.Fatalf("sorted = %s", got)
 	}
 	_, es, _ = s.RadioEntries(ctx, "HT")
-	if es[0].SectionStart == nil || *es[0].SectionStart != 20 {
-		t.Errorf("section start left the first slot: %+v", es[0])
+	if err := s.MoveChannel(ctx, "HT", es[3].Channel.ID, Move{Top: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := memories(); got != "20 GMRS 15, 21 GMRS 1, 22 GMRS 2, 23 GMRS 10, 24 Mine" {
+		t.Errorf("moved = %s", got)
+	}
+	if sec, _ := s.Section(ctx, "HT", "GMRS"); sec.Sort != "" {
+		t.Errorf("the section is still sorted by %s", sec.Sort)
+	}
+	// Into another section, by name.
+	if err := s.MoveChannel(ctx, "HT", mine.ID, Move{Section: "gmrs", To: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if got := memories(); got != "20 GMRS 15, 21 Mine, 22 GMRS 1, 23 GMRS 2, 24 GMRS 10" {
+		t.Errorf("into GMRS = %s", got)
+	}
+	five := 5
+	if _, err := s.AddSection(ctx, "HT", domain.RadioSection{Name: "Early", Start: &five}); err == nil || !strings.Contains(err.Error(), "already reach memory 24") {
+		t.Errorf("a section behind the others: %v", err)
+	}
+	if _, secs, _ := s.Sections(ctx, "HT"); len(secs) != 2 {
+		t.Errorf("the refused section stayed: %+v", secs)
 	}
 }
 
@@ -594,7 +614,12 @@ func TestPlanRowsAndPlanSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	hundred := 100
-	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{PlanID: "fair", SectionStart: &hundred}); err != nil {
+	fair, err := s.AddSection(ctx, "HT", domain.RadioSection{Name: "Fair", Start: &hundred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, planSource, err := s.AddSource(ctx, "HT", domain.RadioSource{PlanID: "fair", SectionID: fair.ID, PlanNumbers: domain.PlanNumbersMatch})
+	if err != nil {
 		t.Fatal(err)
 	}
 	dry, err := s.Sync(ctx, "HT", SyncOptions{DryRun: true})
@@ -618,6 +643,18 @@ func TestPlanRowsAndPlanSources(t *testing.T) {
 	}
 	if got := memories(); got != "1 Simplex, 100 FAIR TAC1, 109 Broadcast Pk, 110 La Cumbre" {
 		t.Errorf("memories = %q", got)
+	}
+	// Compact: the plan's order, without its gaps.
+	planSource.PlanNumbers = domain.PlanNumbersCompact
+	if err := s.lib.UpdateRadioSource(ctx, planSource); err != nil {
+		t.Fatal(err)
+	}
+	if got := memories(); got != "1 Simplex, 100 FAIR TAC1, 101 Broadcast Pk, 102 La Cumbre" {
+		t.Errorf("compact = %q", got)
+	}
+	planSource.PlanNumbers = domain.PlanNumbersMatch
+	if err := s.lib.UpdateRadioSource(ctx, planSource); err != nil {
+		t.Fatal(err)
 	}
 	// The plan changes: its channels follow, and a dropped one comes off.
 	p, _ = s.GetPlan(ctx, "fair")

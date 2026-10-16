@@ -109,7 +109,9 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.getByRole("button", { name: "Sync now" }).click();
   await expect(page.getByText("Added 8 channels")).toBeVisible();
   await page.getByRole("tab", { name: "Memories" }).click();
-  await expect(page.getByRole("row", { name: /Marian/ })).toBeVisible();
+  // The source's section heads its memories.
+  await expect(page.locator("tr[data-section]", { hasText: "band:noaa OR name:Marian" })).toBeVisible();
+  await expect(page.getByRole("row", { name: /^Select memory.*Marian/ })).toBeVisible();
 
   // Export downloads the CHIRP file.
   const download = page.waitForEvent("download");
@@ -193,21 +195,26 @@ test("organizations, systems, and plans", async ({ page, request }) => {
   await saveWithReason("pilot");
   await expect(page.getByRole("row", { name: /^10 70cm FM Call/ })).toBeVisible();
 
-  // The plan on a radio, from memory 50.
+  // The plan on a radio, in a section from memory 50, matching its numbers.
   await request.post("/api/v1/libraries/default/radios", { data: { name: "Mobile", model: "baofeng-uv5rm" } });
+  await request.post("/api/v1/libraries/default/radios/Mobile/sections", { data: { name: "Fair plan", start: 50 } });
   await page.goto("/l/default/radios/Mobile");
   await page.getByRole("tab", { name: "Sources" }).click();
   await page.getByRole("combobox", { name: "or a plan" }).click();
   await page.getByRole("option", { name: "Fair" }).click();
-  await page.getByRole("textbox", { name: "Section start" }).fill("50");
+  await page.getByRole("combobox", { name: "Plan numbers" }).click();
+  await page.getByRole("option", { name: "Match the plan's" }).click();
+  await page.getByRole("combobox", { name: "Section" }).click();
+  await page.getByRole("option", { name: "Fair plan" }).click();
   await page.getByRole("button", { name: "Add source" }).click();
-  await expect(page.getByText("Plan: Fair")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "Plan: Fair" })).toBeVisible();
   await page.getByRole("button", { name: "Sync" }).click();
   await expect(page.getByText(/plan Fair\): 2 to add/)).toBeVisible();
   await page.getByRole("button", { name: "Sync now" }).click();
   await page.getByRole("tab", { name: "Memories" }).click();
-  await expect(page.getByRole("row", { name: /FAIR TAC1/ })).toContainText("50");
-  await expect(page.getByRole("row", { name: /70cm FM Call/ })).toContainText("59");
+  await expect(page.getByRole("row", { name: /^Select memory.*FAIR TAC1/ })).toContainText("50");
+  await expect(page.getByRole("row", { name: /^Select memory.*70cm FM Call/ })).toContainText("59");
+  await expect(page.getByRole("row", { name: /^Select memory.*70cm FM Call/ })).toContainText("Ch 10");
 });
 
 // Runs after the first test: from the shared list, link a channel onto a
@@ -333,7 +340,7 @@ test("add a search as a radio source, with a preview", async ({ page, request })
   await expect(page.getByText(/Added the search to Previewer as a source and synced: \d+ channels added/)).toBeVisible();
   // On a radio, they're in use, so the channel list shows them, marked shared.
   await page.getByLabel("Search", { exact: true }).fill('name:"GMRS 15R"');
-  const row = page.getByRole("row", { name: /GMRS 15R/ });
+  const row = page.getByRole("row", { name: /^Select GMRS 15R/ });
   await expect(row).toBeVisible();
   await expect(row.getByLabel("Shared channel")).toBeVisible();
 
@@ -384,10 +391,10 @@ test("compare a radio with its file, and start it from that", async ({ page, req
   // Compared again: nothing is only on the radio; Marian's name differs.
   await expect(page.getByText("0 only on the radio")).toBeVisible();
   await expect(page.getByText("1 changed")).toBeVisible();
-  // Each memory kept its number, each starting a section (§).
+  // Each memory kept its number, each in a section starting there.
   await page.getByRole("tab", { name: "Memories" }).click();
-  await expect(page.getByRole("row", { name: /Simplex A/ }).getByRole("cell").nth(1)).toHaveText("§4");
-  await expect(page.getByRole("row", { name: /Marian/ }).getByRole("cell").nth(1)).toHaveText("§9");
+  await expect(page.getByRole("row", { name: /Simplex A/ }).getByRole("cell").nth(2)).toHaveText("4");
+  await expect(page.getByRole("row", { name: /Marian/ }).getByRole("cell").nth(2)).toHaveText("9");
 });
 
 test("a first import ignores memory numbers", async ({ page, request }) => {
@@ -407,8 +414,8 @@ test("a first import ignores memory numbers", async ({ page, request }) => {
   await expect(page.getByText("0 only on the radio")).toBeVisible();
   // What was missing joined the end; rflib's order stands.
   await page.getByRole("tab", { name: "Memories" }).click();
-  await expect(page.getByRole("row", { name: /Marian/ }).getByRole("cell").nth(1)).toHaveText("1");
-  await expect(page.getByRole("row", { name: /Simplex A/ }).getByRole("cell").nth(1)).toHaveText("2");
+  await expect(page.getByRole("row", { name: /Marian/ }).getByRole("cell").nth(2)).toHaveText("1");
+  await expect(page.getByRole("row", { name: /Simplex A/ }).getByRole("cell").nth(2)).toHaveText("2");
 });
 
 test("the default search says what more the shared list has", async ({ page }) => {
@@ -444,14 +451,64 @@ test("the memories tab shows what is actually programmed", async ({ page, reques
   // memories after it move up, as on the programmed radio.
   const wx3Row = page.getByRole("row", { name: /NOAA WX3/ });
   await expect(wx3Row.getByText("Not programmed: retired")).toBeVisible();
-  await expect(wx3Row.getByRole("cell").nth(1)).toHaveText("–");
-  await expect(page.getByRole("row", { name: /NOAA WX4/ }).getByRole("cell").nth(1)).toHaveText("2");
+  await expect(wx3Row.getByRole("cell").nth(2)).toHaveText("–");
+  await expect(page.getByRole("row", { name: /NOAA WX4/ }).getByRole("cell").nth(2)).toHaveText("2");
   await expect(page.getByRole("row", { name: /NOAA WX2/ }).getByText("RX only")).toBeVisible();
 
   // Back in service, it's programmed again.
   await status("active");
   await page.reload();
   await expect(page.getByRole("row", { name: /NOAA WX3/ }).getByText("RX only")).toBeVisible();
-  await expect(page.getByRole("row", { name: /NOAA WX4/ }).getByRole("cell").nth(1)).toHaveText("3");
+  await expect(page.getByRole("row", { name: /NOAA WX4/ }).getByRole("cell").nth(2)).toHaveText("3");
   await expect(page.getByText(/not programmed/)).toHaveCount(0);
+});
+
+test("sections: add one, and drag memories and sections", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Sectioned", model: "baofeng-uv5rm" } });
+  await request.post("/api/v1/libraries/default/radios/Sectioned/channels", {
+    data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2" OR name:"NOAA WX3"', sort: "name" },
+  });
+  await page.goto("/l/default/radios/Sectioned");
+  const number = (name: string) => page.getByRole("row", { name: new RegExp(`^Select memory.*${name}`) }).getByRole("cell").nth(2);
+  await expect(number("NOAA WX3")).toHaveText("3");
+
+  // A section at memory 20, reserving 5.
+  await page.getByRole("button", { name: "Add section" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "Name" }).fill("Weather");
+  await dialog.getByRole("textbox", { name: "Start" }).fill("20");
+  await dialog.getByRole("textbox", { name: "Size" }).fill("5");
+  await expect(dialog.getByRole("textbox", { name: "End" })).toHaveValue("24");
+  await dialog.getByRole("button", { name: "Add section" }).click();
+  await expect(page.getByText("Section added")).toBeVisible();
+  const weather = page.locator("tr[data-section='Weather']");
+  await expect(weather).toContainText("Memories 20–24");
+  await expect(page.getByText("No channels yet: drag memories here")).toBeVisible();
+
+  // Drag WX2 into it, then WX3 before WX2.
+  await page.getByLabel("Drag NOAA WX2").dragTo(weather);
+  await expect(number("NOAA WX2")).toHaveText("20");
+  await page.getByLabel("Drag NOAA WX3").dragTo(page.getByRole("row", { name: /^Select memory.*NOAA WX2/ }), { targetPosition: { x: 40, y: 2 } });
+  await expect(number("NOAA WX3")).toHaveText("20");
+  await expect(number("NOAA WX2")).toHaveText("21");
+  await expect(weather).toContainText("Memories 20–24");
+
+  // While dragging, a bar at the top lists every section, wherever it is.
+  const dropOnBar = async (memory: string, section: string) => {
+    await page.getByLabel(`Drag ${memory}`).hover();
+    await page.mouse.down();
+    await page.mouse.move(10, 300, { steps: 5 }); // the drag starts, and the bar shows
+    await page.locator(`[data-drop-section='${section}']`).hover();
+    await page.mouse.up();
+  };
+  await dropOnBar("NOAA WX1", "Weather");
+  await expect(number("NOAA WX1")).toHaveText("22");
+  await expect(page.locator("[data-drop-section]")).toHaveCount(0);
+  await dropOnBar("NOAA WX1", "Other");
+  await expect(number("NOAA WX1")).toHaveText("25"); // Other follows Weather's 20-24
+
+  // Drag the Other section's handle onto Weather: Other goes first.
+  await page.getByLabel("Drag section Other").dragTo(weather);
+  await expect(page.locator("tr[data-section]").first()).toHaveAttribute("data-section", "Other");
+  await expect(number("NOAA WX1")).toHaveText("1");
 });

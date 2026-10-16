@@ -39,15 +39,21 @@ func TestOrgsSystemsAndPlans(t *testing.T) {
 		t.Errorf("plan channels:\n%s", got)
 	}
 	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
-	c.ok("radio", "sources", "add", "HT", "--plan", "fair", "--section-start", "50")
+	c.ok("radio", "sections", "add", "HT", "Fair", "--start", "50")
+	c.ok("radio", "sources", "add", "HT", "--plan", "fair", "--section", "fair", "--plan-numbers", "match")
 	c.fails("not both", "radio", "sources", "add", "HT", "band:2m", "--plan", "fair")
 	c.status("radio", "sync", "HT")
-	if got := c.ok("radio", "channels", "list", "HT", "--fields", "memory,name"); got != "§50\tFAIR TAC1*\n§54\t70cm FM Call" {
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "memory,plan_ch,name"); got != "50\t1\tFAIR TAC1*\n54\t5\t70cm FM Call" {
 		t.Errorf("radio channels:\n%s", got)
+	}
+	// Compact: the plan's order, without its gaps.
+	c.ok("radio", "sources", "set", "HT", "1", "--plan-numbers", "compact")
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "memory,plan_ch,name"); got != "50\t1\tFAIR TAC1*\n51\t5\t70cm FM Call" {
+		t.Errorf("compact:\n%s", got)
 	}
 	c.ok("plan", "entries", "remove", "Fair", "2", "--reason", "smaller")
 	c.status("radio", "sync", "HT")
-	if got := c.ok("radio", "channels", "list", "HT", "--fields", "memory,name"); got != "§50\tFAIR TAC1*" {
+	if got := c.ok("radio", "channels", "list", "HT", "--fields", "memory,name"); got != "50\tFAIR TAC1*" {
 		t.Errorf("after the plan changed:\n%s", got)
 	}
 	if got := c.ok("plan", "history", "Fair"); !strings.Contains(got, "revision 4\t") || !strings.Contains(got, "smaller") {

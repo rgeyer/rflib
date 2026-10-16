@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -353,15 +354,16 @@ func cmpOr(v, fallback string) string {
 }
 
 type Source struct {
-	Number       int     `json:"number"`
-	ID           string  `json:"id"`
-	Query        string  `json:"query"`
-	Plan         *string `json:"plan"`
-	PlanID       *string `json:"plan_id"`
-	Sort         string  `json:"sort"`
-	SectionStart *int    `json:"section_start"`
-	KeepSorted   bool    `json:"keep_sorted"`
-	Channels     int     `json:"channels"`
+	Number      int     `json:"number"`
+	ID          string  `json:"id"`
+	Query       string  `json:"query"`
+	Plan        *string `json:"plan"`
+	PlanID      *string `json:"plan_id"`
+	Sort        string  `json:"sort"`
+	SectionID   string  `json:"section_id"`
+	Section     string  `json:"section"`
+	PlanNumbers string  `json:"plan_numbers"`
+	Channels    int     `json:"channels"`
 }
 
 func newSources(srcs []domain.RadioSource, es []domain.RadioEntry) []Source {
@@ -371,7 +373,7 @@ func newSources(srcs []domain.RadioSource, es []domain.RadioEntry) []Source {
 	}
 	out := make([]Source, len(srcs))
 	for i, s := range srcs {
-		out[i] = Source{s.Position + 1, s.ID, s.Query, optional(s.PlanName), optional(s.PlanID), s.Sort, s.SectionStart, s.KeepSorted, count[s.ID]}
+		out[i] = Source{s.Position + 1, s.ID, s.Query, optional(s.PlanName), optional(s.PlanID), s.Sort, s.SectionID, s.SectionName, s.PlanNumbers, count[s.ID]}
 	}
 	return out
 }
@@ -385,14 +387,18 @@ type Overrides struct {
 
 // Memory is one memory as a radio will be programmed.
 type Memory struct {
-	Memory       *int    `json:"memory"`
-	SectionStart bool    `json:"section_start"`
-	Name         string  `json:"name"`
-	Fit          string  `json:"fit"`
-	Deduped      bool    `json:"deduped"`
-	Power        *string `json:"power"`
-	Scan         bool    `json:"scan"`
-	Exported     bool    `json:"exported"`
+	Memory  *int   `json:"memory"`
+	Section string `json:"section"`
+	// PlanNumber is a plan source's Ch #.
+	PlanNumber *int `json:"plan_number"`
+	// Overflow: past the end of its section's size.
+	Overflow bool    `json:"overflow"`
+	Name     string  `json:"name"`
+	Fit      string  `json:"fit"`
+	Deduped  bool    `json:"deduped"`
+	Power    *string `json:"power"`
+	Scan     bool    `json:"scan"`
+	Exported bool    `json:"exported"`
 	// NotProgrammed says why an export doesn't program the memory.
 	NotProgrammed *string `json:"not_programmed"`
 	ReceiveOnly   bool    `json:"receive_only"`
@@ -414,8 +420,31 @@ func newMemories(p program.Layout, es []domain.RadioEntry) []Memory {
 		if r := m.NotProgrammed(); r != "" {
 			why = &r
 		}
-		out[i] = Memory{number(m.Location), e.SectionStart != nil, m.Channel.Name, string(m.Name.Method), m.Name.Deduped, power, !m.Channel.Skip, m.Programmed(),
+		out[i] = Memory{number(m.Location), e.Section.ID, e.PlanNumber, m.Overflow, m.Channel.Name, string(m.Name.Method), m.Name.Deduped, power, !m.Channel.Skip, m.Programmed(),
 			why, m.ReceiveOnly(), m.TransmitToneOnly, Overrides{e.Name != "", e.Power != "", e.Skip != nil}, newChannel(m.Original)}
+	}
+	return out
+}
+
+// Section is one of a radio's sections, as laid out: First is the memory
+// it begins at, and Last the last its channels use (First - 1 for none).
+type Section struct {
+	ID      string `json:"id"`
+	Number  int    `json:"number"`
+	Name    string `json:"name"`
+	Start   *int   `json:"start"`
+	Size    *int   `json:"size"`
+	Sort    string `json:"sort"`
+	Default bool   `json:"default"`
+	First   int    `json:"first"`
+	Last    int    `json:"last"`
+}
+
+func newSections(p program.Layout) []Section {
+	out := make([]Section, len(p.Sections))
+	for i, x := range p.Sections {
+		sec := x.Section
+		out[i] = Section{sec.ID, sec.Position + 1, sec.Name, sec.Start, sec.Size, cmp.Or(sec.Sort, "manual"), sec.Default, x.First, x.Last}
 	}
 	return out
 }

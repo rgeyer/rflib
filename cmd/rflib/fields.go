@@ -188,9 +188,15 @@ func memoryColumns() []field[memory] {
 			if m.Location == program.NoNumber {
 				return "-" // not programmed: no number
 			}
-			return mark(m.entry.SectionStart != nil, "§") + fmt.Sprint(m.Location)
+			return fmt.Sprint(m.Location)
 		}, json: func(m m) any { return m.Location }},
-		{name: "section_start", text: func(m m) string { return yesNo(m.entry.SectionStart != nil) }, json: func(m m) any { return m.entry.SectionStart != nil }},
+		{name: "section", text: func(m m) string { return m.entry.Section.Name }},
+		{name: "plan_ch", text: func(m m) string {
+			if m.entry.PlanNumber == nil {
+				return ""
+			}
+			return fmt.Sprint(*m.entry.PlanNumber)
+		}, json: func(m m) any { return m.entry.PlanNumber }},
 		{name: "name", text: func(m m) string { return m.Channel.Name + mark(m.entry.Name != "", "*") }, json: func(m m) any { return m.Channel.Name }},
 		{name: "fit", text: func(m m) string { return string(m.Name.Method) }},
 		{name: "power", text: func(m m) string { return powerLabel(m.Memory) + mark(m.entry.Power != "", "*") }, json: func(m m) any { return powerLabel(m.Memory) }},
@@ -212,6 +218,9 @@ func memoryColumns() []field[memory] {
 			if m.TransmitToneOnly {
 				notes = append(notes, "tx tone only")
 			}
+			if m.Overflow {
+				notes = append(notes, "past its section's end")
+			}
 			return strings.Join(notes, ", ")
 		}, json: func(m m) any { return m.Programmed() }},
 		{name: "exported", text: func(m m) string { return yesNo(m.Programmed()) }, json: func(m m) any { return m.Programmed() }},
@@ -229,5 +238,5 @@ func memoryColumns() []field[memory] {
 
 var memoryListing = listing[memory]{
 	fields:   memoryColumns(),
-	defaults: []string{"memory", "name", "fit", "power", "scan", "rx", "duplex", "offset", "tone", "programmed", "channel", "id"},
+	defaults: []string{"memory", "section", "name", "fit", "power", "scan", "rx", "duplex", "offset", "tone", "programmed", "channel", "id"},
 }
