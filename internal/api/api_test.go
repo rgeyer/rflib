@@ -312,10 +312,36 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 	var mems struct {
 		Memories []Memory `json:"memories"`
 	}
-	c.do("PATCH", L+"/radios/HT/channels/"+wx.ID, map[string]any{"name": "WX", "section_start": 10}, 200, &mems)
-	c.do("POST", L+"/radios/HT/channels/"+wx.ID+"/move", map[string]any{"top": true}, 200, &mems)
-	if mems.Memories[0].Name != "WX" || *mems.Memories[0].Memory != 10 || !mems.Memories[0].Overrides.Name {
+	c.do("PATCH", L+"/radios/HT/channels/"+wx.ID, map[string]any{"name": "WX"}, 200, &mems)
+	// A section of its own, starting at 10.
+	var secs struct {
+		Sections []Section `json:"sections"`
+	}
+	c.do("POST", L+"/radios/HT/sections", map[string]any{"name": "Weather", "start": 10, "size": 3}, 201, &secs)
+	if len(secs.Sections) != 2 || secs.Sections[0].Name != "Weather" || secs.Sections[0].First != 10 || secs.Sections[0].Last != 9 || !secs.Sections[1].Default {
+		t.Errorf("sections = %+v", secs.Sections)
+	}
+	c.do("POST", L+"/radios/HT/channels/"+wx.ID+"/move", map[string]any{"section": "weather"}, 200, &mems)
+	if mems.Memories[0].Name != "WX" || *mems.Memories[0].Memory != 10 || !mems.Memories[0].Overrides.Name || mems.Memories[0].Section != secs.Sections[0].ID {
 		t.Errorf("memories = %+v", mems.Memories[0])
+	}
+	if *mems.Memories[1].Memory != 13 {
+		t.Errorf("after the section's size, %+v", mems.Memories[1])
+	}
+	c.do("PATCH", L+"/radios/HT/sections/Weather", map[string]any{"size": nil, "sort": "freq"}, 200, &secs)
+	if secs.Sections[0].Size != nil || secs.Sections[0].Sort != "freq" {
+		t.Errorf("updated section = %+v", secs.Sections[0])
+	}
+	if code := c.errCode("DELETE", L+"/radios/HT/sections/Other", nil, 400); code != "invalid" {
+		t.Errorf("delete the default: %s", code)
+	}
+	c.do("POST", L+"/radios/HT/sections/Other/move", map[string]any{"to": 1}, 200, &secs)
+	if secs.Sections[0].Name != "Other" {
+		t.Errorf("moved = %+v", secs.Sections)
+	}
+	c.do("DELETE", L+"/radios/HT/sections/Weather", nil, 200, &secs)
+	if len(secs.Sections) != 1 {
+		t.Errorf("after delete = %+v", secs.Sections)
 	}
 	// A search filters the rows but keeps the whole radio's numbering.
 	c.do("GET", L+"/radios/HT/memories", nil, 200, &mems)
@@ -324,7 +350,14 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 	if len(mems.Memories) != 1 || *mems.Memories[0].Memory != *last.Memory {
 		t.Errorf("searched memories = %+v, want memory %d", mems.Memories, *last.Memory)
 	}
-	c.do("POST", L+"/radios/HT/sources", map[string]any{"query": "tag:ham", "section_start": 50}, 201, nil)
+	c.do("POST", L+"/radios/HT/sections", map[string]any{"name": "Ham", "start": 50}, 201, nil)
+	var srcs struct {
+		Sources []Source `json:"sources"`
+	}
+	c.do("POST", L+"/radios/HT/sources", map[string]any{"query": "tag:ham", "section": "Ham"}, 201, &srcs)
+	if srcs.Sources[0].Section != "Ham" || srcs.Sources[0].PlanNumbers != "compact" {
+		t.Errorf("source = %+v", srcs.Sources[0])
+	}
 	var sync struct {
 		Added int `json:"added"`
 	}
@@ -489,7 +522,8 @@ func TestOrganizationsSystemsAndPlans(t *testing.T) {
 	var sources struct {
 		Sources []Source `json:"sources"`
 	}
-	c.do("POST", L+"/radios/HT/sources", map[string]any{"plan": "fair", "section_start": 50}, 201, &sources)
+	c.do("POST", L+"/radios/HT/sections", map[string]any{"name": "Fair", "start": 50}, 201, nil)
+	c.do("POST", L+"/radios/HT/sources", map[string]any{"plan": "fair", "section": "Fair", "plan_numbers": "match"}, 201, &sources)
 	if sources.Sources[0].Plan == nil || *sources.Sources[0].Plan != "Fair" {
 		t.Errorf("sources = %+v", sources)
 	}

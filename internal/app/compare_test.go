@@ -116,7 +116,7 @@ func TestCompareRadio(t *testing.T) {
 	for _, m := range layout.Memories {
 		placed = append(placed, fmt.Sprintf("%02d=%s", m.Location, m.Original.Name))
 	}
-	if got, want := strings.Join(placed, " "), "01=Calling 02=Repeater 03=Extra 05=NOAA WX1 07=Mystery 08=Other"; got != want {
+	if got, want := strings.Join(placed, " "), "01=Calling 02=Repeater 03=Extra 04=Other 05=NOAA WX1 07=Mystery"; got != want {
 		t.Errorf("layout = %s, want %s", got, want)
 	}
 	// Compared again, only what rflib changes remains: Extra, Other moved

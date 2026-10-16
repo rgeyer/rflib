@@ -232,6 +232,191 @@ DELETE FROM channel_tags WHERE tag IN ('linked', 'allstar', 'echolink', 'wires-x
 	// Radios hold shared channels directly, and a library follows the
 	// shared channels it uses (see foldLinks).
 	{version: 16, after: foldLinks, sql: `CREATE TABLE shared_follows (library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, shared_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, seen_revision INTEGER NOT NULL, PRIMARY KEY(library_id, shared_id));`},
+	// A radio's list is in sections; section starts and keep-sorted move
+	// from channels and sources onto them (see sectionRadios).
+	{version: 17, after: sectionRadios, sql: `
+CREATE TABLE radio_sections (id TEXT PRIMARY KEY, radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, start INTEGER, size INTEGER, sort TEXT NOT NULL DEFAULT '', is_default INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX idx_radio_sections_order ON radio_sections(radio_id, position);
+ALTER TABLE radio_channels ADD COLUMN section_id TEXT REFERENCES radio_sections(id);
+ALTER TABLE radio_channels ADD COLUMN plan_number INTEGER;
+ALTER TABLE radio_sources ADD COLUMN section_id TEXT REFERENCES radio_sections(id);
+ALTER TABLE radio_sources ADD COLUMN plan_numbers TEXT NOT NULL DEFAULT 'compact';`},
+}
+
+// sectionRadios finishes migration 17: each radio's list becomes sections,
+// with the same memory numbers. A new section begins at each channel that
+// started a section, and wherever the list moves between sources or to
+// channels added by hand. A source's section is the first of its runs,
+// sorted as it was when it kept itself sorted; a source with no channels
+// yet gets an empty section of its own, at its start. A plan source that
+// had a start kept its plan's numbers, so it matches them. Every radio
+// ends with an empty default section, "Other". Then the old section
+// starts and keep-sorted go.
+func sectionRadios(ctx context.Context, tx *sql.Tx) error {
+	type source struct {
+		id, query, sort, plan, planName string
+		start                           sql.NullInt64
+		keepSorted                      bool
+		section                         string
+	}
+	type entry struct {
+		channel, source string
+		start           sql.NullInt64
+	}
+	var radios []string
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM radios ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		radios = append(radios, id)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, radio := range radios {
+		var sources []*source
+		bySource := map[string]*source{}
+		rows, err := tx.QueryContext(ctx, `SELECT id, query, sort, section_start, keep_sorted, coalesce(plan_id,''),
+			coalesce((SELECT name FROM plans WHERE plans.id=radio_sources.plan_id),'') FROM radio_sources WHERE radio_id=? ORDER BY position`, radio)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			s := &source{}
+			if err := rows.Scan(&s.id, &s.query, &s.sort, &s.start, &s.keepSorted, &s.plan, &s.planName); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			sources = append(sources, s)
+			bySource[s.id] = s
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		var entries []entry
+		rows, err = tx.QueryContext(ctx, `SELECT channel_id, coalesce(source_id,''), section_start FROM radio_channels WHERE radio_id=? ORDER BY position`, radio)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var e entry
+			if err := rows.Scan(&e.channel, &e.source, &e.start); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if bySource[e.source] == nil {
+				e.source = ""
+			}
+			entries = append(entries, e)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		position := 0
+		section := func(name string, start sql.NullInt64, sort string, isDefault bool) (string, error) {
+			var id string
+			if err := tx.QueryRowContext(ctx, `SELECT `+newIDSQL).Scan(&id); err != nil {
+				return "", err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO radio_sections (id, radio_id, position, name, start, sort, is_default) VALUES (?,?,?,?,?,?,?)`,
+				id, radio, position, name, start, sort, isDefault)
+			position++
+			return id, err
+		}
+		label := func(s *source) string {
+			if s.plan != "" {
+				return "Plan: " + s.planName
+			}
+			if len(s.query) > 40 {
+				return s.query[:39] + "…"
+			}
+			return s.query
+		}
+		current, currentSource := "", "\x00"
+		planNumber := 0
+		for _, e := range entries {
+			src := bySource[e.source]
+			isPlan := src != nil && src.plan != ""
+			// A plan's inner starts are its numbering, not new sections.
+			newRun := e.source != currentSource || (e.start.Valid && (!isPlan || src.section == ""))
+			if newRun {
+				name, sort := "Hand-picked", ""
+				if src != nil {
+					name = label(src)
+					if src.keepSorted {
+						sort = src.sort
+					}
+				}
+				if src != nil && src.section != "" {
+					name += " (more)"
+					sort = ""
+				}
+				start := e.start
+				if src != nil && src.section == "" && src.start.Valid {
+					start = src.start
+				}
+				id, err := section(name, start, sort, false)
+				if err != nil {
+					return err
+				}
+				current, currentSource = id, e.source
+				if src != nil && src.section == "" {
+					src.section = id
+					planNumber = 0
+				}
+			}
+			var number any
+			if isPlan && src.start.Valid {
+				planNumber++
+				if e.start.Valid {
+					planNumber = int(e.start.Int64-src.start.Int64) + 1
+				}
+				number = planNumber
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE radio_channels SET section_id=?, plan_number=? WHERE radio_id=? AND channel_id=?`, current, number, radio, e.channel); err != nil {
+				return err
+			}
+		}
+		for _, s := range sources {
+			if s.section == "" {
+				sort := ""
+				if s.keepSorted {
+					sort = s.sort
+				}
+				id, err := section(label(s), s.start, sort, false)
+				if err != nil {
+					return err
+				}
+				s.section = id
+			}
+			numbers := "compact"
+			if s.plan != "" && s.start.Valid {
+				numbers = "match"
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE radio_sources SET section_id=?, plan_numbers=? WHERE id=?`, s.section, numbers, s.id); err != nil {
+				return err
+			}
+		}
+		if _, err := section("Other", sql.NullInt64{}, "", true); err != nil {
+			return err
+		}
+	}
+	for _, q := range []string{
+		`ALTER TABLE radio_channels DROP COLUMN section_start`,
+		`ALTER TABLE radio_sources DROP COLUMN section_start`,
+		`ALTER TABLE radio_sources DROP COLUMN keep_sorted`,
+	} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ungroup finishes migration 9 once new_channels holds the channels: it
@@ -265,7 +450,6 @@ func foldLinks(ctx context.Context, tx *sql.Tx) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	radios := map[string]bool{}
 	for _, l := range links {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO shared_follows (library_id, shared_id, seen_revision) VALUES (?,?,?)
 			ON CONFLICT(library_id, shared_id) DO UPDATE SET seen_revision=max(seen_revision, excluded.seen_revision)`, l.library, l.shared, l.seen); err != nil {
@@ -288,7 +472,6 @@ func foldLinks(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		for _, r := range onRadios {
-			radios[r] = true
 			var has int
 			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM radio_channels WHERE radio_id=? AND channel_id=?`, r, l.shared).Scan(&has); err != nil {
 				return err
@@ -316,16 +499,6 @@ func foldLinks(ctx context.Context, tx *sql.Tx) error {
 			q = `DELETE FROM channels WHERE id=?`
 		}
 		if _, err := tx.ExecContext(ctx, q, l.id); err != nil {
-			return err
-		}
-	}
-	// Close the gaps dropped entries left in radios' memory order.
-	for r := range radios {
-		order, err := radioOrder(ctx, tx, r)
-		if err != nil {
-			return err
-		}
-		if err := renumber(ctx, tx, r, order); err != nil {
 			return err
 		}
 	}

@@ -516,7 +516,7 @@ paths:
   /libraries/{lib}/radios/{radio}/channels:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
     post:
-      summary: Append channels to the radio's list
+      summary: Append channels to a section of the radio's list
       requestBody:
         required: true
         content:
@@ -528,6 +528,7 @@ paths:
                 ids: {type: array, items: {type: string}}
                 query: {type: string}
                 sort: {type: string, enum: [name, freq]}
+                section: {type: string, description: "A section's ID or name; the radio's default section when absent"}
                 any_band: {type: boolean}
                 any_mode: {type: boolean}
       responses:
@@ -591,7 +592,6 @@ paths:
                 name: {type: string, nullable: true}
                 power: {type: string, nullable: true}
                 scan: {type: boolean, nullable: true}
-                section_start: {type: integer, nullable: true}
       responses:
         "200": {$ref: "#/components/responses/Memories"}
         default: {$ref: "#/components/responses/Error"}
@@ -599,6 +599,12 @@ paths:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/id"}]
     post:
       summary: Move a channel within the radio's list
+      description: >-
+        Into a section (by ID or name; its own when absent), before or after
+        another channel (into that channel's section), to a position in the
+        section, or to its top or bottom; a section alone puts it at the
+        bottom. Placing a channel in a section sorted by name or freq makes
+        the section manual, in the order it had.
       requestBody:
         required: true
         content:
@@ -606,11 +612,12 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              description: Exactly one of these
+              description: A section, or one of the others (to, top, and bottom with a section)
               properties:
+                section: {type: string}
                 before: {type: string}
                 after: {type: string}
-                to: {type: integer, minimum: 1}
+                to: {type: integer, minimum: 1, description: Position in the section}
                 top: {type: boolean}
                 bottom: {type: boolean}
       responses:
@@ -699,6 +706,59 @@ paths:
       responses:
         "200": {$ref: "#/components/responses/Sources"}
         default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sections:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    get:
+      summary: The radio's sections, as laid out
+      responses:
+        "200": {$ref: "#/components/responses/Sections"}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      summary: Add a section, before the default section when that is last
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: [{$ref: "#/components/schemas/SectionInput"}]
+              required: [name]
+      responses:
+        "201": {$ref: "#/components/responses/Sections"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sections/{section}:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/section"}]
+    patch:
+      summary: Change a section; absent fields stay, null takes a start or size away
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SectionInput"}
+      responses:
+        "200": {$ref: "#/components/responses/Sections"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      summary: Delete a section other than the default; its channels and sources go to the default section
+      responses:
+        "200": {$ref: "#/components/responses/Sections"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sections/{section}/move:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/section"}]
+    post:
+      summary: Move a section among the radio's sections
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [to]
+              properties:
+                to: {type: integer, minimum: 1}
+      responses:
+        "200": {$ref: "#/components/responses/Sections"}
+        default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/radios/{radio}/sync:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
     post:
@@ -711,7 +771,6 @@ paths:
               additionalProperties: false
               properties:
                 dry_run: {type: boolean}
-                resort: {type: boolean}
                 any_band: {type: boolean}
                 any_mode: {type: boolean}
       responses:
@@ -1133,6 +1192,7 @@ components:
     lib: {name: lib, in: path, required: true, description: "A library's name or ID", schema: {type: string}}
     id: {name: id, in: path, required: true, description: "A channel's ID or unique prefix", schema: {type: string}}
     radio: {name: radio, in: path, required: true, description: "A radio's name or ID", schema: {type: string}}
+    section: {name: section, in: path, required: true, description: "A section's ID, unique ID prefix, or name", schema: {type: string}}
     name: {name: name, in: path, required: true, schema: {type: string}}
     seed: {name: seed, in: path, required: true, description: "A built-in list, such as us-gmrs", schema: {type: string}}
     n: {name: n, in: path, required: true, description: "A source's number, from 1", schema: {type: integer, minimum: 1}}
@@ -1152,10 +1212,20 @@ components:
         application/json:
           schema:
             type: object
-            required: [memories, warnings]
+            required: [memories, sections, warnings]
             properties:
               memories: {type: array, items: {$ref: "#/components/schemas/Memory"}}
+              sections: {type: array, items: {$ref: "#/components/schemas/Section"}}
               warnings: {type: array, items: {type: string}}
+    Sections:
+      description: The radio's sections, as laid out
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [sections]
+            properties:
+              sections: {type: array, items: {$ref: "#/components/schemas/Section"}}
     Sources:
       description: The radio's sources
       content:
@@ -1452,10 +1522,12 @@ components:
         notes: {type: string}
     Memory:
       type: object
-      required: [memory, section_start, name, fit, deduped, power, scan, exported, not_programmed, receive_only, transmit_tone_only, overrides, channel]
+      required: [memory, section, plan_number, overflow, name, fit, deduped, power, scan, exported, not_programmed, receive_only, transmit_tone_only, overrides, channel]
       properties:
         memory: {type: integer, nullable: true, description: "The memory number on the radio; null for a memory that isn't programmed, which takes no number"}
-        section_start: {type: boolean}
+        section: {type: string, description: "The ID of the section the memory is in"}
+        plan_number: {type: integer, nullable: true, description: "A plan source's Ch # for the memory"}
+        overflow: {type: boolean, description: "Past the end of its section's size, so spilling into the memories after it"}
         name: {type: string, description: The name on the radio}
         fit: {type: string, enum: [fits, variant, shortened, cut]}
         deduped: {type: boolean}
@@ -1523,17 +1595,40 @@ components:
         wrong_mode: {type: array, items: {$ref: "#/components/schemas/Channel"}}
     Source:
       type: object
-      required: [number, id, query, plan, plan_id, sort, section_start, keep_sorted, channels]
+      required: [number, id, query, plan, plan_id, sort, section_id, section, plan_numbers, channels]
       properties:
         number: {type: integer}
         id: {type: string}
         query: {type: string, description: Empty for a plan source}
         plan: {type: string, nullable: true, description: A plan source's plan name}
         plan_id: {type: string, nullable: true}
-        sort: {type: string, enum: [name, freq]}
-        section_start: {type: integer, nullable: true}
-        keep_sorted: {type: boolean}
+        sort: {type: string, enum: [name, freq], description: "The order a sync adds channels in, in a manual section"}
+        section_id: {type: string}
+        section: {type: string, description: The section the source feeds}
+        plan_numbers: {type: string, enum: [compact, match], description: "For a plan: its order without gaps, or memory = the section's first memory + Ch # - 1"}
         channels: {type: integer}
+    Section:
+      type: object
+      required: [id, number, name, start, size, sort, default, first, last]
+      properties:
+        id: {type: string}
+        number: {type: integer, description: "Its place among the radio's sections, from 1"}
+        name: {type: string}
+        start: {type: integer, nullable: true, description: "Its first memory; when null, it follows the section before it"}
+        size: {type: integer, nullable: true, description: "Memories it reserves; more spill over with a warning"}
+        sort: {type: string, enum: [manual, name, freq]}
+        default: {type: boolean, description: Where channels added by hand go}
+        first: {type: integer, description: "The memory it begins at, as laid out"}
+        last: {type: integer, description: "The last memory its channels use; first - 1 when none"}
+    SectionInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string}
+        start: {type: integer, nullable: true, minimum: 0}
+        size: {type: integer, nullable: true, minimum: 1}
+        sort: {type: string, enum: [manual, name, freq]}
+        default: {type: boolean, description: "Make it the default section; the old default stops being it"}
     SourceInput:
       type: object
       additionalProperties: false
@@ -1541,8 +1636,8 @@ components:
         query: {type: string}
         plan: {type: string, description: "A plan's name or ID, for a source that follows the plan; it can't change later"}
         sort: {type: string}
-        section_start: {type: integer, nullable: true}
-        keep_sorted: {type: boolean}
+        section: {type: string, description: "A section's ID or name; a new source without one gets a section of its own"}
+        plan_numbers: {type: string, enum: [compact, match]}
     SourcePreviewInput:
       type: object
       additionalProperties: false
@@ -1552,8 +1647,8 @@ components:
         query: {type: string}
         plan: {type: string}
         sort: {type: string}
-        section_start: {type: integer, nullable: true}
-        keep_sorted: {type: boolean}
+        section: {type: string}
+        plan_numbers: {type: string, enum: [compact, match]}
     SyncResult:
       type: object
       required: [sources, added, resorted, dry_run, layout_error]

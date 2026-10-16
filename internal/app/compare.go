@@ -12,7 +12,6 @@ import (
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/importer"
-	"github.com/ryan/rflib/internal/model"
 	"github.com/ryan/rflib/internal/program"
 	"github.com/ryan/rflib/internal/store"
 )
@@ -411,17 +410,19 @@ type CompareDecisions struct {
 // CompareResult is what applying decisions did.
 type CompareResult struct {
 	Used, Kept, Taken int
-	// AtEnd are memories whose number rflib uses for another channel, so
-	// they went at the end of the radio's list. With numbers ignored, every
-	// used and kept memory goes there, and none are listed.
+	// AtEnd are memories whose number is within what the radio already
+	// uses, so they went at the end of the default section. With numbers
+	// ignored, every used and kept memory goes there, and none are listed.
 	AtEnd []string
 	// Copied are shared channels copied to take the radio's values.
 	Copied []string
 }
 
 // ApplyComparison compares a radio with its file and applies decisions, in
-// one transaction. A used or kept memory goes at its memory number when
-// rflib has none there, else at the end of the list. Taking a changed
+// one transaction. Used and kept memories numbered past everything the
+// radio uses keep their numbers, in new sections starting at each run of
+// numbers (2-3 and 10 make two); the rest go at the end of the default
+// section. Taking a changed
 // memory's frequencies, tones, or mode changes a private channel, or makes
 // a private copy of a shared one; its name and skip become the radio's
 // overrides.
@@ -437,12 +438,6 @@ func (s *Service) ApplyComparison(ctx context.Context, radio string, file io.Rea
 	r, m, err := s.RadioModel(ctx, cmpn.Radio.ID)
 	if err != nil {
 		return cmpn, res, err
-	}
-	type placement struct {
-		loc  int
-		id   string
-		name string
-		keep *domain.Channel
 	}
 	var places []placement
 	for loc, ref := range d.Use {
@@ -486,6 +481,18 @@ func (s *Service) ApplyComparison(ctx context.Context, radio string, file io.Rea
 			}
 			res.Taken++
 		}
+		// Past everything the radio uses, a memory keeps its number.
+		last := m.Memories.First - 1
+		if !d.Options.IgnoreNumbers {
+			if layout, _, err := layoutOf(ctx, tx, r, m); err != nil {
+				return err
+			} else {
+				for _, mem := range layout.Memories {
+					last = max(last, mem.Location)
+				}
+			}
+		}
+		var runs [][]placement
 		var atEnd []placement
 		for _, p := range places {
 			if p.keep != nil {
@@ -500,30 +507,27 @@ func (s *Service) ApplyComparison(ctx context.Context, radio string, file io.Rea
 			} else {
 				res.Used++
 			}
-			placed := false
-			if !d.Options.IgnoreNumbers {
-				if placed, err = placeAt(ctx, tx, r, m, p.id, p.loc); err != nil {
-					return fmt.Errorf("memory %d: %w", p.loc, err)
-				}
-			}
-			if !placed {
+			switch n := len(runs); {
+			case d.Options.IgnoreNumbers || p.loc <= last || p.loc > m.Memories.Last:
 				atEnd = append(atEnd, p)
+			case n > 0 && runs[n-1][len(runs[n-1])-1].loc == p.loc-1:
+				runs[n-1] = append(runs[n-1], p)
+			default:
+				runs = append(runs, []placement{p})
 			}
 		}
-		// Those not placed at their numbers go after everything placed.
 		for _, p := range atEnd {
-			if _, err := tx.AddRadioChannels(ctx, r.ID, []string{p.id}); err != nil {
+			if _, err := tx.AddRadioChannels(ctx, r.ID, "", []string{p.id}); err != nil {
 				return fmt.Errorf("memory %d: %w", p.loc, err)
 			}
 			if !d.Options.IgnoreNumbers {
 				res.AtEnd = append(res.AtEnd, fmt.Sprintf("%d %q", p.loc, p.name))
 			}
 		}
-		entries, err := tx.RadioEntries(ctx, r.ID)
-		if err != nil {
+		if err := placeRuns(ctx, tx, r, runs); err != nil {
 			return err
 		}
-		if _, err := program.Build(r, m, entries); err != nil {
+		if _, _, err := layoutOf(ctx, tx, r, m); err != nil {
 			return fmt.Errorf("%s would no longer export: %w", r.Name, err)
 		}
 		if d.DryRun {
@@ -581,67 +585,55 @@ func takeRadio(ctx context.Context, tx store.Library, r domain.Radio, mem Memory
 	return copied, fmt.Errorf("%s is no longer on %s", ch.Name, r.Name)
 }
 
-// placeAt puts a channel on a radio at a memory number: in its place in
-// the list, starting a section there when it doesn't follow on, with the
-// channel after it keeping its number. It reports false, adding nothing,
-// when rflib uses the number for another channel or the model has no such
-// memory.
-func placeAt(ctx context.Context, tx store.Library, r domain.Radio, m model.Model, id string, loc int) (bool, error) {
-	entries, err := tx.RadioEntries(ctx, r.ID)
-	if err != nil {
-		return false, err
-	}
-	// Numbers as the radio's programming gives them: NoNumber for memories
-	// it leaves out.
-	layout, err := program.Build(r, m, entries)
-	if err != nil {
-		return false, err
-	}
-	locs := make([]int, len(entries))
-	for k, mem := range layout.Memories {
-		locs[k] = mem.Location
-	}
-	if slices.Contains(locs, loc) || loc < m.Memories.First || loc > m.Memories.Last {
-		return false, nil
-	}
-	if n, err := tx.AddRadioChannels(ctx, r.ID, []string{id}); err != nil || n == 0 {
-		if err == nil {
-			err = domain.Invalidf("the channel is on %s already", r.Name)
+// placement is a memory a comparison puts on the radio: a channel to use
+// (id), or the memory to keep as programmed (keep).
+type placement struct {
+	loc  int
+	id   string
+	name string
+	keep *domain.Channel
+}
+
+// placeRuns puts each run of memories, numbered past everything on the
+// radio, in a new section starting at its first number, after the
+// sections there are (and after the default section, when that holds
+// channels, so their numbers stay).
+func placeRuns(ctx context.Context, tx store.Library, r domain.Radio, runs [][]placement) error {
+	for _, run := range runs {
+		first, end := run[0].loc, run[len(run)-1].loc
+		name := fmt.Sprintf("From the radio %d", first)
+		if end > first {
+			name = fmt.Sprintf("From the radio %d-%d", first, end)
 		}
-		return false, err
-	}
-	// It goes before the first memory numbered after it.
-	i := slices.IndexFunc(locs, func(l int) bool { return l > loc })
-	if i < 0 {
-		i = len(entries)
-	}
-	if i < len(entries) {
-		if err := tx.MoveRadioChannel(ctx, r.ID, id, i); err != nil {
-			return false, err
+		sec, err := tx.CreateRadioSection(ctx, domain.RadioSection{RadioID: r.ID, Name: name, Start: &first})
+		if err != nil {
+			return err
 		}
-	}
-	follows := m.Memories.First
-	for k := i - 1; k >= 0; k-- {
-		if locs[k] != program.NoNumber {
-			follows = locs[k] + 1
-			break
+		secs, err := tx.RadioSections(ctx, r.ID)
+		if err != nil {
+			return err
 		}
-	}
-	if loc != follows {
-		start := loc
-		if err := tx.SetRadioEntry(ctx, r.ID, domain.RadioEntry{Channel: domain.Channel{ID: id}, SectionStart: &start}); err != nil {
-			return false, err
+		es, err := tx.RadioEntries(ctx, r.ID)
+		if err != nil {
+			return err
+		}
+		for _, e := range es {
+			if e.Section.Default {
+				if err := tx.MoveRadioSection(ctx, r.ID, sec.ID, len(secs)-1); err != nil {
+					return err
+				}
+				break
+			}
+		}
+		ids := make([]string, len(run))
+		for i, p := range run {
+			ids[i] = p.id
+		}
+		if _, err := tx.AddRadioChannels(ctx, r.ID, sec.ID, ids); err != nil {
+			return err
 		}
 	}
-	if i < len(entries) && locs[i] != loc+1 && entries[i].SectionStart == nil {
-		next := entries[i]
-		start := locs[i]
-		next.SectionStart = &start
-		if err := tx.SetRadioEntry(ctx, r.ID, next); err != nil {
-			return false, err
-		}
-	}
-	return true, nil
+	return nil
 }
 
 func abs(n int) int {

@@ -125,6 +125,7 @@ type Library interface {
 	// none), to ask from next time. Only shared channels have revisions.
 	ChangedSince(ctx context.Context, since time.Time) ([]domain.Channel, time.Time, error)
 
+	// CreateRadio creates a radio, with an empty default section, "Other".
 	CreateRadio(ctx context.Context, r domain.Radio) (domain.Radio, error)
 	// GetRadio looks a radio up by ID or name.
 	GetRadio(ctx context.Context, idOrName string) (domain.Radio, error)
@@ -133,32 +134,48 @@ type Library interface {
 	// DeleteRadio deletes a radio; its channels stay in the library.
 	DeleteRadio(ctx context.Context, id string) error
 
-	// RadioEntries returns a radio's channels in memory order, with the
-	// radio's overrides for each.
+	// RadioSections returns a radio's sections in order.
+	RadioSections(ctx context.Context, radioID string) ([]domain.RadioSection, error)
+	// CreateRadioSection adds a section after the others, or before the
+	// default section when that is last. A new default section takes over
+	// from the old one.
+	CreateRadioSection(ctx context.Context, sec domain.RadioSection) (domain.RadioSection, error)
+	// UpdateRadioSection changes a section's name, start, size, order, and
+	// whether it's the default; another section must be made the default
+	// for this one to stop being it.
+	UpdateRadioSection(ctx context.Context, sec domain.RadioSection) error
+	// MoveRadioSection moves a section to index to (from 0).
+	MoveRadioSection(ctx context.Context, radioID, sectionID string, to int) error
+	// DeleteRadioSection deletes a section other than the default; its
+	// channels go to the end of the default section, and its sources feed
+	// the default section.
+	DeleteRadioSection(ctx context.Context, radioID, sectionID string) error
+
+	// RadioEntries returns a radio's channels in list order: sections in
+	// order, each section's channels in the order placed, or sorted as the
+	// section sorts them. Each entry carries its section and the radio's
+	// overrides.
 	RadioEntries(ctx context.Context, radioID string) ([]domain.RadioEntry, error)
-	// AddRadioChannels appends channels to the end of a radio's list in the
-	// order given, skipping any already on it, and returns how many were
-	// added.
-	AddRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error)
-	// AddSourceChannels adds channels for a radio source, skipping any
-	// already on the radio. They go after the last channel the source
-	// added; for a source with none yet, after the channels of earlier
-	// sources and before those of later ones, else at the end. The source's
-	// section start, when set, is kept on its first channel.
+	// AddRadioChannels appends channels to the end of a section (the
+	// default section for "") in the order given, skipping any already on
+	// the radio, and returns how many were added.
+	AddRadioChannels(ctx context.Context, radioID, sectionID string, channelIDs []string) (int, error)
+	// AddSourceChannels adds channels for a radio source to the end of the
+	// source's section, skipping any already on the radio.
 	AddSourceChannels(ctx context.Context, src domain.RadioSource, channelIDs []string) (int, error)
-	// RemoveRadioChannels takes channels off a radio, closes up the list,
-	// and returns how many were removed.
+	// RemoveRadioChannels takes channels off a radio and returns how many
+	// were removed.
 	RemoveRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error)
-	// MoveRadioChannel moves a channel to index to (from 0) in the radio's
-	// list; an index past the end moves it last. The channel no longer
-	// belongs to the source that added it, as if added by hand.
-	MoveRadioChannel(ctx context.Context, radioID, channelID string, to int) error
+	// MoveRadioChannel moves a channel to index to (from 0) within a
+	// section (its own for ""); an index past the end moves it last. It
+	// stays its source's.
+	MoveRadioChannel(ctx context.Context, radioID, channelID, sectionID string, to int) error
 	// ReorderRadioChannels puts a radio's channels in the order given,
-	// which must list each of them once. Section starts stay at their
-	// places in the list; overrides and sources go with their channels.
+	// which must list each of them once; each stays in its section, in the
+	// order given there.
 	ReorderRadioChannels(ctx context.Context, radioID string, channelIDs []string) error
 	// SetRadioEntry stores a radio's overrides for one of its channels: the
-	// entry's SectionStart, Name, Power, and Skip.
+	// entry's Name, Power, Skip, and PlanNumber.
 	SetRadioEntry(ctx context.Context, radioID string, e domain.RadioEntry) error
 	// RadioChannelIDs returns the channels on a radio, or on any radio when
 	// radioID is empty.
@@ -168,19 +185,18 @@ type Library interface {
 	RadioSources(ctx context.Context, radioID string) ([]domain.RadioSource, error)
 	// AllRadioSources returns every radio's sources.
 	AllRadioSources(ctx context.Context) ([]domain.RadioSource, error)
-	// AddRadioSource appends a source to its radio's sources.
+	// AddRadioSource appends a source to its radio's sources. Without a
+	// section, it gets a new one of its own, named after it.
 	AddRadioSource(ctx context.Context, src domain.RadioSource) (domain.RadioSource, error)
-	// UpdateRadioSource changes a source's query, sort, section start, and
-	// KeepSorted.
-	// A changed section start moves to the source's first channel now; a
-	// removed one is taken off it, if it is still the source's.
+	// UpdateRadioSource changes a source's query, sort, plan numbering, and
+	// section; channels already on the radio stay where they are.
 	UpdateRadioSource(ctx context.Context, src domain.RadioSource) error
 	// MoveRadioSource moves a source to index to (from 0). Channels already
 	// on the radio stay where they are.
 	MoveRadioSource(ctx context.Context, src domain.RadioSource, to int) error
 	// RemoveRadioSource deletes a source. Its channels stay on the radio as
 	// if added by hand, unless withChannels; it returns how many channels
-	// were taken off.
+	// were taken off. Its section stays.
 	RemoveRadioSource(ctx context.Context, src domain.RadioSource, withChannels bool) (int, error)
 
 	// Organizations, systems, and plans. Each change to one records a

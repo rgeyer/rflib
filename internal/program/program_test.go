@@ -118,7 +118,7 @@ func TestNumberingNamesAndScan(t *testing.T) {
 	}
 	es := entries(cs...)
 	ten, skip, scan := 10, true, false
-	es[1].SectionStart = &ten
+	startAt(es, 1, &ten)
 	es[1].Skip = &skip
 	cs[2].Skip = true
 	es[2].Channel.Skip = true
@@ -142,13 +142,12 @@ func TestNumberingNamesAndScan(t *testing.T) {
 
 	// Section starts must not run backwards, and the list must fit.
 	five := 5
-	es[2].SectionStart = &five
+	startAt(es, 2, &five)
 	if _, err := Build(domain.Radio{Name: "HT"}, m, es); err == nil || !strings.Contains(err.Error(), "already reach memory 10") {
 		t.Errorf("backwards section: %v", err)
 	}
-	es[2].SectionStart = nil
 	big := 127
-	es[1].SectionStart = &big
+	startAt(es, 1, &big)
 	if _, err := Build(domain.Radio{Name: "HT"}, m, es); err == nil || !strings.Contains(err.Error(), "memory 128") {
 		t.Errorf("overflow: %v", err)
 	}
@@ -160,7 +159,7 @@ func TestWriteCHIRPAndProfile(t *testing.T) {
 	ham := ch("Metro", 146_940_000, 146_340_000, domain.ServiceAmateur)
 	es := entries(gmrs, ham)
 	twenty := 20
-	es[1].SectionStart = &twenty
+	startAt(es, 1, &twenty)
 
 	p, err := Build(domain.Radio{Name: "HT", DefaultPower: domain.PowerLow}, mustModel(t, "tidradio-tdh3-gmrs"), es)
 	if err != nil {
@@ -336,7 +335,7 @@ func tone(t *testing.T, v string) domain.Tone {
 }
 
 // A memory that isn't programmed takes no number, so the numbers are the
-// radio's own; a section start on it moves to the next one programmed.
+// radio's own.
 func TestUnprogrammedMemoriesTakeNoNumber(t *testing.T) {
 	a := ch("A", 146_520_000, 146_520_000, domain.ServiceAmateur)
 	gone := ch("Gone", 146_940_000, 146_340_000, domain.ServiceAmateur)
@@ -346,7 +345,7 @@ func TestUnprogrammedMemoriesTakeNoNumber(t *testing.T) {
 	es := entries(a, gone, b, gone, c)
 	es[3].Channel.ID = "Gone2"
 	ten := 10
-	es[3].SectionStart = &ten
+	startAt(es, 3, &ten)
 	p, err := Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), es)
 	if err != nil {
 		t.Fatal(err)
@@ -357,5 +356,54 @@ func TestUnprogrammedMemoriesTakeNoNumber(t *testing.T) {
 	}
 	if strings.Join(got, " ") != "A=1 Gone=-1 B=2 Gone=-1 C=10" {
 		t.Errorf("numbers = %s", strings.Join(got, " "))
+	}
+}
+
+// startAt starts a section at es[from], with a start when given, holding
+// it and the entries after it.
+func startAt(es []domain.RadioEntry, from int, start *int) {
+	sec := domain.RadioSection{ID: fmt.Sprintf("section-%d", from), Name: fmt.Sprintf("Section %d", from), Start: start}
+	for k := from; k < len(es); k++ {
+		es[k].Section = sec
+	}
+}
+
+// Sections reserve their size, spill over with a warning when they hold
+// more, and a plan matching its numbers keeps its gaps.
+func TestSectionsSizesAndPlanNumbers(t *testing.T) {
+	var cs []domain.Channel
+	for i := range 6 {
+		cs = append(cs, ch(fmt.Sprintf("C%d", i), int64(146_520_000+i*30_000), 0, domain.ServiceAmateur))
+	}
+	es := entries(cs...)
+	two, ten := 2, 10
+	aprs := domain.RadioSection{ID: "aprs", Name: "APRS", Size: &two}
+	es[0].Section, es[1].Section, es[2].Section = aprs, aprs, aprs // 3 in 2: spills
+	plan := domain.RadioSection{ID: "plan", Name: "Plan", Start: &ten}
+	for k, n := range []int{1, 2, 5} {
+		e := &es[3+k]
+		e.Section, e.MatchPlan = plan, true
+		e.PlanNumber = &n
+	}
+	p, err := Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), es)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, m := range p.Memories {
+		got = append(got, fmt.Sprintf("%s=%d%s", m.Original.Name, m.Location, map[bool]string{true: "!"}[m.Overflow]))
+	}
+	if strings.Join(got, " ") != "C0=1 C1=2 C2=3! C3=10 C4=11 C5=14" {
+		t.Errorf("numbers = %s", strings.Join(got, " "))
+	}
+	if !strings.Contains(strings.Join(p.Warnings, "\n"), `past the end of section "APRS"`) {
+		t.Errorf("warnings = %q", p.Warnings)
+	}
+	// Compact: the plan's order, no gaps.
+	for k := 3; k < 6; k++ {
+		es[k].MatchPlan = false
+	}
+	if p, _ = Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), es); p.Memories[5].Location != 12 {
+		t.Errorf("compact: %d", p.Memories[5].Location)
 	}
 }

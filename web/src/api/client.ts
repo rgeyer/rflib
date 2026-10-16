@@ -9,6 +9,7 @@ export type Library = S["Library"];
 export type Radio = S["Radio"];
 export type Memory = S["Memory"];
 export type Source = S["Source"];
+export type Section = S["Section"];
 export type Search = S["Search"];
 export type Model = S["Model"];
 export type Seed = S["Seed"];

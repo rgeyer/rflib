@@ -75,6 +75,11 @@ func (s *server) routes() []route {
 		{"PATCH", R + "/sources/{n}", s.lib(s.updateSource), false},
 		{"DELETE", R + "/sources/{n}", s.lib(s.removeSource), false},
 		{"POST", R + "/sources/{n}/move", s.lib(s.moveSource), false},
+		{"GET", R + "/sections", s.lib(s.listSections), false},
+		{"POST", R + "/sections", s.lib(s.addSection), false},
+		{"PATCH", R + "/sections/{section}", s.lib(s.updateSection), false},
+		{"DELETE", R + "/sections/{section}", s.lib(s.removeSection), false},
+		{"POST", R + "/sections/{section}/move", s.lib(s.moveSection), false},
 		{"POST", R + "/sync", s.lib(s.syncRadio), false},
 		{"POST", R + "/compare", s.lib(s.compareRadio), false},
 		{"POST", R + "/compare/apply", s.lib(s.applyComparison), false},
@@ -893,7 +898,7 @@ func (s *server) memories(w http.ResponseWriter, r *http.Request, a *app.Service
 		}
 		ms = slices.DeleteFunc(ms, func(m Memory) bool { return !match[m.Channel.ID] })
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"memories": ms, "warnings": nonNil(p.Warnings)})
+	writeJSON(w, http.StatusOK, map[string]any{"memories": ms, "sections": newSections(p), "warnings": nonNil(p.Warnings)})
 	return nil
 }
 
@@ -901,6 +906,7 @@ type addInput struct {
 	IDs     []string `json:"ids"`
 	Query   string   `json:"query"`
 	Sort    string   `json:"sort"`
+	Section string   `json:"section"`
 	AnyBand bool     `json:"any_band"`
 	AnyMode bool     `json:"any_mode"`
 }
@@ -910,7 +916,7 @@ func (s *server) addRadioChannels(w http.ResponseWriter, r *http.Request, a *app
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	req := app.AddRequest{IDs: in.IDs, Sort: in.Sort, AnyBand: in.AnyBand, AnyMode: in.AnyMode}
+	req := app.AddRequest{IDs: in.IDs, Sort: in.Sort, Section: in.Section, AnyBand: in.AnyBand, AnyMode: in.AnyMode}
 	if strings.TrimSpace(in.Query) != "" {
 		n, err := query.Parse(in.Query)
 		if err != nil {
@@ -968,10 +974,9 @@ func (s *server) removeRadioChannels(w http.ResponseWriter, r *http.Request, a *
 // entryInput sets a radio's overrides. A null removes an override; absent
 // fields are left alone.
 type entryInput struct {
-	Name         json.RawMessage `json:"name"`
-	Power        json.RawMessage `json:"power"`
-	Scan         json.RawMessage `json:"scan"`
-	SectionStart json.RawMessage `json:"section_start"`
+	Name  json.RawMessage `json:"name"`
+	Power json.RawMessage `json:"power"`
+	Scan  json.RawMessage `json:"scan"`
 }
 
 func (in entryInput) edit() (app.EntryEdit, error) {
@@ -1031,16 +1036,6 @@ func (s *server) setRadioChannel(w http.ResponseWriter, r *http.Request, a *app.
 	if edit.SetSkip {
 		e.Skip = edit.Skip
 	}
-	if in.SectionStart != nil {
-		e.SectionStart = nil
-		if !isNull(in.SectionStart) {
-			var n int
-			if err := json.Unmarshal(in.SectionStart, &n); err != nil {
-				return badRequest("section_start: %v", err)
-			}
-			e.SectionStart = &n
-		}
-	}
 	if err := a.SetEntry(ctx(r), radio.ID, e); err != nil {
 		return err
 	}
@@ -1067,7 +1062,7 @@ func (s *server) setRadioChannels(w http.ResponseWriter, r *http.Request, a *app
 		return err
 	}
 	if !edit.SetPower && !edit.SetSkip {
-		return badRequest("nothing to set; give power or scan (name and section_start are set one channel at a time)")
+		return badRequest("nothing to set; give power or scan (a name is set one channel at a time)")
 	}
 	cs, err := a.SetEntries(ctx(r), r.PathValue("radio"), sel, edit)
 	if err != nil {
@@ -1078,11 +1073,12 @@ func (s *server) setRadioChannels(w http.ResponseWriter, r *http.Request, a *app
 }
 
 type moveInput struct {
-	Before string `json:"before"`
-	After  string `json:"after"`
-	To     int    `json:"to"`
-	Top    bool   `json:"top"`
-	Bottom bool   `json:"bottom"`
+	Section string `json:"section"`
+	Before  string `json:"before"`
+	After   string `json:"after"`
+	To      int    `json:"to"`
+	Top     bool   `json:"top"`
+	Bottom  bool   `json:"bottom"`
 }
 
 func (s *server) moveRadioChannel(w http.ResponseWriter, r *http.Request, a *app.Service) error {
@@ -1096,8 +1092,8 @@ func (s *server) moveRadioChannel(w http.ResponseWriter, r *http.Request, a *app
 			given++
 		}
 	}
-	if given != 1 {
-		return badRequest("give one of before, after, to, top, or bottom")
+	if given > 1 || given == 0 && in.Section == "" {
+		return badRequest("give a section, or one of before, after, to, top, or bottom (to, top, and bottom with a section)")
 	}
 	if err := a.MoveChannel(ctx(r), r.PathValue("radio"), r.PathValue("id"), app.Move(in)); err != nil {
 		return err
@@ -1115,11 +1111,11 @@ func (s *server) listSources(w http.ResponseWriter, r *http.Request, a *app.Serv
 }
 
 type sourceInput struct {
-	Query        *string         `json:"query"`
-	Plan         *string         `json:"plan"`
-	Sort         *string         `json:"sort"`
-	SectionStart json.RawMessage `json:"section_start"`
-	KeepSorted   *bool           `json:"keep_sorted"`
+	Query       *string `json:"query"`
+	Plan        *string `json:"plan"`
+	Sort        *string `json:"sort"`
+	Section     *string `json:"section"`
+	PlanNumbers *string `json:"plan_numbers"`
 }
 
 func (in sourceInput) apply(src *domain.RadioSource) error {
@@ -1135,18 +1131,11 @@ func (in sourceInput) apply(src *domain.RadioSource) error {
 	if in.Sort != nil {
 		src.Sort = *in.Sort
 	}
-	if in.KeepSorted != nil {
-		src.KeepSorted = *in.KeepSorted
+	if in.Section != nil {
+		src.SectionID = *in.Section
 	}
-	if in.SectionStart != nil {
-		src.SectionStart = nil
-		if !isNull(in.SectionStart) {
-			var n int
-			if err := json.Unmarshal(in.SectionStart, &n); err != nil {
-				return badRequest("section_start: %v", err)
-			}
-			src.SectionStart = &n
-		}
+	if in.PlanNumbers != nil {
+		src.PlanNumbers = *in.PlanNumbers
 	}
 	return nil
 }
@@ -1274,14 +1263,13 @@ type SourceSync struct {
 func (s *server) syncRadio(w http.ResponseWriter, r *http.Request, a *app.Service) error {
 	var in struct {
 		DryRun  bool `json:"dry_run"`
-		Resort  bool `json:"resort"`
 		AnyBand bool `json:"any_band"`
 		AnyMode bool `json:"any_mode"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	res, err := a.Sync(ctx(r), r.PathValue("radio"), app.SyncOptions{DryRun: in.DryRun, Resort: in.Resort, AnyBand: in.AnyBand, AnyMode: in.AnyMode})
+	res, err := a.Sync(ctx(r), r.PathValue("radio"), app.SyncOptions{DryRun: in.DryRun, AnyBand: in.AnyBand, AnyMode: in.AnyMode})
 	if err != nil {
 		return err
 	}
@@ -1488,4 +1476,110 @@ func (s *server) listTags(w http.ResponseWriter, _ *http.Request) error {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tags": out})
 	return nil
+}
+
+// --- sections ---
+
+func (s *server) listSections(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	p, _, err := a.Layout(ctx(r), r.PathValue("radio"))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sections": newSections(p)})
+	return nil
+}
+
+// sectionInput changes a section; absent fields stay, and a null start or
+// size takes it away.
+type sectionInput struct {
+	Name    *string         `json:"name"`
+	Start   json.RawMessage `json:"start"`
+	Size    json.RawMessage `json:"size"`
+	Sort    *string         `json:"sort"`
+	Default bool            `json:"default"`
+}
+
+func (in sectionInput) edit() (app.SectionEdit, error) {
+	e := app.SectionEdit{Name: in.Name, Sort: in.Sort, Default: in.Default}
+	for _, f := range []struct {
+		name  string
+		raw   json.RawMessage
+		dst   **int
+		clear *bool
+	}{{"start", in.Start, &e.Start, &e.ClearStart}, {"size", in.Size, &e.Size, &e.ClearSize}} {
+		switch {
+		case f.raw == nil:
+		case isNull(f.raw):
+			*f.clear = true
+		default:
+			var n int
+			if err := json.Unmarshal(f.raw, &n); err != nil {
+				return e, badRequest("%s: %v", f.name, err)
+			}
+			*f.dst = &n
+		}
+	}
+	return e, nil
+}
+
+func (s *server) addSection(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in sectionInput
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if in.Name == nil {
+		return badRequest("a section needs a name")
+	}
+	e, err := in.edit()
+	if err != nil {
+		return err
+	}
+	sec := domain.RadioSection{Name: *in.Name, Start: e.Start, Size: e.Size, Default: in.Default}
+	if in.Sort != nil && *in.Sort != "manual" {
+		sec.Sort = *in.Sort
+	}
+	if _, err := a.AddSection(ctx(r), r.PathValue("radio"), sec); err != nil {
+		return err
+	}
+	p, _, err := a.Layout(ctx(r), r.PathValue("radio"))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"sections": newSections(p)})
+	return nil
+}
+
+func (s *server) updateSection(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in sectionInput
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	e, err := in.edit()
+	if err != nil {
+		return err
+	}
+	if _, err := a.UpdateSection(ctx(r), r.PathValue("radio"), r.PathValue("section"), e); err != nil {
+		return err
+	}
+	return s.listSections(w, r, a)
+}
+
+func (s *server) removeSection(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	if err := a.RemoveSection(ctx(r), r.PathValue("radio"), r.PathValue("section")); err != nil {
+		return err
+	}
+	return s.listSections(w, r, a)
+}
+
+func (s *server) moveSection(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in struct {
+		To int `json:"to"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if err := a.MoveSection(ctx(r), r.PathValue("radio"), r.PathValue("section"), in.To); err != nil {
+		return err
+	}
+	return s.listSections(w, r, a)
 }

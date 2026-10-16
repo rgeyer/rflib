@@ -45,6 +45,9 @@ type Memory struct {
 	// channel's receive tone (such as split tones), so the memory is
 	// programmed with its transmit tone alone.
 	TransmitToneOnly bool
+	// Overflow is set when the memory is past the end of its section's
+	// size: it spills into the memories after the section.
+	Overflow bool
 }
 
 // NoNumber is the Location of a memory that isn't programmed. Some radios
@@ -76,16 +79,32 @@ type Layout struct {
 	Radio    domain.Radio
 	Model    model.Model
 	Memories []Memory
+	// Sections are the radio's sections, in order, with where each begins.
+	Sections []SectionRange
 	Warnings []string
 }
 
-// Build lays out a radio's memories. It fails when the list doesn't fit the
-// model's memories; everything else that can't be honored is a warning.
-// Memories transmit only where domain.PersonalTransmitAllowed; any other
-// channel is programmed receive-only, whatever its service. Memories the
-// programming leaves out stay in the list but take no number; a section
-// start on one moves to the next memory that's programmed.
-func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, error) {
+// SectionRange is a section as laid out: the memory it begins at (even
+// when it holds nothing), and the memories its channels use, through Last
+// (First - 1 when none).
+type SectionRange struct {
+	Section domain.RadioSection
+	First   int
+	Last    int
+}
+
+// Build lays out a radio's memories, from its entries in list order (each
+// section's together, sections in order). It fails when the list doesn't
+// fit the model's memories, or a section's start is behind the sections
+// before it; everything else that can't be honored is a warning. Memories
+// transmit only where domain.PersonalTransmitAllowed; any other channel is
+// programmed receive-only, whatever its service. Memories the programming
+// leaves out stay in the list but take no number.
+//
+// sections are the radio's, in order, empty ones included, since a start or
+// a size counts whether or not a section holds anything; without them, the
+// sections are those the entries are in.
+func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry, sections ...domain.RadioSection) (Layout, error) {
 	p := Layout{Radio: r, Model: m}
 	dedupe, err := naming.ParseDedupe(orNone(r.Dedupe))
 	if err != nil {
@@ -168,26 +187,55 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry) (Layout, 
 			mem.Channel, mem.Invalid, mem.TransmitToneOnly = c, nil, true
 		}
 	}
-	// Number the memories that are programmed.
-	next, pending := m.Memories.First, (*int)(nil)
-	for i, e := range entries {
-		if e.SectionStart != nil {
-			pending = e.SectionStart
-		}
-		if !p.Memories[i].Programmed() {
-			continue
-		}
-		if pending != nil {
-			if *pending < next {
-				return p, domain.Invalidf("%q starts a section at memory %d, but the channels before it already reach memory %d", e.Channel.Name, *pending, next-1)
+	// Number the memories that are programmed, section by section.
+	if sections == nil {
+		for i, e := range entries {
+			if i == 0 || e.Section.ID != entries[i-1].Section.ID {
+				sections = append(sections, e.Section)
 			}
-			next, pending = *pending, nil
 		}
-		if next > m.Memories.Last {
-			return p, domain.Invalidf("%q would be memory %d, but the %s has memories %d-%d", e.Channel.Name, next, m.Description, m.Memories.First, m.Memories.Last)
+	}
+	next, i := m.Memories.First, 0
+	for _, sec := range sections {
+		j := i
+		for j < len(entries) && entries[j].Section.ID == sec.ID {
+			j++
 		}
-		p.Memories[i].Location = next
-		next++
+		if sec.Start != nil {
+			if *sec.Start < next {
+				return p, domain.Invalidf("section %q starts at memory %d, but the sections before it already reach memory %d", sec.Name, *sec.Start, next-1)
+			}
+			next = *sec.Start
+		}
+		first := next
+		p.Sections = append(p.Sections, SectionRange{Section: sec, First: first, Last: first - 1})
+		for k := i; k < j; k++ {
+			e := entries[k]
+			if !p.Memories[k].Programmed() {
+				continue
+			}
+			if e.MatchPlan && e.PlanNumber != nil {
+				// The plan's own number, gaps kept; never backwards.
+				next = max(next, first+*e.PlanNumber-1)
+			}
+			if next > m.Memories.Last {
+				return p, domain.Invalidf("%q would be memory %d, but the %s has memories %d-%d", e.Channel.Name, next, m.Description, m.Memories.First, m.Memories.Last)
+			}
+			p.Memories[k].Location = next
+			p.Sections[len(p.Sections)-1].Last = next
+			if sec.Size != nil && next >= first+*sec.Size {
+				p.Memories[k].Overflow = true
+				notes[k] = append(notes[k], fmt.Sprintf("past the end of section %q (%d memories, %d-%d)", sec.Name, *sec.Size, first, first+*sec.Size-1))
+			}
+			next++
+		}
+		if sec.Size != nil {
+			next = max(next, first+*sec.Size)
+		}
+		i = j
+	}
+	if i < len(entries) {
+		return p, fmt.Errorf("memory %q is in a section the radio doesn't list", entries[i].Channel.Name)
 	}
 	for i, mem := range p.Memories {
 		where := ""
