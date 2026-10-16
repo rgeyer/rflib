@@ -590,15 +590,15 @@ func TestRadioWorkflow(t *testing.T) {
 		t.Errorf("radio list = %q", c.ok("radio", "list"))
 	}
 
-	// Deleting a private channel takes it off the radio; a shared one isn't
-	// the library's to delete.
+	// A private channel is retired, not deleted: it stays on the radio,
+	// unprogrammed. A shared one's status isn't the library's to set.
 	mine := c.ok("channel", "add", "--name", "Kids Simplex", "--rx", "462.6875", "--tx", "462.6875", "--service", "frs")
 	c.ok("radio", "channels", "add", "HT", "--id", mine)
-	c.ok("channel", "delete", "--id", mine, "--yes")
-	if strings.Contains(c.ok("radio", "channels", "list", "HT"), "\tKids Simplex\t") {
-		t.Error("deleted channel still on the radio")
+	c.ok("channel", "status", "--id", mine, "--set", "retired", "--note", "moved away")
+	if !strings.Contains(c.ok("radio", "channels", "list", "HT"), "not programmed: retired") {
+		t.Error("retired channel isn't marked on the radio")
 	}
-	c.fails("not found", "channel", "delete", "--id", ids["GMRS 1"], "--yes")
+	c.fails("shared list's", "channel", "status", "--id", ids["GMRS 1"], "--set", "retired")
 	c.fails("requires --yes", "radio", "delete", "HT")
 	c.ok("radio", "delete", "HT", "--yes")
 	c.fails("not found", "radio", "show", "HT")
@@ -958,13 +958,22 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 	}
 	c.fails("--all can't be combined", "radio", "channels", "remove", "HT", "--all", "-q", "x", "--yes")
 
-	// Deleting by query takes the channels off radios too.
-	c.fails("deletion requires --yes", "channel", "delete", "-q", "band:noaa")
-	if got := c.status("channel", "delete", "-q", "band:noaa", "--yes"); got != "Deleted 7 channels" {
-		t.Errorf("delete = %q", got)
+	// Retiring by query keeps the channels on radios, and channel list
+	// leaves them out unless asked.
+	if got := c.status("channel", "status", "-q", "band:noaa", "--set", "retired"); got != "Set 7 channels retired" {
+		t.Errorf("retire = %q", got)
 	}
-	if got := c.ok("radio", "list", "--fields", "channels"); got != "0" {
-		t.Errorf("radio channels after delete = %q", got)
+	if got := c.ok("radio", "list", "--fields", "channels"); got != "7" {
+		t.Errorf("radio channels after retiring = %q", got)
+	}
+	if got := c.ok("channel", "list", "band:noaa"); got != "" {
+		t.Errorf("channel list shows retired channels: %q", got)
+	}
+	if got := c.status("channel", "list", "band:noaa"); !strings.HasPrefix(got, "7 retired not shown; add --retired, or search status:retired") {
+		t.Errorf("hidden note = %q", got)
+	}
+	if got := c.ok("channel", "list", "band:noaa", "status:retired", "--fields", "name"); strings.Count(got, "\n") != 6 {
+		t.Errorf("status:retired = %q", got)
 	}
 }
 
@@ -977,7 +986,9 @@ func TestSharedChannels(t *testing.T) {
 	// the shared channel, which keeps its name and tags as the annotation.
 	mine := c.ok("channel", "add", "--name", "Family 20", "--rx", "462.675", "--tx", "462.675", "--service", "gmrs", "--tags", "family")
 	sharedID := strings.TrimSpace(c.ok("shared", "link", "--fields", "shared_id"))
-	c.fails("not found", "channel", "show", "--id", mine)
+	if old := c.channel(mine); old.Status != "retired" || old.ReplacedBy != sharedID {
+		t.Errorf("linked channel = %+v", old)
+	}
 	ch := c.channel(sharedID)
 	if ch.Link == nil || ch.Name != "GMRS 20" || strings.Join(ch.ShortNames, ",") != "Family 20" || strings.Join(ch.Tags, ",") != "family" || ch.Revision != 1 {
 		t.Fatalf("converted channel = %+v", ch)

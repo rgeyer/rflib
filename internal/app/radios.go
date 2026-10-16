@@ -1025,11 +1025,11 @@ func (s *Service) syncSources(ctx context.Context, r domain.Radio, m model.Model
 		if err := domain.SortChannels(cs, src.Sort); err != nil {
 			return nil, err
 		}
-		// A retired channel isn't programmed, so a source doesn't add it;
-		// once it's active again, the next sync does.
+		// A source's search is taken as it is: a retired channel it matches
+		// is added too, and shows as not programmed.
 		var unclaimed []domain.Channel
 		for _, c := range cs {
-			if !claimed[c.ID] && c.Status.OrActive() != domain.StatusRetired {
+			if !claimed[c.ID] {
 				unclaimed = append(unclaimed, c)
 			}
 		}

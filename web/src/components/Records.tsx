@@ -75,14 +75,20 @@ export function ReasonModal(props: { opened: boolean; title: string; children?: 
 }
 
 /** SharedChannelPicker searches the shared list and picks a channel. */
-export function SharedChannelPicker(props: { label: string; onPick: (c: Channel) => void }) {
+/** SharedChannelPicker searches for a channel to pick: in the shared list,
+ * or, given lib, in that library and the whole shared list. */
+export function SharedChannelPicker(props: { label: string; onPick: (c: Channel) => void; lib?: string }) {
+  const lib = props.lib ?? "shared";
   const [text, setText] = useState("");
   const [q] = useDebouncedValue(text, 300);
   const combobox = useCombobox();
   const found = useQuery({
-    queryKey: ["channels", "shared", q],
+    queryKey: ["channels", lib, "pick", q],
     enabled: q.trim() !== "",
-    queryFn: () => call<{ channels: Channel[]; total: number }>(api.GET("/libraries/{lib}/channels", { params: { path: { lib: "shared" }, query: { q, limit: 20 } } })),
+    queryFn: () =>
+      call<{ channels: Channel[]; total: number }>(
+        api.GET("/libraries/{lib}/channels", { params: { path: { lib }, query: { q: lib === "shared" ? q : `in:all ${q}`, limit: 20 } } }),
+      ),
   });
   return (
     <Combobox
@@ -97,7 +103,7 @@ export function SharedChannelPicker(props: { label: string; onPick: (c: Channel)
       <Combobox.Target>
         <TextInput
           label={props.label}
-          placeholder="Search the shared list, such as name:cumbre or band:2m"
+          placeholder={lib === "shared" ? "Search the shared list, such as name:cumbre or band:2m" : "Search your channels and the shared list, such as name:cumbre"}
           value={text}
           onChange={(e) => {
             setText(e.currentTarget.value);
@@ -114,7 +120,7 @@ export function SharedChannelPicker(props: { label: string; onPick: (c: Channel)
               {c.name} · {formatMHz(c.rx_hz)} {toneSummary(c)}
             </Combobox.Option>
           ))}
-          {found.data?.channels.length === 0 && <Combobox.Empty>No shared channels match</Combobox.Empty>}
+          {found.data?.channels.length === 0 && <Combobox.Empty>No channels match</Combobox.Empty>}
           {found.error && <Combobox.Empty>{found.error.message}</Combobox.Empty>}
         </Combobox.Options>
       </Combobox.Dropdown>

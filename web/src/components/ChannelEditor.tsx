@@ -146,14 +146,6 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
     },
     onError: failed,
   });
-  const remove = useMutation({
-    mutationFn: () => call(api.DELETE("/libraries/{lib}/channels/{id}", { params: { path: { lib, id: c!.id } } })),
-    onSuccess: () => {
-      ok("Deleted");
-      done([]);
-    },
-    onError: failed,
-  });
   const copy = useMutation({
     mutationFn: () => call(api.POST("/libraries/{lib}/channels/copy", { params: { path: { lib } }, body: { select: { ids: [c!.id] } } })),
     onSuccess: () => {
@@ -314,16 +306,9 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
               <Button type="submit">Save correction</Button>
             </Group>
           )}
-          {maintainer && <StatusEditor channel={c} onSaved={() => done([])} />}
+          {maintainer && <StatusEditor lib="shared" channel={c} onSaved={() => done([])} />}
           {!props.readOnly && (
-            <Group justify="space-between" mt="md">
-              {c ? (
-                <Button color="red" variant="subtle" onClick={() => remove.mutate()} loading={remove.isPending}>
-                  Delete
-                </Button>
-              ) : (
-                <span />
-              )}
+            <Group justify="flex-end" mt="md">
               <Button type="submit" loading={save.isPending}>
                 {c ? "Save" : "Add channel"}
               </Button>
@@ -331,24 +316,29 @@ export function ChannelEditor(props: { channel: Channel | null; opened: boolean;
           )}
         </Stack>
       </form>
+      {c && !linked && !props.readOnly && <StatusEditor lib={lib} channel={c} onSaved={() => done([])} />}
       <ReasonModal opened={asking} title={c ? `Correct ${c.name}` : ""} loading={correct.isPending} onClose={() => setAsking(false)} onConfirm={(r) => correct.mutate(r)} />
     </Drawer>
   );
 }
 
-/** StatusEditor lets a maintainer take a shared channel off the air,
- * retire it, or bring it back; links follow, and the change is recorded
- * with a reason. */
-function StatusEditor(props: { channel: Channel; onSaved: () => void }) {
+/** StatusEditor takes a channel off the air, retires it, or brings it
+ * back. Channels are retired, never deleted. In the shared list it's the
+ * maintainer's: links follow, and the change is recorded with a reason. A
+ * retired channel of your own can name a replacement, yours or shared,
+ * and move over to it on your radios. */
+function StatusEditor(props: { lib: string; channel: Channel; onSaved: () => void }) {
   const c = props.channel;
+  const inShared = props.lib === "shared";
+  const client = useQueryClient();
   const [status, setStatus] = useState(c.status);
   const [note, setNote] = useState(c.status_note);
   const [backOn, setBackOn] = useState(c.back_on ?? "");
   // undefined keeps the current replacement; null clears it.
   const [replacement, setReplacement] = useState<Channel | null | undefined>(undefined);
   const current = useQuery({
-    queryKey: ["channel", "shared", c.replaced_by],
-    queryFn: () => call<Channel>(api.GET("/libraries/{lib}/channels/{id}", { params: { path: { lib: "shared", id: c.replaced_by! } } })),
+    queryKey: ["channel", props.lib, c.replaced_by],
+    queryFn: () => call<Channel>(api.GET("/libraries/{lib}/channels/{id}", { params: { path: { lib: props.lib, id: c.replaced_by! } } })),
     enabled: c.replaced_by != null && c.replaced_by !== "",
   });
   const [asking, setAsking] = useState(false);
@@ -363,7 +353,7 @@ function StatusEditor(props: { channel: Channel; onSaved: () => void }) {
     mutationFn: (reason: string) =>
       call(
         api.POST("/libraries/{lib}/channels/{id}/status", {
-          params: { path: { lib: "shared", id: c.id } },
+          params: { path: { lib: props.lib, id: c.id } },
           body: {
             status,
             note,
@@ -374,15 +364,23 @@ function StatusEditor(props: { channel: Channel; onSaved: () => void }) {
         }),
       ),
     onSuccess: (r) => {
-      ok(`${r.name} is ${r.status}; links follow`);
+      ok(inShared ? `${r.name} is ${r.status}; links follow` : `${r.name} is ${r.status}`);
       setAsking(false);
       props.onSaved();
     },
     onError: failed,
   });
+  const relink = useMutation({
+    mutationFn: () => call(api.POST("/libraries/{lib}/channels/relink", { params: { path: { lib: props.lib } }, body: { select: { ids: [c.id] } } })),
+    onSuccess: (r) => {
+      ok(r.relinked.length ? `Moved ${c.name} over to ${r.relinked[0].to.name} on your radios; program them again` : `${c.name} isn't on a radio`);
+      void client.invalidateQueries();
+    },
+    onError: failed,
+  });
   return (
-    <>
-      <Divider label="Maintainer: on the air?" mt="sm" />
+    <Stack gap="sm" mt="md">
+      <Divider label={inShared ? "Maintainer: on the air?" : "On the air?"} />
       <SegmentedControl
         data={[
           { value: "active", label: "Active" },
@@ -400,7 +398,7 @@ function StatusEditor(props: { channel: Channel; onSaved: () => void }) {
       )}
       {status === "retired" && (
         <>
-          <SharedChannelPicker label="Replaced by" onPick={setReplacement} />
+          <SharedChannelPicker label="Replaced by" lib={props.lib} onPick={setReplacement} />
           {shown && (
             <Group gap="xs">
               <Text size="sm">
@@ -413,13 +411,24 @@ function StatusEditor(props: { channel: Channel; onSaved: () => void }) {
           )}
         </>
       )}
+      {!inShared && status === "retired" && (
+        <Text size="xs" c="dimmed">
+          Retired channels aren't deleted: they stay in your library and on your radios, crossed out and not programmed, and are hidden from
+          the channel list unless you show retired ones.
+        </Text>
+      )}
       <Group justify="flex-end">
-        <Button variant="light" onClick={() => setAsking(true)}>
+        {!inShared && c.status === "retired" && c.replaced_by && (
+          <Button variant="default" onClick={() => relink.mutate()} loading={relink.isPending}>
+            Relink on radios
+          </Button>
+        )}
+        <Button variant="light" onClick={() => (inShared ? setAsking(true) : save.mutate(""))} loading={!inShared && save.isPending}>
           Change status
         </Button>
       </Group>
       <ReasonModal opened={asking} title={`Status of ${c.name}`} loading={save.isPending} onClose={() => setAsking(false)} onConfirm={(r) => save.mutate(r)} />
-    </>
+    </Stack>
   );
 }
 

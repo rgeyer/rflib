@@ -83,6 +83,7 @@ paths:
         - {name: limit, in: query, schema: {type: integer, minimum: 0}}
         - {name: offset, in: query, schema: {type: integer, minimum: 0}}
         - {name: more_in_shared, in: query, description: "Also count the shared channels a search of what's in use (or in:mine) leaves out", schema: {type: boolean}}
+        - {name: hide_retired, in: query, description: "As the main channel list: leave out retired channels unless the search (or a saved search it uses) says status:", schema: {type: boolean}}
       responses:
         "200":
           description: Channels in name order, and how many matched before limit and offset
@@ -90,11 +91,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [channels, total, more_in_shared]
+                required: [channels, total, more_in_shared, retired_hidden]
                 properties:
                   channels: {type: array, items: {$ref: "#/components/schemas/Channel"}}
                   total: {type: integer}
                   more_in_shared: {type: integer, description: "With more_in_shared: matches in the shared list the search leaves out, less channels you've copied; else 0"}
+                  retired_hidden: {type: integer, description: "With hide_retired: the retired channels left out; else 0"}
         default: {$ref: "#/components/responses/Error"}
     post:
       summary: Create a channel
@@ -144,11 +146,6 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/ChannelResult"}
         default: {$ref: "#/components/responses/Error"}
-    delete:
-      summary: Delete a channel, taking it off every radio
-      responses:
-        "204": {description: Deleted}
-        default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/channels/{id}/history:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/id"}]
     get:
@@ -167,7 +164,8 @@ paths:
   /libraries/{lib}/channels/{id}/status:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/id"}]
     post:
-      summary: Set a shared channel's status (shared library; maintainer)
+      summary: Set a channel's status
+      description: "Channels are retired, never deleted. In the shared library this is the maintainer's, and needs a reason; in a private library it's for the library's own channels (a shared channel's status is the shared list's)."
       requestBody:
         required: true
         content:
@@ -204,10 +202,37 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/ChannelsResult"}
         default: {$ref: "#/components/responses/Error"}
-  /libraries/{lib}/channels/bulk-delete:
+  /libraries/{lib}/channels/bulk-status:
     parameters: [{$ref: "#/components/parameters/lib"}]
     post:
-      summary: Delete many channels at once
+      summary: Set many channels' status at once (see the single channel's status)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [select, status]
+              properties:
+                select: {$ref: "#/components/schemas/Selection"}
+                status: {type: string, enum: [active, off-air, retired]}
+                note: {type: string}
+                back_on: {type: string, format: date, nullable: true, description: For off-air}
+                replaced_by: {type: string, description: "For retired: the channel that replaces them"}
+                reason: {type: string, description: "Why; needed in the shared library"}
+      responses:
+        "200":
+          description: The channels as changed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChannelsResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/channels/relink:
+    parameters: [{$ref: "#/components/parameters/lib"}]
+    post:
+      summary: Move retired channels over to their replacements
+      description: "Each selected retired channel that names a replacement gives its places on the library's radios (keeping their overrides) and, for a shared channel, your tags and notes to it."
       requestBody:
         required: true
         content:
@@ -215,10 +240,22 @@ paths:
             schema: {$ref: "#/components/schemas/SelectInput"}
       responses:
         "200":
-          description: The channels deleted (or that would be)
+          description: What moved, and the selected channels left as they were (not retired with a replacement)
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/ChannelsResult"}
+              schema:
+                type: object
+                required: [relinked, left]
+                properties:
+                  relinked:
+                    type: array
+                    items:
+                      type: object
+                      required: [from, to]
+                      properties:
+                        from: {$ref: "#/components/schemas/Channel"}
+                        to: {$ref: "#/components/schemas/Channel"}
+                  left: {type: array, items: {$ref: "#/components/schemas/Channel"}}
         default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/channels/copy:
     parameters: [{$ref: "#/components/parameters/lib"}]
@@ -1618,13 +1655,13 @@ components:
     StatusInput:
       type: object
       additionalProperties: false
-      required: [status, reason]
+      required: [status]
       properties:
         status: {type: string, enum: [active, off-air, retired]}
         note: {type: string}
         back_on: {type: string, format: date, nullable: true, description: For off-air}
-        replaced_by: {type: string, description: For retired; a shared channel ID}
-        reason: {type: string}
+        replaced_by: {type: string, description: "For retired: the channel that replaces it, one of the library's own or (from a private library) a shared one"}
+        reason: {type: string, description: "Why; needed in the shared library"}
     Revision:
       type: object
       required: [revision, at, reason, author, changes, channel]

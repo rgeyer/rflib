@@ -1,6 +1,5 @@
-import { Alert, Badge, Button, Checkbox, Group, Modal, Select, Stack, Table, TagsInput, Text, Title, Tooltip } from "@mantine/core";
+import { Alert, Badge, Button, Checkbox, Group, Modal, Select, Stack, Switch, Table, TagsInput, Text, Textarea, Title, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
-import { modals } from "@mantine/modals";
 import { IconLink, IconNote, IconPlus, IconSearch, IconWorld } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -29,6 +28,8 @@ export function Channels() {
   const [serviceAction, setServiceAction] = useState(false);
   const [matching, setMatching] = useState(false);
   const [sourcing, setSourcing] = useState(false);
+  const [retiring, setRetiring] = useState(false);
+  const [showRetired, setShowRetired] = useState(false);
   const tags = useTags(lib);
 
   const library = useQuery({
@@ -36,10 +37,10 @@ export function Channels() {
     queryFn: () => call<Library>(api.GET("/libraries/{lib}", { params: { path: { lib } } })),
   });
   const channels = useQuery({
-    queryKey: ["channels", lib, q],
+    queryKey: ["channels", lib, q, showRetired],
     queryFn: () =>
-      call<{ channels: Channel[]; total: number; more_in_shared: number }>(
-        api.GET("/libraries/{lib}/channels", { params: { path: { lib }, query: { q, more_in_shared: true } } }),
+      call<{ channels: Channel[]; total: number; more_in_shared: number; retired_hidden: number }>(
+        api.GET("/libraries/{lib}/channels", { params: { path: { lib }, query: { q, more_in_shared: true, hide_retired: !showRetired } } }),
       ),
     placeholderData: keepPreviousData,
   });
@@ -51,16 +52,20 @@ export function Channels() {
   const readOnly = maintainer;
   const rows = channels.data?.channels ?? [];
   const ids = [...selected];
-  const select = { ids };
   const after = (msg: string) => {
     ok(msg);
     setSelected(new Set());
     void client.invalidateQueries();
   };
 
-  const remove = useMutation({
-    mutationFn: () => call(api.POST("/libraries/{lib}/channels/bulk-delete", { params: { path: { lib } }, body: { select } })),
-    onSuccess: (r) => after(`Deleted ${r.channels.length} channels`),
+  const hidden = channels.data?.retired_hidden ?? 0;
+  const chosen = rows.filter((c) => selected.has(c.id));
+  // Retired channels that name a replacement can move over to it.
+  const replaceable = chosen.filter((c) => c.status === "retired" && c.replaced_by);
+  const relink = useMutation({
+    mutationFn: () =>
+      call(api.POST("/libraries/{lib}/channels/relink", { params: { path: { lib } }, body: { select: { ids: replaceable.map((c) => c.id) } } })),
+    onSuccess: (r) => after(`Moved ${r.relinked.length} retired channels over to their replacements on your radios; program them again`),
     onError: failed,
   });
   const toggle = (id: string) =>
@@ -131,24 +136,14 @@ export function Channels() {
           <Button size="xs" variant="light" onClick={() => setRadioAction(true)}>
             Add to radio
           </Button>
-          <Button
-            size="xs"
-            color="red"
-            variant="light"
-            onClick={() =>
-              modals.openConfirmModal({
-                title: `Delete ${selected.size} channels?`,
-                children: (
-                  <Text size="sm">Your own channels come off every radio too. For shared channels, only your tags and notes go.</Text>
-                ),
-                labels: { confirm: "Delete", cancel: "Cancel" },
-                confirmProps: { color: "red" },
-                onConfirm: () => remove.mutate(),
-              })
-            }
-          >
-            Delete
+          <Button size="xs" color="red" variant="light" onClick={() => setRetiring(true)}>
+            Retire
           </Button>
+          {replaceable.length > 0 && (
+            <Button size="xs" variant="light" onClick={() => relink.mutate()} loading={relink.isPending}>
+              Relink {replaceable.length}
+            </Button>
+          )}
           <Button size="xs" variant="subtle" onClick={() => setSelected(new Set())}>
             Clear
           </Button>
@@ -163,6 +158,12 @@ export function Channels() {
             {more} more in the shared list: search there too
           </Button>
         )}
+        {hidden > 0 && (
+          <Text size="sm" c="dimmed">
+            · {hidden} retired not shown
+          </Text>
+        )}
+        <Switch size="xs" label="Show retired" checked={showRetired} onChange={(e) => setShowRetired(e.currentTarget.checked)} />
       </Group>
       <Table.ScrollContainer minWidth={800}>
         <Table striped highlightOnHover stickyHeader>
@@ -250,6 +251,7 @@ export function Channels() {
         onClose={() => setServiceAction(false)}
         onDone={after}
       />
+      <RetireModal opened={retiring} chosen={chosen} onClose={() => setRetiring(false)} onDone={after} />
       <AddToRadioModal opened={radioAction} ids={ids} onClose={() => setRadioAction(false)} onDone={after} />
     </Stack>
   );
@@ -330,6 +332,51 @@ function ServiceModal(props: { opened: boolean; ids: string[]; links: Channel[];
         )}
         <Button onClick={() => save.mutate()} loading={save.isPending} disabled={service === null || ids.length === 0}>
           Set on {ids.length} channels
+        </Button>
+      </Stack>
+    </Modal>
+  );
+}
+
+/** RetireModal retires the selected channels of your own; a shared
+ * channel's status is the shared list's, so links are left out. Retired
+ * channels are never deleted: they stay on radios, crossed out and not
+ * programmed. */
+function RetireModal(props: { opened: boolean; chosen: Channel[]; onClose: () => void; onDone: (msg: string) => void }) {
+  const lib = useLib();
+  const [note, setNote] = useState("");
+  const own = props.chosen.filter((c) => !c.link && c.status !== "retired");
+  const links = props.chosen.filter((c) => c.link).length;
+  const retire = useMutation({
+    mutationFn: () =>
+      call(
+        api.POST("/libraries/{lib}/channels/bulk-status", {
+          params: { path: { lib } },
+          body: { select: { ids: own.map((c) => c.id) }, status: "retired", note: note.trim() },
+        }),
+      ),
+    onSuccess: (r) => {
+      props.onClose();
+      setNote("");
+      props.onDone(`Retired ${r.channels.length} channels`);
+    },
+    onError: failed,
+  });
+  return (
+    <Modal opened={props.opened} onClose={props.onClose} title={`Retire ${own.length} channels`}>
+      <Stack>
+        <Text size="sm">
+          Retired channels aren't deleted. They stay in your library and on your radios, crossed out and not programmed, and are hidden here
+          unless you show retired ones or search status:retired. Set one back to active from its editor, or name a replacement there.
+        </Text>
+        {links > 0 && (
+          <Text size="sm" c="dimmed">
+            {links} of them are shared channels; their status is the shared list's, so they're left out.
+          </Text>
+        )}
+        <Textarea label="Note" placeholder="Why, such as &quot;the club moved it&quot;" autosize value={note} onChange={(e) => setNote(e.currentTarget.value)} data-autofocus />
+        <Button color="red" onClick={() => retire.mutate()} loading={retire.isPending} disabled={own.length === 0}>
+          Retire {own.length} channels
         </Button>
       </Stack>
     </Modal>

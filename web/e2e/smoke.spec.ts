@@ -643,3 +643,40 @@ test("a radio's settings change, and deleting it needs its name", async ({ page,
   await expect(page).toHaveURL(/\/radios$/);
   await expect(page.getByRole("link", { name: "Spare HT" })).toHaveCount(0);
 });
+
+test("a channel is retired, not deleted, and relinks to its replacement", async ({ page, request }) => {
+  const made = await (
+    await request.post("/api/v1/libraries/default/channels", { data: { name: "Old Club Rpt", rx_hz: 147_135_000, tx_hz: 147_735_000, mode: "FM" } })
+  ).json();
+  await request.post("/api/v1/libraries/default/channels", { data: { name: "New Club Rpt", rx_hz: 147_165_000, tx_hz: 147_765_000, mode: "FM" } });
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Clubby", model: "baofeng-uv5rm" } });
+  await request.post("/api/v1/libraries/default/radios/Clubby/channels", { data: { ids: [made.channel.id] } });
+
+  // Retire it from the Channels page: it's hidden, not gone.
+  await page.goto("/l/default/channels");
+  await page.getByRole("textbox", { name: "Search" }).fill("name:club");
+  await expect(page.getByText("2 channels", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "Select Old Club Rpt" }).check();
+  await page.getByRole("button", { name: "Retire", exact: true }).click();
+  await page.getByRole("dialog").getByLabel("Note").fill("the club moved it");
+  await page.getByRole("button", { name: "Retire 1 channels" }).click();
+  await expect(page.getByText("Retired 1 channels")).toBeVisible();
+  await expect(page.getByText("1 retired not shown")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "Old Club Rpt" })).toHaveCount(0);
+  await page.getByRole("switch", { name: "Show retired" }).check();
+  const row = page.getByRole("row", { name: /Old Club Rpt/ });
+  await expect(row.getByText("retired")).toBeVisible();
+
+  // Name its replacement, then move it over on the radio.
+  await page.getByRole("cell", { name: "Old Club Rpt retired" }).click();
+  await page.getByRole("textbox", { name: "Replaced by" }).fill("name:\"New Club\"");
+  await page.getByRole("option", { name: /New Club Rpt/ }).click();
+  await page.getByRole("button", { name: "Change status" }).click();
+  await expect(page.getByText("Old Club Rpt is retired")).toBeVisible();
+  await page.getByRole("cell", { name: "Old Club Rpt retired" }).click();
+  await page.getByRole("button", { name: "Relink on radios" }).click();
+  await expect(page.getByText(/Moved Old Club Rpt over to New Club Rpt/)).toBeVisible();
+  await page.goto("/l/default/radios/Clubby");
+  await expect(page.getByRole("row", { name: /New Club Rpt/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Old Club Rpt/ })).toHaveCount(0);
+});

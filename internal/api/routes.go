@@ -36,11 +36,11 @@ func (s *server) routes() []route {
 		{"POST", L + "/channels", s.lib(s.createChannel), false},
 		{"GET", L + "/channels/{id}", s.lib(s.getChannel), false},
 		{"PATCH", L + "/channels/{id}", s.lib(s.updateChannel), false},
-		{"DELETE", L + "/channels/{id}", s.lib(s.deleteChannel), false},
 		{"GET", L + "/channels/{id}/history", s.lib(s.channelHistory), false},
 		{"POST", L + "/channels/{id}/status", s.lib(s.setStatus), false},
 		{"POST", L + "/channels/bulk-update", s.lib(s.bulkUpdate), false},
-		{"POST", L + "/channels/bulk-delete", s.lib(s.bulkDelete), false},
+		{"POST", L + "/channels/bulk-status", s.lib(s.bulkStatus), false},
+		{"POST", L + "/channels/relink", s.lib(s.relinkChannels), false},
 		{"POST", L + "/channels/copy", s.lib(s.copyChannels), false},
 
 		{"POST", L + "/shared/convert", s.lib(s.convert), false},
@@ -173,7 +173,17 @@ func (s *server) listChannels(w http.ResponseWriter, r *http.Request, a *app.Ser
 			return err
 		}
 	}
-	cs, err := a.FindChannels(ctx(r), n)
+	hide, err := queryBool(r, "hide_retired")
+	if err != nil {
+		return err
+	}
+	var cs []domain.Channel
+	hidden := 0
+	if hide {
+		cs, hidden, err = a.ListedChannels(ctx(r), n)
+	} else {
+		cs, err = a.FindChannels(ctx(r), n)
+	}
 	if err != nil {
 		return err
 	}
@@ -204,7 +214,7 @@ func (s *server) listChannels(w http.ResponseWriter, r *http.Request, a *app.Ser
 		}
 		cs = cs[:min(*limit, len(cs))]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"channels": newChannels(cs), "total": total, "more_in_shared": more})
+	writeJSON(w, http.StatusOK, map[string]any{"channels": newChannels(cs), "total": total, "more_in_shared": more, "retired_hidden": hidden})
 	return nil
 }
 
@@ -272,14 +282,6 @@ func (s *server) updateChannel(w http.ResponseWriter, r *http.Request, a *app.Se
 	return nil
 }
 
-func (s *server) deleteChannel(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	if err := a.DeleteChannel(ctx(r), r.PathValue("id")); err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
-}
-
 func (s *server) channelHistory(w http.ResponseWriter, r *http.Request, a *app.Service) error {
 	_, revs, err := a.History(ctx(r), r.PathValue("id"))
 	if err != nil {
@@ -297,27 +299,84 @@ type statusInput struct {
 	Reason     string  `json:"reason"`
 }
 
+// change is the status change asked for; a shared channel's needs a
+// reason, since it reaches everyone who uses it.
+func (in statusInput) change(a *app.Service) (app.StatusChange, error) {
+	if a.Library().Shared && strings.TrimSpace(in.Reason) == "" {
+		return app.StatusChange{}, badRequest("a shared channel's status change needs a reason")
+	}
+	st, err := domain.ParseStatus(in.Status)
+	if err != nil {
+		return app.StatusChange{}, err
+	}
+	back, err := date(in.BackOn)
+	if err != nil {
+		return app.StatusChange{}, err
+	}
+	return app.StatusChange{Status: st, Note: in.Note, BackOn: back, ReplacedBy: in.ReplacedBy}, nil
+}
+
 func (s *server) setStatus(w http.ResponseWriter, r *http.Request, a *app.Service) error {
 	var in statusInput
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	if strings.TrimSpace(in.Reason) == "" {
-		return badRequest("a status change needs a reason")
-	}
-	st, err := domain.ParseStatus(in.Status)
+	ch, err := in.change(a)
 	if err != nil {
 		return err
 	}
-	back, err := date(in.BackOn)
-	if err != nil {
-		return err
-	}
-	c, err := a.SetStatus(ctx(r), r.PathValue("id"), app.StatusChange{Status: st, Note: in.Note, BackOn: back, ReplacedBy: in.ReplacedBy}, in.Reason)
+	c, err := a.SetStatus(ctx(r), r.PathValue("id"), ch, in.Reason)
 	if err != nil {
 		return err
 	}
 	writeJSON(w, http.StatusOK, newChannel(c))
+	return nil
+}
+
+type bulkStatusInput struct {
+	statusInput
+	Select Selection `json:"select"`
+}
+
+func (s *server) bulkStatus(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in bulkStatusInput
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	sel, err := in.Select.app()
+	if err != nil {
+		return err
+	}
+	ch, err := in.change(a)
+	if err != nil {
+		return err
+	}
+	cs, err := a.SetStatuses(ctx(r), sel, ch, in.Reason)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, channelsResult{newChannels(cs), []string{}})
+	return nil
+}
+
+func (s *server) relinkChannels(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in selectInput
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	sel, err := in.Select.app()
+	if err != nil {
+		return err
+	}
+	moved, left, err := a.RelinkChannels(ctx(r), sel)
+	if err != nil {
+		return err
+	}
+	out := make([]map[string]Channel, len(moved))
+	for i, m := range moved {
+		out[i] = map[string]Channel{"from": newChannel(m.From), "to": newChannel(m.To)}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"relinked": out, "left": newChannels(left)})
 	return nil
 }
 
@@ -369,28 +428,6 @@ func (s *server) bulkUpdate(w http.ResponseWriter, r *http.Request, a *app.Servi
 type selectInput struct {
 	Select Selection `json:"select"`
 	DryRun bool      `json:"dry_run"`
-}
-
-func (s *server) bulkDelete(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	var in selectInput
-	if err := readJSON(r, &in); err != nil {
-		return err
-	}
-	sel, err := in.Select.app()
-	if err != nil {
-		return err
-	}
-	var cs []domain.Channel
-	if in.DryRun {
-		cs, err = a.Select(ctx(r), sel)
-	} else {
-		cs, err = a.DeleteChannels(ctx(r), sel)
-	}
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, channelsResult{newChannels(cs), []string{}})
-	return nil
 }
 
 func (s *server) copyChannels(w http.ResponseWriter, r *http.Request, a *app.Service) error {

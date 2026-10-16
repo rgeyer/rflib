@@ -305,9 +305,9 @@ func TestCompareShowsUnprogrammed(t *testing.T) {
 	}
 }
 
-// A source doesn't add a retired channel; once it's active again, sync
-// does.
-func TestSyncSkipsRetired(t *testing.T) {
+// A source's search is taken as it is: a retired channel it matches is
+// added (and not programmed), and stays while the search matches it.
+func TestSyncAddsRetired(t *testing.T) {
 	ctx := context.Background()
 	s, d := newService(t)
 	sh := openShared(t, d)
@@ -319,7 +319,8 @@ func TestSyncSkipsRetired(t *testing.T) {
 	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "band:2m"}); err != nil {
+	_, src, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "band:2m"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	sync := func() string {
@@ -332,14 +333,15 @@ func TestSyncSkipsRetired(t *testing.T) {
 		}
 		return strings.Join(got, ",")
 	}
-	if got := sync(); got != "Tranquillon" {
+	if got := sync(); got != "Tranquillon,View Hill" {
 		t.Errorf("with View Hill retired: %s", got)
 	}
-	if _, err := sh.SetStatus(ctx, gone.ID, StatusChange{Status: domain.StatusActive}, "back"); err != nil {
+	src.Query = "band:2m -status:retired"
+	if err := s.UpdateSource(ctx, src); err != nil {
 		t.Fatal(err)
 	}
-	if got := sync(); got != "Tranquillon,View Hill" {
-		t.Errorf("back in service: %s", got)
+	if got := sync(); got != "Tranquillon" {
+		t.Errorf("with -status:retired: %s", got)
 	}
 }
 

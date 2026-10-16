@@ -415,3 +415,14 @@ func needsQuotes(v string) bool {
 func quote(v string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"`
 }
+
+// Mentions reports whether a query has a field:value term for field,
+// anywhere in it (not counting the saved searches it uses).
+func Mentions(n Node, field string) bool {
+	found := false
+	MapTerms(n, func(t Term) Term {
+		found = found || t.Field == field
+		return t
+	})
+	return found
+}

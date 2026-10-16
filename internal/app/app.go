@@ -126,18 +126,6 @@ func (s *Service) GetChannel(ctx context.Context, ref string) (domain.Channel, e
 	return s.lib.GetChannel(ctx, id)
 }
 
-// DeleteChannel deletes a channel by ID or unique ID prefix.
-func (s *Service) DeleteChannel(ctx context.Context, ref string) error {
-	if err := s.writable(); err != nil {
-		return err
-	}
-	id, err := s.ChannelID(ctx, ref)
-	if err != nil {
-		return err
-	}
-	return s.lib.DeleteChannel(ctx, id)
-}
-
 // ListChannels returns every channel in name order (see
 // domain.CompareChannels).
 func (s *Service) ListChannels(ctx context.Context) ([]domain.Channel, error) {
@@ -211,6 +199,51 @@ func (s *Service) FindChannels(ctx context.Context, n query.Node) ([]domain.Chan
 		}
 	}
 	return out, nil
+}
+
+// ListedChannels is FindChannels for the main channel list, which leaves
+// out retired channels unless the search says status: itself (directly or
+// in a saved search it uses). It returns how many retired channels it
+// left out. Other searches, such as a radio's sources, never do this.
+func (s *Service) ListedChannels(ctx context.Context, n query.Node) ([]domain.Channel, int, error) {
+	cs, err := s.FindChannels(ctx, n)
+	if err != nil {
+		return nil, 0, err
+	}
+	if s.mentionsStatus(ctx, n, map[string]bool{}) {
+		return cs, 0, nil
+	}
+	hidden := 0
+	cs = slices.DeleteFunc(cs, func(c domain.Channel) bool {
+		retired := c.Status.OrActive() == domain.StatusRetired
+		if retired {
+			hidden++
+		}
+		return retired
+	})
+	return cs, hidden, nil
+}
+
+// mentionsStatus reports whether a query, or a saved search it uses, has
+// a status: term.
+func (s *Service) mentionsStatus(ctx context.Context, n query.Node, seen map[string]bool) bool {
+	if query.Mentions(n, "status") {
+		return true
+	}
+	for _, name := range query.Refs(n) {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		ss, err := s.lib.GetSearch(ctx, name)
+		if err != nil {
+			continue
+		}
+		if sn, err := query.Parse(ss.Query); err == nil && s.mentionsStatus(ctx, sn, seen) {
+			return true
+		}
+	}
+	return false
 }
 
 // MoreInShared counts the channels a search of what's in use (or of your
