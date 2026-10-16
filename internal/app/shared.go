@@ -219,7 +219,8 @@ func (s *Service) convertTo(ctx context.Context, shared []domain.Channel, only m
 	}
 	var out []Conversion
 	for _, c := range mine {
-		if c.Link != nil || (ids != nil && !slices.Contains(ids, c.ID)) {
+		// A retired channel is done with, linked already or not.
+		if c.Link != nil || c.Status.OrActive() == domain.StatusRetired || (ids != nil && !slices.Contains(ids, c.ID)) {
 			continue
 		}
 		target, ok := bestMatch(c, byKey[domain.ProgrammedKey(c)])
@@ -258,7 +259,10 @@ func (s *Service) convertTo(ctx context.Context, shared []domain.Channel, only m
 			if err := tx.ReplaceOnRadios(ctx, cv.Private.ID, cv.Shared.ID); err != nil {
 				return fmt.Errorf("%s: %w", cv.Private.Name, err)
 			}
-			if err := tx.DeleteChannel(ctx, cv.Private.ID); err != nil {
+			// Retired, not deleted: it stays, pointing at the shared channel.
+			p := cv.Private
+			p.Status, p.StatusNote, p.BackOn, p.ReplacedBy = domain.StatusRetired, "linked to the shared channel", nil, cv.Shared.ID
+			if _, err := tx.UpdateChannel(store.WithChange(ctx, "linked to the shared channel", ""), p); err != nil {
 				return fmt.Errorf("%s: %w", cv.Private.Name, err)
 			}
 			out[i].Link = saved
@@ -540,20 +544,8 @@ func (s *Service) Relink(ctx context.Context, sel Selection) ([]domain.Channel, 
 			if !ok {
 				continue
 			}
-			if err := tx.ReplaceOnRadios(ctx, c.ID, r.ID); err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
-			}
-			moved := domain.Linked(c, r, r.Revision)
-			saved, err := tx.SaveAnnotation(ctx, moved)
+			saved, err := relinkShared(ctx, tx, c, r)
 			if err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
-			}
-			if c.Annotated() {
-				if err := tx.DeleteChannel(ctx, c.ID); err != nil {
-					return fmt.Errorf("%s: %w", c.Name, err)
-				}
-			}
-			if err := tx.MarkSeen(ctx, c.ID, c.Revision); err != nil {
 				return err
 			}
 			out = append(out, saved)
@@ -561,6 +553,78 @@ func (s *Service) Relink(ctx context.Context, sel Selection) ([]domain.Channel, 
 		return nil
 	})
 	return out, err
+}
+
+// relinkShared moves a retired shared channel's places on the library's
+// radios, and the user's annotation, to its replacement r, and marks the
+// change seen.
+func relinkShared(ctx context.Context, tx store.Library, c, r domain.Channel) (domain.Channel, error) {
+	if err := tx.ReplaceOnRadios(ctx, c.ID, r.ID); err != nil {
+		return r, fmt.Errorf("%s: %w", c.Name, err)
+	}
+	saved, err := tx.SaveAnnotation(ctx, domain.Linked(c, r, r.Revision))
+	if err != nil {
+		return r, fmt.Errorf("%s: %w", c.Name, err)
+	}
+	if c.Annotated() {
+		if err := tx.DeleteChannel(ctx, c.ID); err != nil {
+			return r, fmt.Errorf("%s: %w", c.Name, err)
+		}
+	}
+	return saved, tx.MarkSeen(ctx, c.ID, c.Revision)
+}
+
+// Relinked is a retired channel moved over to its replacement.
+type Relinked struct {
+	From, To domain.Channel
+}
+
+// RelinkChannels moves each selected retired channel that names a
+// replacement over to it: its places on the library's radios, keeping
+// their overrides, and, for a shared channel, the user's tags and notes
+// (as Relink does). It returns what moved, and the selected channels left
+// as they were, not being retired with a replacement.
+func (s *Service) RelinkChannels(ctx context.Context, sel Selection) ([]Relinked, []domain.Channel, error) {
+	if err := s.writable(); err != nil {
+		return nil, nil, err
+	}
+	cs, err := s.Select(ctx, sel)
+	if err != nil {
+		return nil, nil, err
+	}
+	var moves []Relinked
+	var left []domain.Channel
+	for _, c := range cs {
+		if c.Status.OrActive() != domain.StatusRetired || c.ReplacedBy == "" {
+			left = append(left, c)
+			continue
+		}
+		r, err := s.lib.GetChannel(ctx, c.ReplacedBy)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: replacement: %w", c.Name, err)
+		}
+		moves = append(moves, Relinked{From: c, To: r})
+	}
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
+		for i, m := range moves {
+			if m.From.Link != nil {
+				saved, err := relinkShared(ctx, tx, m.From, m.To)
+				if err != nil {
+					return err
+				}
+				moves[i].To = saved
+				continue
+			}
+			if err := tx.ReplaceOnRadios(ctx, m.From.ID, m.To.ID); err != nil {
+				return fmt.Errorf("%s: %w", m.From.Name, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return moves, left, nil
 }
 
 // History returns a shared channel's revisions, or a link's shared
@@ -595,8 +659,8 @@ func (s *Service) UpdateShared(ctx context.Context, c domain.Channel, reason str
 	return c, domain.CheckBandPlan(c), nil
 }
 
-// StatusChange sets a shared channel's status. BackOn applies only to
-// off-air channels, and ReplacedBy (an ID or prefix) only to retired ones.
+// StatusChange sets a channel's status. BackOn applies only to off-air
+// channels, and ReplacedBy (an ID or prefix) only to retired ones.
 type StatusChange struct {
 	Status     domain.Status
 	Note       string
@@ -604,31 +668,62 @@ type StatusChange struct {
 	ReplacedBy string
 }
 
-// SetStatus changes a shared channel's status, recording reason.
+// SetStatus changes one channel's status (see SetStatuses).
 func (s *Service) SetStatus(ctx context.Context, ref string, ch StatusChange, reason string) (domain.Channel, error) {
-	if !s.info.Shared {
-		return domain.Channel{}, errNotShared
-	}
-	c, err := s.GetChannel(ctx, ref)
+	cs, err := s.SetStatuses(ctx, Selection{IDs: []string{ref}}, ch, reason)
 	if err != nil {
-		return c, err
+		return domain.Channel{}, err
 	}
+	return cs[0], nil
+}
+
+// SetStatuses changes the selected channels' status in one transaction,
+// recording reason, and returns them as saved. Channels are retired, never
+// deleted, so they and their places on radios stay. In the
+// shared library this is the maintainer's; in a private library it's for
+// the library's own channels, since a shared channel's status is the
+// shared list's. A replacement is one of the library's own channels or,
+// from a private library, a shared one.
+func (s *Service) SetStatuses(ctx context.Context, sel Selection, ch StatusChange, reason string) ([]domain.Channel, error) {
 	if ch.BackOn != nil && ch.Status != domain.StatusOffAir {
-		return c, domain.Invalidf("an expected-back date is only for off-air channels")
+		return nil, domain.Invalidf("an expected-back date is only for off-air channels")
+	}
+	if ch.ReplacedBy != "" && ch.Status != domain.StatusRetired {
+		return nil, domain.Invalidf("a replacement is only for retired channels")
+	}
+	cs, err := s.Select(ctx, sel)
+	if err != nil {
+		return nil, err
 	}
 	if ch.ReplacedBy != "" {
-		if ch.Status != domain.StatusRetired {
-			return c, domain.Invalidf("a replacement is only for retired channels")
-		}
 		if ch.ReplacedBy, err = s.ChannelID(ctx, ch.ReplacedBy); err != nil {
-			return c, fmt.Errorf("replacement: %w", err)
-		}
-		if ch.ReplacedBy == c.ID {
-			return c, domain.Invalidf("a channel can't replace itself")
+			return nil, fmt.Errorf("replacement: %w", err)
 		}
 	}
-	c.Status, c.StatusNote, c.BackOn, c.ReplacedBy = ch.Status, ch.Note, ch.BackOn, ch.ReplacedBy
-	return s.lib.UpdateChannel(store.WithChange(ctx, reason, ""), c)
+	for _, c := range cs {
+		if c.Link != nil {
+			return nil, domain.Invalidf("%s is a shared channel, whose status is the shared list's; copy it to make it your own", c.Name)
+		}
+		if c.ID == ch.ReplacedBy {
+			return nil, domain.Invalidf("%s can't replace itself", c.Name)
+		}
+	}
+	ctx = store.WithChange(ctx, reason, "")
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
+		for i := range cs {
+			cs[i].Status, cs[i].StatusNote, cs[i].BackOn, cs[i].ReplacedBy = ch.Status, ch.Note, ch.BackOn, ch.ReplacedBy
+			saved, err := tx.UpdateChannel(ctx, cs[i])
+			if err != nil {
+				return fmt.Errorf("%s: %w", cs[i].Name, err)
+			}
+			cs[i] = saved
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cs, nil
 }
 
 // ImportShared writes a batch into the shared library, recording reason in

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
@@ -84,8 +83,8 @@ func newSharedLinkCommand() *cobra.Command {
 the air: the same frequencies, tones, and tone squelch, and the same service or
 none. The shared channel takes each one's place on your radios, keeping their
 settings; its tags and notes, and a name that differs from the shared one (as a
-short name), become yours on the shared channel; and the private channel goes.
-Lists the changes on stdout.`}
+short name), become yours on the shared channel; and the private channel is
+retired, replaced by the shared one. Lists the changes on stdout.`}
 	cmd.Flags().Bool("dry-run", false, "List what would be replaced without changing anything")
 	conversionListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -376,17 +375,9 @@ that took its place). Links follow, and the change is recorded with --reason.`}
 	cmd.Flags().String("replaced-by", "", "For retired: the shared channel ID that replaces it")
 	reasonFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		st, err := domain.ParseStatus(getString(cmd, "set"))
+		ch, err := statusChange(cmd)
 		if err != nil {
 			return err
-		}
-		ch := app.StatusChange{Status: st, Note: getString(cmd, "note"), ReplacedBy: getString(cmd, "replaced-by")}
-		if v := getString(cmd, "back"); v != "" {
-			t, err := time.Parse(time.DateOnly, v)
-			if err != nil {
-				return fmt.Errorf("--back must be a date, YYYY-MM-DD")
-			}
-			ch.BackOn = &t
 		}
 		return withShared(cmd, func(a *app.Service) error {
 			c, err := a.SetStatus(ctx(cmd), getString(cmd, "id"), ch, getString(cmd, "reason"))

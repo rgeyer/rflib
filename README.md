@@ -41,20 +41,25 @@ The `shared` library holds channels shared with everyone: the built-in lists, an
 - **One list:** `channel list` (and the web's Channels page) shows the channels you use: your own, and shared channels you've annotated or put on a radio. `in:shared` searches the whole shared list, `in:all` both, and `in:mine` only your own; in the web interface, the Source filter does the same. Shared channels are marked as such. When the shared list has more matches than the channels you use, `channel list` says how many (on stderr), and the web interface offers to search there too.
 - **What's yours on a shared channel:** tags, notes, and short names. Power and scan are set on each radio (`radio channels set`). Everything else belongs to the shared channel, and editing it is refused: make a private copy with `channel copy`, which takes the shared channel's place on your radios and stops following changes. The shared channel's tags and notes are kept beside yours, and searches match both.
 - **Names:** a shared channel shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
-- **Converting:** `shared link` replaces a private channel with the shared one it matches on the air (the same frequencies, tones, and tone squelch, and the same service, or none; FRS and GMRS share frequencies, so the service keeps them apart). The shared channel takes its place on your radios, its tags, notes, and name become yours on the shared channel, and the private channel goes. In the web interface, **Link to shared list** on the Channels page lists your matching channels and replaces the ones you pick.
+- **Converting:** `shared link` replaces a private channel with the shared one it matches on the air (the same frequencies, tones, and tone squelch, and the same service, or none; FRS and GMRS share frequencies, so the service keeps them apart). The shared channel takes its place on your radios, its tags, notes, and name become yours on the shared channel, and the private channel is retired, with the shared channel as its replacement. In the web interface, **Link to shared list** on the Channels page lists your matching channels and replaces the ones you pick.
 - **Shared tags** come from a short list with agreed meanings: `rflib tag list`. None repeats a channel's fields (service, band, mode, or duplex), which search finds without a tag. Your own tags are free-form, and one with a shared tag's name means the same thing. Adding one of your own that repeats the channel's fields, such as `cb` on a CB channel, `ham` on an amateur one, or `repeater` on a repeater, is allowed but warns you that `service:cb` (and so on) already finds it.
 - **The shared library is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`.
 
 ### Status and changes
 
-A shared channel is `active`, `off-air` (temporarily, such as for maintenance, with an expected-back date if known), or `retired` (gone for good, possibly replaced by another channel). A small change, such as a new tone, is a correction to the same channel; a repeater that becomes a different system is a new channel, and the old one is retired and points to it.
+Every channel, shared or your own, is `active`, `off-air` (temporarily, such as for maintenance, with an expected-back date if known), or `retired` (gone for good, possibly replaced by another channel). Channels are never deleted: one you no longer want is retired. A small change, such as a new tone, is a correction to the same channel; a repeater that becomes a different system is a new channel, and the old one is retired and points to it.
 
-- **On your radios:** an off-air channel stays programmed, so it needs no reprogramming when it's back, but it isn't scanned. A retired channel isn't programmed at all: it stays on the radio's list but takes no memory number, and a source doesn't add one. If it's ever back in service, it's programmed again, and a source that matches it adds it.
+- **On your radios:** an off-air channel stays programmed, so it needs no reprogramming when it's back, but it isn't scanned. A retired channel isn't programmed at all: it stays on the radio's list, crossed out, but takes no memory number. If it's ever back in service, it's programmed again.
+- **Sources take their search as it is:** a retired channel a source's search matches is added, crossed out, and stays while the search matches it. Add `-status:retired` to a source to leave retired channels out.
+- **The channel list hides retired channels** unless the search says `status:` (such as `status:retired`); `channel list --retired`, or **Show retired** on the Channels page, shows them. It says how many it left out. Other searches, such as radio sources, never hide anything.
+- **Your own channels:** `rflib channel status` sets their status, by `--id` or `--query`, and a retired one can name its replacement, one of yours or a shared channel (`--replaced-by`). `rflib channel relink` puts a retired channel's replacement in its place on your radios, keeping their settings, for your own channels and shared ones. A shared channel's status is the shared list's.
 - **`rflib shared changes`** lists the shared channels you use (on your radios, or with your notes and tags) that changed since you last looked: what changed, why, and the radios they're on, which need programming again. `rflib shared ack --all` marks them seen. `rflib shared relink --all` moves retired channels' places on your radios, and your notes and tags, over to their replacements.
 - **History:** every change to a shared channel is kept, with when and why: `rflib shared history --id <id>`.
 - **Searching:** `status:off-air` finds channels that are down.
 
 ```sh
+./rflib channel status --id <id> --set retired --note "the club moved it" --replaced-by <new-id>
+./rflib channel relink --id <id>
 ./rflib shared status --id <id> --set off-air --note "antenna work" --back 2026-12-01 --reason "owner reported"
 ./rflib shared status --id <id> --set retired --replaced-by <new-id> --reason "moved to Diablo Peak"
 ./rflib shared update --id <id> --tx-tone ctcss:131.8 --reason "new tone"
@@ -92,7 +97,7 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--lat
 
 ```sh
 ./rflib channel update --id <channel-id> --power low
-./rflib channel delete --id <channel-id> --yes
+./rflib channel status --id <channel-id> --set retired    # channels are retired, never deleted
 ```
 
 **Location.** `--lat` and `--lon` say where a channel is used, such as a repeater's site, and `--radius-km` how far that reaches: either how rough the position is, or the repeater's coverage. Searches use it with `near:` (see [Search](#search)). `--grid CM94sq` gives a Maidenhead grid square instead (4, 6, or 8 characters): its center, with a radius reaching its corners unless `--radius-km` says otherwise; a CSV import's `grid` column does the same. `--radius-km` alone changes the radius and keeps the coordinates; an empty `--lat` and `--lon` clear the location.
@@ -103,19 +108,19 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--lat
 
 ### Changing many channels at once
 
-`channel update`, `channel delete`, `radio channels remove`, and `radio channels set` take `--query` (`-q`) as well as `--id`. With both, a channel must match both. `--dry-run` lists the channels that would change, without changing them.
+`channel update`, `channel status`, `radio channels remove`, and `radio channels set` take `--query` (`-q`) as well as `--id`. With both, a channel must match both. `--dry-run` lists the channels that would change, without changing them.
 
 ```sh
 ./rflib channel update -q band:noaa --tags +weather --skip
 ./rflib channel update -q 'service:none freq:150..174' --service public_safety --dry-run
-./rflib channel delete -q tag:old --yes
+./rflib channel status -q tag:old --set retired
 ./rflib radio channels set HT -q band:gmrs --power low
 ./rflib radio channels remove HT -q service:cb --yes    # or --all
 ```
 
 - **Safe fields only:** updating many channels changes only `--tags`, `--skip`, `--power`, `--service`, `--rx-only`, and the location (`--lat` and `--lon` together, with `--radius-km` if wanted). Frequencies, tones, mode, and names change one channel at a time, by `--id`. Likewise, `radio channels set` sets `--name` one channel at a time.
-- **Confirmation:** deleting channels always needs `--yes`, and so does removing channels from a radio by query or `--all`.
-- **One transaction:** a bulk update or delete applies to every channel or to none.
+- **Confirmation:** removing channels from a radio by query or `--all` needs `--yes`.
+- **One transaction:** a bulk update or status change applies to every channel or to none.
 
 ### Output and pipes
 
@@ -330,7 +335,7 @@ A radio's list is in **sections**, in order, and every memory belongs to one. A 
 ./rflib radio channels remove Truck --id <id>    # or -q QUERY --yes, or --all --yes
 ```
 
-Memory numbers follow the list from the model's first memory, section by section. Deleting a channel from the library takes it off every radio.
+Memory numbers follow the list from the model's first memory, section by section. Retiring a channel leaves it on its radios, crossed out and unprogrammed, until you take it off or relink it.
 
 ### Per-radio settings
 
@@ -691,7 +696,7 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 
 `rflib serve` also serves a web interface at `http://127.0.0.1:8080/`, built into the binary:
 
-- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, delete, or add to a radio, and choose Source (in use, by default) to search the whole shared list as well as the channels you use; when the shared list has more matches, a link next to the count searches there too. **Clear** starts the search and its filters over. A globe marks a shared channel, and a note icon your notes or tags on one.
+- **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, retire, relink retired ones to their replacements, or add to a radio, open one to set its status (active, off the air, or retired with a replacement, yours or shared), show retired channels, which the list hides, and choose Source (in use, by default) to search the whole shared list as well as the channels you use; when the shared list has more matches, a link next to the count searches there too. **Clear** starts the search and its filters over. A globe marks a shared channel, and a note icon your notes or tags on one.
 - **Shared list:** opened from its own item in the navigation. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who uses the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
 - **Radios:** each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and how it's programmed), and see in the Programmed column, and the count above the list, which memories aren't programmed (struck through, with no number, as on the programmed radio), which are receive-only, and which carry only their transmit tone, and select several (shift-click selects a range) to set scan or power, or take them off the radio; memories are grouped by section, with each section's memory range and sources, and you drag memories within and between sections (while dragging, a bar at the top of the window takes a memory to any section, and the page scrolls near the window's edges), and drag sections by their handles to reorder them (a menu on each memory moves it too); **Add section** and each section's edit button set its name, start, size or end, order, and whether it's the default, or merge it into another (or drag a section onto the **Merge into** bar that appears while dragging it); selected memories move to a section with **Move to section**; its sources, with a preview of what a new source would add before you add it; sync with a preview; the programming file to download; **Copy**, which makes a new radio from this one for another model; the **⋯** menu, to edit the radio's settings (name, default power, duplicate names, name length, and notes) or delete it, which needs its name typed and leaves its channels in the library; and **Compare**: with another radio, by channel, adding what the other has; or with the radio's file, which reads the radio's current file and lets you choose, memory by memory, a matching channel, keeping it as programmed, or taking the radio's changes; **Ignore memory numbers** makes it a first import that only checks everything on the radio is in rflib. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
@@ -717,7 +722,7 @@ curl -H "Authorization: Bearer s3cret" 'localhost:8080/api/v1/libraries/default/
 
 - **The description:** `GET /api/v1/openapi.yaml` is the OpenAPI document, which lists every endpoint and shape. Its source is `internal/api/openapi.yaml`, and the tests hold every route and response to it.
 - **Authentication:** with `$RFLIB_API_TOKEN` set, every request but `/health` and the document needs `Authorization: Bearer TOKEN`. Serving on anything but a loopback address requires a token.
-- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-delete`, and `copy`; a shared channel's ID gives your view of it, and saving it saves your notes, tags, and short names), `radios` (memories, channels, overrides, sources, sync, and export), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), and `feed`. `organizations`, `systems`, and `plans` (each with `history`), which live in the shared list, and `models`, `profiles`, `seeds` (with `update`), and `tags` sit beside `libraries`.
+- **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-status`, `relink`, and `copy`; channels are retired, never deleted, and `hide_retired` lists them as the Channels page does; a shared channel's ID gives your view of it, and saving it saves your notes, tags, and short names), `radios` (memories, channels, overrides, sources, sync, and export), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), and `feed`. `organizations`, `systems`, and `plans` (each with `history`), which live in the shared list, and `models`, `profiles`, `seeds` (with `update`), and `tags` sit beside `libraries`.
 - **Values:** frequencies are exact integer Hz, and tones use the library's syntax (`ctcss:100.000`, `dcs:023`). Queries are the same as the CLI's, in a `q` parameter or a `query` field. Channel IDs can be shortened to a unique prefix.
 - **Changes:** `PATCH` changes only the fields given, and `null` clears `tx_hz` and `location`. Changes to the `shared` library, organizations, systems, and plans need a `reason`.
 - **Errors** are `{"error": {"code", "message"}}`: 400 for a request to fix, 401 without a valid token, 403 for everyday changes to the shared library, 404, 409 for a name in use, and 500 for anything else (the detail goes to the server's log).

@@ -438,13 +438,33 @@ func TestChannelsRadiosAndShared(t *testing.T) {
 		t.Error("no models")
 	}
 
-	// Copy, delete, and cleanup.
+	// Copy, retire, relink, and cleanup.
 	var copies channelsResult
 	c.do("POST", L+"/channels/copy", map[string]any{"select": map[string]any{"ids": []string{wx.ID}}}, 200, &copies)
 	if len(copies.Channels) != 1 || copies.Channels[0].Link != nil {
 		t.Errorf("copy = %+v", copies)
 	}
-	c.do("DELETE", L+"/channels/"+id, nil, 204, nil)
+	var retired channelsResult
+	c.do("POST", L+"/channels/bulk-status", map[string]any{"select": map[string]any{"ids": []string{id}}, "status": "retired", "replaced_by": copies.Channels[0].ID}, 200, &retired)
+	if len(retired.Channels) != 1 || retired.Channels[0].Status != "retired" {
+		t.Errorf("retire = %+v", retired)
+	}
+	var listed struct {
+		Channels      []Channel `json:"channels"`
+		RetiredHidden int       `json:"retired_hidden"`
+	}
+	c.do("GET", L+"/channels?hide_retired=true&q="+urlQuery("id:"+id), nil, 200, &listed)
+	if len(listed.Channels) != 0 || listed.RetiredHidden != 1 {
+		t.Errorf("hide_retired = %+v", listed)
+	}
+	var relinked struct {
+		Relinked []struct{ From, To Channel } `json:"relinked"`
+		Left     []Channel                    `json:"left"`
+	}
+	c.do("POST", L+"/channels/relink", map[string]any{"select": map[string]any{"ids": []string{id, wx.ID}}}, 200, &relinked)
+	if len(relinked.Relinked) != 1 || relinked.Relinked[0].To.ID != copies.Channels[0].ID || len(relinked.Left) != 1 {
+		t.Errorf("relink = %+v", relinked)
+	}
 	c.do("DELETE", L+"/radios/HT", nil, 204, nil)
 }
 

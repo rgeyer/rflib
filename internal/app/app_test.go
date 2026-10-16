@@ -365,14 +365,22 @@ func TestBulkSelectUpdateDelete(t *testing.T) {
 	if _, e, _ := s.RadioEntry(ctx, "HT", wx1.ID[:8]); e.Power != high {
 		t.Errorf("override = %+v", e)
 	}
-	gone, err := s.DeleteChannels(ctx, Selection{Query: mustParse(t, "tag:weather")})
-	if err != nil || names(gone) != "WX1,WX2" {
-		t.Fatalf("delete = %s, %v", names(gone), err)
+	// Channels are retired, never deleted: a retired one stays on the
+	// radio (unprogrammed) and keeps its history.
+	retired, err := s.SetStatuses(ctx, Selection{Query: mustParse(t, "tag:weather")}, StatusChange{Status: domain.StatusRetired, Note: "gone"}, "")
+	if err != nil || names(retired) != "WX1,WX2" || retired[0].Status != domain.StatusRetired || retired[0].StatusNote != "gone" {
+		t.Fatalf("retire = %s, %+v, %v", names(retired), retired, err)
 	}
-	if _, on, _ := s.OnRadio(ctx, "HT", Selection{All: true}); names(on) != "Calling" {
-		t.Errorf("deleted channel still on the radio: %s", names(on))
+	if _, on, _ := s.OnRadio(ctx, "HT", Selection{All: true}); names(on) != "Calling,WX1" {
+		t.Errorf("retired channel left the radio: %s", names(on))
 	}
-	if _, removed, err := s.RemoveChannels(ctx, "HT", Selection{All: true}); err != nil || names(removed) != "Calling" {
+	if listed, hidden, err := s.ListedChannels(ctx, mustParse(t, "tag:weather")); err != nil || len(listed) != 0 || hidden != 2 {
+		t.Errorf("listed = %s, %d hidden, %v", names(listed), hidden, err)
+	}
+	if listed, hidden, _ := s.ListedChannels(ctx, mustParse(t, "tag:weather status:retired")); names(listed) != "WX1,WX2" || hidden != 0 {
+		t.Errorf("listed status:retired = %s, %d hidden", names(listed), hidden)
+	}
+	if _, removed, err := s.RemoveChannels(ctx, "HT", Selection{All: true}); err != nil || names(removed) != "Calling,WX1" {
 		t.Errorf("remove all = %s, %v", names(removed), err)
 	}
 }
@@ -414,9 +422,13 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 		t.Fatalf("convert = %+v, %v", cvs, err)
 	}
 	// The private channel gives way to the shared one, which carries its
-	// tags, notes, and name as the user's annotation.
-	if _, err := s.GetChannel(ctx, mine.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("the private channel stayed: %v", err)
+	// tags, notes, and name as the user's annotation; it's retired, not
+	// deleted, replaced by the shared one, and linking again leaves it be.
+	if old, err := s.GetChannel(ctx, mine.ID); err != nil || old.Status != domain.StatusRetired || old.ReplacedBy != cvs[0].Shared.ID {
+		t.Errorf("the private channel = %+v, %v", old, err)
+	}
+	if again, err := s.ConvertToLinks(ctx, nil, nil, true); err != nil || len(again) != 0 {
+		t.Errorf("linking again = %+v, %v", again, err)
 	}
 	link, _ := s.GetChannel(ctx, cvs[0].Shared.ID)
 	if link.Link == nil || link.ID != cvs[0].Shared.ID || link.Name != "GMRS 15" || strings.Join(link.ShortNames, ",") != "GMRS 15 Rpt" || strings.Join(link.Tags, ",") != "family" || link.Notes != "our channel" {
@@ -466,7 +478,7 @@ func TestSharedChannelsLinkCopyAndChanges(t *testing.T) {
 	if _, err := sh.SetStatus(ctx, link.Link.SharedID, StatusChange{Status: domain.StatusOffAir, Note: "antenna work", BackOn: &back}, "reported by owner"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetStatus(ctx, link.ID, StatusChange{Status: domain.StatusActive}, ""); !errors.Is(err, errNotShared) {
+	if _, err := s.SetStatus(ctx, link.ID, StatusChange{Status: domain.StatusActive}, ""); !errors.Is(err, domain.ErrInvalid) {
 		t.Errorf("status from a private library: %v", err)
 	}
 	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
@@ -701,3 +713,41 @@ func (s *Service) radioEntriesNamed(ctx context.Context, radio string) ([]string
 	return out, r, err
 }
 
+
+// A private channel retires with a replacement, its own or a shared one,
+// and relinking puts the replacement in its place on radios.
+func TestRetireAndRelink(t *testing.T) {
+	ctx := context.Background()
+	s, d := newService(t)
+	sh := openShared(t, d)
+	rpt := sharedChannel(t, sh, "Tranquillon", 146.76)
+	mine, _, err := s.CreateChannel(ctx, domain.Channel{Name: "Old Rpt", ReceiveHz: 146_940_000, Mode: "FM", Service: domain.ServiceAmateur, ReceiveTone: none, TransmitTone: none})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{mine.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetStatus(ctx, mine.ID, StatusChange{Status: domain.StatusRetired, ReplacedBy: mine.ID}, ""); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("replacing itself: %v", err)
+	}
+	if _, err := s.SetStatus(ctx, mine.ID, StatusChange{Status: domain.StatusActive, ReplacedBy: rpt.ID}, ""); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("a replacement for an active channel: %v", err)
+	}
+	if _, err := s.SetStatus(ctx, mine.ID, StatusChange{Status: domain.StatusRetired, ReplacedBy: rpt.ID}, ""); err != nil {
+		t.Fatal(err)
+	}
+	moved, left, err := s.RelinkChannels(ctx, Selection{IDs: []string{mine.ID}})
+	if err != nil || len(moved) != 1 || moved[0].To.ID != rpt.ID || len(left) != 0 {
+		t.Fatalf("relink = %+v, %+v, %v", moved, left, err)
+	}
+	if _, on, _ := s.OnRadio(ctx, "HT", Selection{All: true}); names(on) != "Tranquillon" {
+		t.Errorf("on the radio = %s", names(on))
+	}
+	if got, err := s.GetChannel(ctx, mine.ID); err != nil || got.Status != domain.StatusRetired {
+		t.Errorf("the retired channel = %+v, %v", got, err)
+	}
+}

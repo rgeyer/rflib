@@ -226,27 +226,3 @@ func (s *Service) UpdateChannels(ctx context.Context, sel Selection, e ChannelEd
 	}
 	return cs, warnings, nil
 }
-
-// DeleteChannels deletes the selected channels in one transaction, taking
-// them off every radio, and returns them.
-func (s *Service) DeleteChannels(ctx context.Context, sel Selection) ([]domain.Channel, error) {
-	if err := s.writable(); err != nil {
-		return nil, err
-	}
-	cs, err := s.Select(ctx, sel)
-	if err != nil {
-		return nil, err
-	}
-	err = s.lib.InTx(ctx, func(tx store.Library) error {
-		for _, c := range cs {
-			if err := tx.DeleteChannel(ctx, c.ID); err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return cs, nil
-}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
@@ -75,7 +76,7 @@ func newGroupGoneCommand() *cobra.Command {
 
 func newChannelCommand() *cobra.Command {
 	channel := &cobra.Command{Use: "channel", Short: "Manage analog radio channels"}
-	channel.AddCommand(newChannelAddCommand(), newChannelListCommand(), newChannelShowCommand(), newChannelUpdateCommand(), newChannelDeleteCommand(),
+	channel.AddCommand(newChannelAddCommand(), newChannelListCommand(), newChannelShowCommand(), newChannelUpdateCommand(), newChannelStatusCommand(), newChannelRelinkCommand(),
 		newChannelCopyCommand())
 	return channel
 }
@@ -246,8 +247,9 @@ func newChannelAddCommand() *cobra.Command {
 
 func newChannelListCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list [QUERY...]", Short: "List or search channels",
-		Long: "List channels, or the channels matching a query given as arguments or --query.\n\n" + queryHelp + "\n\n" + tableHelp}
+		Long: "List channels, or the channels matching a query given as arguments or --query.\nRetired channels are left out unless the query says status: (such as\nstatus:retired) or --retired is given.\n\n" + queryHelp + "\n\n" + tableHelp}
 	filterFields(cmd)
+	cmd.Flags().Bool("retired", false, "Include retired channels")
 	channelListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := channelListing.check(cmd); err != nil {
@@ -258,12 +260,21 @@ func newChannelListCommand() *cobra.Command {
 			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			cs, err := a.FindChannels(ctx(cmd), n)
+			var cs []domain.Channel
+			hidden := 0
+			if retired, _ := cmd.Flags().GetBool("retired"); retired {
+				cs, err = a.FindChannels(ctx(cmd), n)
+			} else {
+				cs, hidden, err = a.ListedChannels(ctx(cmd), n)
+			}
 			if err != nil {
 				return err
 			}
 			if err := channelListing.write(cmd, cs); err != nil {
 				return err
+			}
+			if hidden > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%d retired not shown; add --retired, or search status:retired\n", hidden)
 			}
 			if more, err := a.MoreInShared(ctx(cmd), n, len(cs)); err == nil && more > 0 {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%d more in the shared list; add in:all to include them\n", more)
@@ -504,42 +515,104 @@ func parseTagEdit(v string) (app.TagEdit, error) {
 	return e, nil
 }
 
-func newChannelDeleteCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "delete", Short: "Delete channels, taking them off every radio", Args: cobra.NoArgs,
-		Long: `Delete channels by --id, --query, or both (a channel must match both). They
-come off every radio too. Needs --yes; --dry-run lists what would go.
+func newChannelStatusCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "status", Short: "Set whether your channels are on the air, or retire them", Args: cobra.NoArgs,
+		Long: `Set the status of channels chosen by --id, --query, or both (a channel must
+match both): active, off-air (temporarily; --back gives the expected date), or
+retired (gone for good; --replaced-by names the channel that took its place,
+one of yours or a shared one). Channels are never deleted: a retired one stays
+in the library and on radios, crossed out and unprogrammed, and is left out of
+channel list unless the search says status:. rflib channel relink then moves
+retired channels' places on radios to their replacements.
+
+This is for your own channels; a shared channel's status is the shared list's
+(rflib shared status, for its maintainer). --dry-run lists the channels.
 
 ` + stdinIDHelp}
 	idsFlag(cmd, "Channel IDs")
-	cmd.Flags().StringP("query", "q", "", "Delete the channels matching this query (see rflib help search)")
-	cmd.Flags().Bool("dry-run", false, "List the channels that would be deleted")
-	cmd.Flags().Bool("yes", false, "Confirm deletion")
+	cmd.Flags().StringP("query", "q", "", "The channels matching this query (see rflib help search)")
+	cmd.Flags().String("set", "", "active, off-air, or retired (required)")
+	_ = cmd.MarkFlagRequired("set")
+	cmd.Flags().String("note", "", "What's happening, such as \"antenna work\"")
+	cmd.Flags().String("back", "", "For off-air: when it's expected back, YYYY-MM-DD")
+	cmd.Flags().String("replaced-by", "", "For retired: the channel ID that replaces it")
+	cmd.Flags().String("reason", "", "Why, recorded in each channel's history")
+	cmd.Flags().Bool("dry-run", false, "List the channels that would change")
 	channelListing.flags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		sel, err := selection(cmd)
 		if err != nil {
 			return err
 		}
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		if !dryRun {
-			if err := requireYes(cmd, "channel"); err != nil {
-				return err
-			}
+		ch, err := statusChange(cmd)
+		if err != nil {
+			return err
 		}
 		return withApp(cmd, func(a *app.Service) error {
-			if dryRun {
+			if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 				cs, err := a.Select(ctx(cmd), sel)
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "Would delete %d channels\n", len(cs))
+				fmt.Fprintf(cmd.ErrOrStderr(), "Would set %d channels %s\n", len(cs), ch.Status)
 				return channelListing.write(cmd, cs)
 			}
-			cs, err := a.DeleteChannels(ctx(cmd), sel)
+			cs, err := a.SetStatuses(ctx(cmd), sel, ch, getString(cmd, "reason"))
 			if err == nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Deleted %d channels\n", len(cs))
+				fmt.Fprintf(cmd.ErrOrStderr(), "Set %d channels %s\n", len(cs), ch.Status)
 			}
 			return err
+		})
+	}
+	return cmd
+}
+
+// statusChange reads --set, --note, --back, and --replaced-by.
+func statusChange(cmd *cobra.Command) (app.StatusChange, error) {
+	st, err := domain.ParseStatus(getString(cmd, "set"))
+	if err != nil {
+		return app.StatusChange{}, err
+	}
+	ch := app.StatusChange{Status: st, Note: getString(cmd, "note"), ReplacedBy: getString(cmd, "replaced-by")}
+	if v := getString(cmd, "back"); v != "" {
+		t, err := time.Parse(time.DateOnly, v)
+		if err != nil {
+			return ch, fmt.Errorf("--back must be a date, YYYY-MM-DD")
+		}
+		ch.BackOn = &t
+	}
+	return ch, nil
+}
+
+func newChannelRelinkCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "relink", Short: "Move retired channels over to their replacements", Args: cobra.NoArgs,
+		Long: `Put each retired channel's replacement in its place on your radios, keeping
+their settings, for the channels chosen by --id, --query, or both: your own
+retired channels, and shared ones (whose notes and tags move over too, as
+rflib shared relink does). Channels that aren't retired with a replacement
+are left as they are and listed. Program the radios again.
+
+` + stdinIDHelp}
+	idsFlag(cmd, "Channel IDs")
+	cmd.Flags().StringP("query", "q", "", "The channels matching this query (see rflib help search)")
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		sel, err := selection(cmd)
+		if err != nil {
+			return err
+		}
+		return withApp(cmd, func(a *app.Service) error {
+			moved, left, err := a.RelinkChannels(ctx(cmd), sel)
+			if err != nil {
+				return err
+			}
+			for _, m := range moved {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", m.From.Name, m.To.ID, m.To.Name)
+			}
+			for _, c := range left {
+				fmt.Fprintf(cmd.ErrOrStderr(), "left %s: not retired with a replacement\n", c.Name)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "Relinked %d channels to their replacements\n", len(moved))
+			return nil
 		})
 	}
 	return cmd
