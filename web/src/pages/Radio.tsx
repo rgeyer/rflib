@@ -9,6 +9,7 @@ import { api, call, download, type Memory, type Radio, type Section, type Source
 import { CompareRadio } from "../components/CompareRadio";
 import { CompareRadios } from "../components/CompareRadios";
 import { CopyRadio } from "../components/CopyRadio";
+import { DeleteRadio, EditRadio } from "../components/RadioSettings";
 import { FilterMenu, QueryBar } from "../components/QueryBar";
 import { confirmMerge, SectionEditor, SectionHeader, useMergeSection, useSections } from "../components/Sections";
 import { SourcePreview } from "../components/SourcePreview";
@@ -168,6 +169,7 @@ export function RadioPage() {
   const refresh = () => void client.invalidateQueries();
   const [preview, setPreview] = useState<SyncResult | null>(null);
   const [copying, setCopying] = useState(false);
+  const [managing, setManaging] = useState<"edit" | "delete" | null>(null);
   const [compareWith, setCompareWith] = useState<string>("file");
   const sync = useMutation({
     mutationFn: (dryRun: boolean) =>
@@ -227,6 +229,21 @@ export function RadioPage() {
           <Button leftSection={<IconDownload size={16} />} onClick={() => exportFile.mutate()} loading={exportFile.isPending}>
             Export
           </Button>
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon variant="default" size="lg" aria-label="Radio settings" disabled={!r}>
+                <IconDots size={16} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => setManaging("edit")}>
+                Edit radio…
+              </Menu.Item>
+              <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={() => setManaging("delete")}>
+                Delete radio…
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         </Group>
       </Group>
       {(info.error || plan.error) && <Alert color="red">{(info.error ?? plan.error)!.message}</Alert>}
@@ -596,6 +613,8 @@ export function RadioPage() {
         </Tabs.Panel>
       </Tabs>
       {copying && <CopyRadio lib={lib} radio={radio} onClose={() => setCopying(false)} />}
+      {managing === "edit" && r && <EditRadio lib={lib} radio={r} onClose={() => setManaging(null)} />}
+      {managing === "delete" && r && <DeleteRadio lib={lib} radio={r} onClose={() => setManaging(null)} />}
       <Modal opened={preview !== null} onClose={() => setPreview(null)} title="Sync" size="lg">
         {preview && (
           <Stack>
