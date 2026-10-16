@@ -200,7 +200,7 @@ func TestSyncPlacesAndClaims(t *testing.T) {
 	if again, _ := s.Sync(ctx, "HT", SyncOptions{}); again.Added() != 0 {
 		t.Errorf("second sync added %d", again.Added())
 	}
-	if err := s.MoveChannel(ctx, "HT", "missing", Move{Top: true}); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.MoveChannel(ctx, "HT", "missing", Move{Top: true}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("move missing: %v", err)
 	}
 }
@@ -259,7 +259,7 @@ func TestSortedSections(t *testing.T) {
 		t.Fatalf("sorted = %s", got)
 	}
 	_, es, _ = s.RadioEntries(ctx, "HT")
-	if err := s.MoveChannel(ctx, "HT", es[3].Channel.ID, Move{Top: true}); err != nil {
+	if _, err := s.MoveChannel(ctx, "HT", es[3].Channel.ID, Move{Top: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got := memories(); got != "20 GMRS 15, 21 GMRS 1, 22 GMRS 2, 23 GMRS 10, 24 Mine" {
@@ -269,7 +269,7 @@ func TestSortedSections(t *testing.T) {
 		t.Errorf("the section is still sorted by %s", sec.Sort)
 	}
 	// Into another section, by name.
-	if err := s.MoveChannel(ctx, "HT", mine.ID, Move{Section: "gmrs", To: 2}); err != nil {
+	if _, err := s.MoveChannel(ctx, "HT", mine.ID, Move{Section: "gmrs", To: 2}); err != nil {
 		t.Fatal(err)
 	}
 	if got := memories(); got != "20 GMRS 15, 21 Mine, 22 GMRS 1, 23 GMRS 2, 24 GMRS 10" {

@@ -80,6 +80,9 @@ func (s *server) routes() []route {
 		{"PATCH", R + "/sections/{section}", s.lib(s.updateSection), false},
 		{"DELETE", R + "/sections/{section}", s.lib(s.removeSection), false},
 		{"POST", R + "/sections/{section}/move", s.lib(s.moveSection), false},
+		{"POST", R + "/sections/{section}/merge", s.lib(s.mergeSection), false},
+		{"POST", R + "/channels/move", s.lib(s.moveRadioChannels), false},
+		{"POST", R + "/channels/keep", s.lib(s.keepRadioChannels), false},
 		{"POST", R + "/sync", s.lib(s.syncRadio), false},
 		{"POST", R + "/copy", s.lib(s.copyRadio), false},
 		{"POST", R + "/compare-radio", s.lib(s.compareRadios), false},
@@ -883,6 +886,12 @@ func (s *server) deleteRadio(w http.ResponseWriter, r *http.Request, a *app.Serv
 }
 
 func (s *server) memories(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	return s.memoriesWith(w, r, a, nil)
+}
+
+// memoriesWith writes a radio's memories, and the sections a move took
+// starts from, if any.
+func (s *server) memoriesWith(w http.ResponseWriter, r *http.Request, a *app.Service, cleared []string) error {
 	p, es, err := a.Layout(ctx(r), r.PathValue("radio"))
 	if err != nil {
 		return err
@@ -901,7 +910,11 @@ func (s *server) memories(w http.ResponseWriter, r *http.Request, a *app.Service
 		}
 		ms = slices.DeleteFunc(ms, func(m Memory) bool { return !match[m.Channel.ID] })
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"memories": ms, "sections": newSections(p), "warnings": nonNil(p.Warnings)})
+	out := map[string]any{"memories": ms, "sections": newSections(p), "warnings": nonNil(p.Warnings)}
+	if cleared != nil {
+		out["starts_cleared"] = cleared
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 
@@ -1098,10 +1111,11 @@ func (s *server) moveRadioChannel(w http.ResponseWriter, r *http.Request, a *app
 	if given > 1 || given == 0 && in.Section == "" {
 		return badRequest("give a section, or one of before, after, to, top, or bottom (to, top, and bottom with a section)")
 	}
-	if err := a.MoveChannel(ctx(r), r.PathValue("radio"), r.PathValue("id"), app.Move(in)); err != nil {
+	cleared, err := a.MoveChannel(ctx(r), r.PathValue("radio"), r.PathValue("id"), app.Move(in))
+	if err != nil {
 		return err
 	}
-	return s.memories(w, r, a)
+	return s.memoriesWith(w, r, a, orEmpty(cleared))
 }
 
 func (s *server) listSources(w http.ResponseWriter, r *http.Request, a *app.Service) error {
@@ -1568,10 +1582,20 @@ func (s *server) updateSection(w http.ResponseWriter, r *http.Request, a *app.Se
 }
 
 func (s *server) removeSection(w http.ResponseWriter, r *http.Request, a *app.Service) error {
-	if err := a.RemoveSection(ctx(r), r.PathValue("radio"), r.PathValue("section")); err != nil {
+	takeOff, err := queryBool(r, "take_off")
+	if err != nil {
 		return err
 	}
-	return s.listSections(w, r, a)
+	res, err := a.RemoveSection(ctx(r), r.PathValue("radio"), r.PathValue("section"), takeOff)
+	if err != nil {
+		return err
+	}
+	p, es, err := a.Layout(ctx(r), r.PathValue("radio"))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sections": newSections(p), "sources_removed": newSources(res.Sources, es), "taken_off": res.TakenOff})
+	return nil
 }
 
 func (s *server) moveSection(w http.ResponseWriter, r *http.Request, a *app.Service) error {
@@ -1581,8 +1605,61 @@ func (s *server) moveSection(w http.ResponseWriter, r *http.Request, a *app.Serv
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
-	if err := a.MoveSection(ctx(r), r.PathValue("radio"), r.PathValue("section"), in.To); err != nil {
+	cleared, err := a.MoveSection(ctx(r), r.PathValue("radio"), r.PathValue("section"), in.To)
+	if err != nil {
 		return err
 	}
-	return s.listSections(w, r, a)
+	p, _, err := a.Layout(ctx(r), r.PathValue("radio"))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sections": newSections(p), "starts_cleared": orEmpty(cleared)})
+	return nil
+}
+
+func (s *server) mergeSection(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in struct {
+		Into string `json:"into"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	moved, cleared, err := a.MergeSection(ctx(r), r.PathValue("radio"), r.PathValue("section"), in.Into)
+	if err != nil {
+		return err
+	}
+	p, _, err := a.Layout(ctx(r), r.PathValue("radio"))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sections": newSections(p), "moved": moved, "starts_cleared": orEmpty(cleared)})
+	return nil
+}
+
+func (s *server) moveRadioChannels(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in struct {
+		IDs     []string `json:"ids"`
+		Section string   `json:"section"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	cleared, err := a.MoveChannels(ctx(r), r.PathValue("radio"), in.IDs, in.Section)
+	if err != nil {
+		return err
+	}
+	return s.memoriesWith(w, r, a, orEmpty(cleared))
+}
+
+func (s *server) keepRadioChannels(w http.ResponseWriter, r *http.Request, a *app.Service) error {
+	var in struct {
+		IDs []string `json:"ids"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	if _, err := a.ReleaseChannels(ctx(r), r.PathValue("radio"), in.IDs); err != nil {
+		return err
+	}
+	return s.memories(w, r, a)
 }

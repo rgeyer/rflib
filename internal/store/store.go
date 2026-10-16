@@ -146,10 +146,11 @@ type Library interface {
 	UpdateRadioSection(ctx context.Context, sec domain.RadioSection) error
 	// MoveRadioSection moves a section to index to (from 0).
 	MoveRadioSection(ctx context.Context, radioID, sectionID string, to int) error
-	// DeleteRadioSection deletes a section other than the default; its
-	// channels go to the end of the default section, and its sources feed
-	// the default section.
-	DeleteRadioSection(ctx context.Context, radioID, sectionID string) error
+	// DeleteRadioSection deletes a section; its channels go to the end of
+	// another (intoID, or the default section for ""), in order, and its
+	// sources feed that one: merging it. The default section can only be
+	// merged into another, which then becomes the default.
+	DeleteRadioSection(ctx context.Context, radioID, sectionID, intoID string) error
 
 	// RadioEntries returns a radio's channels in list order: sections in
 	// order, each section's channels in the order placed, or sorted as the
@@ -174,6 +175,9 @@ type Library interface {
 	// which must list each of them once; each stays in its section, in the
 	// order given there.
 	ReorderRadioChannels(ctx context.Context, radioID string, channelIDs []string) error
+	// ReleaseRadioChannels makes channels a source added count as added by
+	// hand, so no sync takes them off; it returns how many changed.
+	ReleaseRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error)
 	// SetRadioEntry stores a radio's overrides for one of its channels: the
 	// entry's Name, Power, Skip, and PlanNumber.
 	SetRadioEntry(ctx context.Context, radioID string, e domain.RadioEntry) error

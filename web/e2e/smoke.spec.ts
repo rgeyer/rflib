@@ -511,6 +511,32 @@ test("sections: add one, and drag memories and sections", async ({ page, request
   await page.getByLabel("Drag section Other").dragTo(weather);
   await expect(page.locator("tr[data-section]").first()).toHaveAttribute("data-section", "Other");
   await expect(number("NOAA WX1")).toHaveText("1");
+
+  // Other starts at 1; dragging Weather ahead of it can't keep that, so the
+  // move happens and Other's start goes, with a note.
+  await request.patch("/api/v1/libraries/default/radios/Sectioned/sections/Other", { data: { start: 1 } });
+  await page.reload();
+  await page.getByLabel("Drag section Weather").dragTo(page.locator("tr[data-section='Other']"));
+  await expect(page.getByText(/these now follow the section before them: Other/)).toBeVisible();
+  await expect(page.locator("tr[data-section]").first()).toHaveAttribute("data-section", "Weather");
+  await expect(number("NOAA WX1")).toHaveText("25");
+
+  // Several selected memories move to a section at once.
+  await page.getByRole("checkbox", { name: /Select memory .*NOAA WX2|Select memory 20/ }).first().click();
+  await page.getByRole("button", { name: "Move to section" }).click();
+  await page.getByRole("menuitem", { name: "Other" }).click();
+  await expect(page.getByText("Moved 1 memories")).toBeVisible();
+
+  // Dragging a section shows a merge bar; dropping there merges, after a check.
+  await page.getByLabel("Drag section Weather").hover();
+  await page.mouse.down();
+  await page.mouse.move(10, 300, { steps: 5 });
+  await page.locator("[data-merge-section='Other']").hover();
+  await page.mouse.up();
+  await expect(page.getByText("Merge Weather into Other?")).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Merge" }).click();
+  await expect(page.getByText(/Merged: \d+ channels moved/)).toBeVisible();
+  await expect(page.locator("tr[data-section]")).toHaveCount(1);
 });
 
 test("copy a radio to another model, then compare the two", async ({ page, request }) => {
@@ -556,3 +582,42 @@ test("copy a radio to another model, then compare the two", async ({ page, reque
   await expect(page.locator("tr[data-section='Weather']")).toContainText("Memories 40–42");
 });
 
+
+test("narrowing a source takes off what it no longer matches", async ({ page, request }) => {
+  await request.post("/api/v1/libraries/default/radios", { data: { name: "Narrow", model: "baofeng-uv5rm" } });
+  await request.post("/api/v1/libraries/default/radios/Narrow/sources", { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2" OR name:"NOAA WX3"' } });
+  await request.post("/api/v1/libraries/default/radios/Narrow/sync", { data: {} });
+  await page.goto("/l/default/radios/Narrow");
+  const row = (name: string) => page.getByRole("row", { name: new RegExp(`^Select memory.*${name}`) });
+  await expect(row("NOAA WX3").getByText("S1")).toBeVisible();
+
+  // Keep WX3: it stays even when the source stops matching it.
+  await row("NOAA WX3").getByRole("button", { name: /^Move / }).click();
+  await page.getByRole("menuitem", { name: "Keep, even if source 1 stops matching" }).click();
+  await expect(page.getByText("Kept 1 memories")).toBeVisible();
+  await expect(row("NOAA WX3").getByText("S1")).toHaveCount(0);
+
+  // Narrow the source to WX1; sync takes WX2 off.
+  await request.patch("/api/v1/libraries/default/radios/Narrow/sources/1", { data: { query: 'name:"NOAA WX1"' } });
+  await page.getByRole("button", { name: "Sync" }).click();
+  await expect(page.getByText(/0 to add, 1 to take off/)).toBeVisible();
+  await page.getByRole("button", { name: "Sync now" }).click();
+  await expect(row("NOAA WX2")).toHaveCount(0);
+  await expect(row("NOAA WX3")).toBeVisible();
+
+  // Select all in a section, for the bulk actions.
+  const header = page.locator("tr[data-section]").first();
+  await header.getByRole("button", { name: /^Select all in/ }).click();
+  await expect(page.getByText("2 selected")).toBeVisible();
+  await page.getByRole("button", { name: "Clear", exact: true }).first().click();
+
+  // Removing the source's section takes the source with it.
+  await header.getByRole("button", { name: /^Edit section/ }).click();
+  await page.getByRole("button", { name: "Remove section" }).click();
+  await expect(page.getByText(/The source that feeds it goes too|that feed it go too/)).toBeVisible();
+  await page.getByRole("checkbox", { name: /Also take its channels off/ }).check();
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(page.getByText(/Section removed, with its 2 channels, and the source that fed it/)).toBeVisible();
+  await page.getByRole("tab", { name: "Sources" }).click();
+  await expect(page.getByRole("cell", { name: /NOAA WX1/ })).toHaveCount(0);
+});

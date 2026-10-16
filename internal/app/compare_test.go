@@ -449,9 +449,10 @@ func TestCopyAndCompareRadios(t *testing.T) {
 	}
 }
 
-// Adding from a radio onto a nearly blank one brings the sections the
-// channels need, as the other has them, in its order; a start that doesn't
-// fit here is dropped, and said.
+// Adding from a radio brings the sections the channels need, as the other
+// has them, at the end in its order, so nothing here moves; a start that
+// doesn't fit is dropped, and channels that would push an existing section
+// into a later start go to a section of their own at the end.
 func TestAddFromRadioMakesSections(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newService(t)
@@ -485,8 +486,8 @@ func TestAddFromRadioMakesSections(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Blank holds four channels of its own in Mine, which Low follows on
-	// Full, so Low's start at 2 can't fit here; High's at 10 can.
+	// Blank holds four channels of its own in Mine, so Low's start at 2
+	// can't fit after it; High's at 10 can.
 	for i := range 4 {
 		made, _, err := s.CreateChannel(ctx, analog(fmt.Sprintf("Own %d", i), 147.0+float64(i)*0.03, 0, 0))
 		if err != nil {
@@ -512,7 +513,278 @@ func TestAddFromRadioMakesSections(t *testing.T) {
 		}
 		got = append(got, fmt.Sprintf("%s@%s/%s", sec.Name, start, sec.Sort))
 	}
-	if strings.Join(got, " ") != "Mine@1/ Low@-/ High@10/name Other@-/" {
+	if strings.Join(got, " ") != "Mine@1/ Other@-/ Low@-/ High@10/name" {
 		t.Errorf("sections = %s", strings.Join(got, " "))
+	}
+
+	// Full gains a channel in Mine; on Blank, Mine (1-4) can't grow into
+	// Low's memory 5 once Low starts there, so it goes to its own section.
+	five := 5
+	if _, err := s.UpdateSection(ctx, "Blank", "Low", SectionEdit{Start: &five}); err != nil {
+		t.Fatal(err)
+	}
+	more, _, err := s.CreateChannel(ctx, analog("D", 146.61, 0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "Full", AddRequest{IDs: []string{more.ID}, Section: "Mine"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, res, err = s.AddFromRadio(ctx, "Blank", "Full", nil, false); err != nil || strings.Join(res.Overflowed, ",") != "Mine" || strings.Join(res.NewSections, ",") != "Mine (from Full)" {
+		t.Fatalf("overflow: %+v, %v", res, err)
+	}
+	if l, es, _ := s.Layout(ctx, "Blank"); es[len(es)-1].Section.Name != "Mine (from Full)" || l.Memories[len(es)-1].Location != 12 {
+		t.Errorf("last = %+v at %d", es[len(es)-1].Section, l.Memories[len(es)-1].Location)
+	}
+}
+
+// A move always happens: a section whose start it leaves behind the
+// memories before it loses its start and follows the section before it.
+func TestMovesDropStartsThatNoLongerFit(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	starts := map[string]int{"Amateur": 1, "GMRS": 20, "Public": 50}
+	for i, name := range []string{"Amateur", "GMRS", "Public"} {
+		n := starts[name]
+		if _, err := s.AddSection(ctx, "HT", domain.RadioSection{Name: name, Start: &n}); err != nil {
+			t.Fatal(err)
+		}
+		made, _, err := s.CreateChannel(ctx, analog(name, 146.52+float64(i)*0.03, 0, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{made.ID}, Section: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	layout := func() string {
+		l, es, err := s.Layout(ctx, "HT")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for i, m := range l.Memories {
+			out = append(out, fmt.Sprintf("%s=%d", es[i].Section.Name, m.Location))
+		}
+		return strings.Join(out, " ")
+	}
+	// The first section, moved last: its start at 1 goes.
+	cleared, err := s.MoveSection(ctx, "HT", "Amateur", 3)
+	if err != nil || strings.Join(cleared, ",") != "Amateur" || layout() != "GMRS=20 Public=50 Amateur=51" {
+		t.Fatalf("first moved last: %v, %v, %s", cleared, err, layout())
+	}
+	// A section moved first keeps its start; the ones it passes lose theirs.
+	if cleared, err = s.MoveSection(ctx, "HT", "Public", 1); err != nil || strings.Join(cleared, ",") != "GMRS" || layout() != "Public=50 GMRS=51 Amateur=52" {
+		t.Fatalf("last moved first: %v, %v, %s", cleared, err, layout())
+	}
+	// A memory moved into a section that then grows past a later start.
+	two := 2
+	if _, err := s.UpdateSection(ctx, "HT", "Public", SectionEdit{ClearStart: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateSection(ctx, "HT", "GMRS", SectionEdit{Start: &two}); err != nil {
+		t.Fatal(err)
+	}
+	if layout() != "Public=1 GMRS=2 Amateur=3" {
+		t.Fatalf("set up: %s", layout())
+	}
+	_, es, _ := s.RadioEntries(ctx, "HT")
+	if cleared, err = s.MoveChannel(ctx, "HT", es[2].Channel.ID, Move{Section: "Public"}); err != nil || strings.Join(cleared, ",") != "GMRS" || layout() != "Public=1 Public=2 GMRS=3" {
+		t.Fatalf("memory moved: %v, %v, %s", cleared, err, layout())
+	}
+}
+
+// Merging a section moves its channels to the end of another, and its
+// sources with them; moving several memories puts them at the end of a
+// section in their order.
+func TestMergeSectionsAndMoveMany(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for i, name := range []string{"G1", "G2", "G3", "X1", "X2"} {
+		made, _, err := s.CreateChannel(ctx, analog(name, 146.52+float64(i)*0.03, 0, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[name] = made.ID
+	}
+	twenty := 20
+	for _, sec := range []domain.RadioSection{{Name: "GMRS", Start: &twenty}, {Name: "GMRS (from Shack)"}} {
+		if _, err := s.AddSection(ctx, "HT", sec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add := func(section string, names ...string) {
+		for _, n := range names {
+			if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{ids[n]}, Section: section}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	add("GMRS", "G1", "G2")
+	add("GMRS (from Shack)", "G3")
+	add("", "X1", "X2")
+	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "name:G", SectionID: "GMRS (from Shack)"}); err != nil {
+		t.Fatal(err)
+	}
+	layout := func() string {
+		l, es, err := s.Layout(ctx, "HT")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for i, m := range l.Memories {
+			out = append(out, fmt.Sprintf("%s:%s=%d", es[i].Section.Name, m.Original.Name, m.Location))
+		}
+		return strings.Join(out, " ")
+	}
+	moved, cleared, err := s.MergeSection(ctx, "HT", "gmrs (from shack)", "GMRS")
+	if err != nil || moved != 1 || len(cleared) != 0 {
+		t.Fatalf("merge: %d, %v, %v", moved, cleared, err)
+	}
+	if got := layout(); got != "GMRS:G1=20 GMRS:G2=21 GMRS:G3=22 Other:X1=23 Other:X2=24" {
+		t.Errorf("merged = %s", got)
+	}
+	if _, srcs, _, _ := s.Sources(ctx, "HT"); srcs[0].SectionName != "GMRS" {
+		t.Errorf("source = %+v", srcs[0])
+	}
+	if _, _, err := s.MergeSection(ctx, "HT", "GMRS", "GMRS"); err == nil {
+		t.Error("merged a section into itself")
+	}
+	// The default merged into GMRS: GMRS becomes the default.
+	if _, _, err := s.MergeSection(ctx, "HT", "Other", "GMRS"); err != nil {
+		t.Fatal(err)
+	}
+	if sec, _ := s.Section(ctx, "HT", ""); sec.Name != "GMRS" {
+		t.Errorf("default = %s", sec.Name)
+	}
+	// Several memories at once, in their order, to a new section (which,
+	// as new sections do, goes before the default when that is last).
+	if _, err := s.AddSection(ctx, "HT", domain.RadioSection{Name: "Mine"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MoveChannels(ctx, "HT", []string{ids["X2"], ids["G1"]}, "Mine"); err != nil {
+		t.Fatal(err)
+	}
+	if got := layout(); got != "Mine:G1=1 Mine:X2=2 GMRS:G2=20 GMRS:G3=21 GMRS:X1=22" {
+		t.Errorf("moved many = %s", got)
+	}
+}
+
+// Narrowing a source's search takes off what it added that no longer
+// matches, wherever it now is; channels added by hand stay, and a later
+// source can take what it gives up.
+func TestSyncRemovesWhatNoLongerMatches(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	ids := map[string]string{}
+	for i, name := range []string{"Near 1", "Near 2", "Far 1", "Far 2", "Hand"} {
+		made, _, err := s.CreateChannel(ctx, analog(name, 146.52+float64(i)*0.03, 0, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[name] = made.ID
+	}
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	_, src, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "name:near OR name:far"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{ids["Hand"]}, Section: src.SectionID}); err != nil {
+		t.Fatal(err)
+	}
+	// One of the source's channels, dragged to another section.
+	if _, err := s.MoveChannel(ctx, "HT", ids["Far 2"], Move{Section: "Other"}); err != nil {
+		t.Fatal(err)
+	}
+	src.Query = "name:near OR name:hand"
+	if err := s.UpdateSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "name:far"}); err != nil {
+		t.Fatal(err)
+	}
+	dry, err := s.Sync(ctx, "HT", SyncOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names(dry.Sources[0].Removed) != "Far 1,Far 2" || names(dry.Sources[1].Add) != "Far 1,Far 2" {
+		t.Fatalf("dry run: removed %s; second adds %s", names(dry.Sources[0].Removed), names(dry.Sources[1].Add))
+	}
+	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := s.radioEntriesNamed(ctx, "HT")
+	if err != nil || strings.Join(got, ",") != "Near 1,Near 2,Hand,Far 1,Far 2" {
+		t.Errorf("after narrowing = %v, %v", got, err)
+	}
+	// Hand stays even though the narrowed search matches it: it's still
+	// hand-added, and so never the source's to remove.
+	if _, e, _ := s.RadioEntry(ctx, "HT", ids["Hand"]); e.SourceID != "" {
+		t.Errorf("hand-added became the source's: %+v", e)
+	}
+}
+
+// A channel kept (released from its source) stays when the source stops
+// matching it.
+func TestReleaseKeepsAChannel(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	var ids []string
+	for i, n := range []string{"A", "B"} {
+		made, _, err := s.CreateChannel(ctx, analog(n, 146.52+float64(i)*0.03, 0, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, made.ID)
+	}
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	_, src, err := s.AddSource(ctx, "HT", domain.RadioSource{Query: "name:a OR name:b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, e, _ := s.RadioEntry(ctx, "HT", ids[1]); e.SourceNumber != 1 {
+		t.Errorf("source number = %d", e.SourceNumber)
+	}
+	if n, err := s.ReleaseChannels(ctx, "HT", []string{ids[1]}); err != nil || n != 1 {
+		t.Fatalf("release: %d, %v", n, err)
+	}
+	src.Query = "name:a"
+	if err := s.UpdateSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Sync(ctx, "HT", SyncOptions{}); err != nil || len(res.Sources[0].Removed) != 0 {
+		t.Fatalf("sync: %+v, %v", res, err)
+	}
+	if got, _, _ := s.radioEntriesNamed(ctx, "HT"); strings.Join(got, ",") != "A,B" {
+		t.Errorf("after = %v", got)
+	}
+	// Removing a source's section removes the source too, and with take
+	// off, every channel in it, kept or not.
+	res, err := s.RemoveSection(ctx, "HT", src.SectionID, true)
+	if err != nil || len(res.Sources) != 1 || res.TakenOff != 2 {
+		t.Fatalf("remove section: %+v, %v", res, err)
+	}
+	if _, srcs, _, _ := s.Sources(ctx, "HT"); len(srcs) != 0 {
+		t.Errorf("sources left: %+v", srcs)
+	}
+	if got, _, _ := s.radioEntriesNamed(ctx, "HT"); len(got) != 0 {
+		t.Errorf("after removing the section = %v", got)
 	}
 }

@@ -24,7 +24,7 @@ Sources feed sections (rflib radio sources add --section), and channels added
 by hand go in the default section unless --section says otherwise. Sections
 are named by their names, ignoring case.`}
 	cmd.AddCommand(newRadioSectionsListCommand(), newRadioSectionsAddCommand(), newRadioSectionsSetCommand(),
-		newRadioSectionsMoveCommand(), newRadioSectionsRemoveCommand())
+		newRadioSectionsMoveCommand(), newRadioSectionsMergeCommand(), newRadioSectionsRemoveCommand())
 	return cmd
 }
 
@@ -182,24 +182,79 @@ func newRadioSectionsSetCommand() *cobra.Command {
 }
 
 func newRadioSectionsMoveCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "move RADIO SECTION", Short: "Move a section among the radio's sections", Args: cobra.ExactArgs(2)}
+	cmd := &cobra.Command{Use: "move RADIO SECTION", Short: "Move a section among the radio's sections", Args: cobra.ExactArgs(2),
+		Long: `Move a section to --to, its new number among the radio's sections. A move
+always happens: a section whose start it leaves behind the memories before it
+loses its start, and follows the section before it; the command names them, to
+set new starts if you like.`}
 	cmd.Flags().Int("to", 0, "New number for the section, from 1 (required)")
 	_ = cmd.MarkFlagRequired("to")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		to, _ := cmd.Flags().GetInt("to")
-		return withApp(cmd, func(a *app.Service) error { return a.MoveSection(ctx(cmd), args[0], args[1], to) })
+		return withApp(cmd, func(a *app.Service) error {
+			cleared, err := a.MoveSection(ctx(cmd), args[0], args[1], to)
+			reportCleared(cmd, cleared)
+			return err
+		})
+	}
+	return cmd
+}
+
+// reportCleared names the sections a move took starts from.
+func reportCleared(cmd *cobra.Command, cleared []string) {
+	if len(cleared) > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Their starts no longer fit, so these follow the section before them: %s\n", strings.Join(cleared, ", "))
+	}
+}
+
+func newRadioSectionsMergeCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "merge RADIO SECTION", Short: "Merge a section into another", Args: cobra.ExactArgs(2),
+		Long: `Merge SECTION into --into: its channels go to the end of --into, in their order
+(or its sort), its sources feed --into, and SECTION goes. Merging the default
+section makes --into the default. A section whose start --into's growth leaves
+behind loses its start, as with moves.`}
+	cmd.Flags().String("into", "", "The section to merge into, by name (required)")
+	_ = cmd.MarkFlagRequired("into")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return withApp(cmd, func(a *app.Service) error {
+			moved, cleared, err := a.MergeSection(ctx(cmd), args[0], args[1], getString(cmd, "into"))
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "Merged %s into %s: %d channels\n", args[1], getString(cmd, "into"), moved)
+			reportCleared(cmd, cleared)
+			return nil
+		})
 	}
 	return cmd
 }
 
 func newRadioSectionsRemoveCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "remove RADIO SECTION", Short: "Remove a section; its channels and sources go to the default section", Args: cobra.ExactArgs(2)}
+	cmd := &cobra.Command{Use: "remove RADIO SECTION", Short: "Remove a section, and the sources that feed it", Args: cobra.ExactArgs(2),
+		Long: `Remove a section other than the default. The sources that feed it are removed
+with it, so nothing refills it elsewhere; their channels in other sections stay,
+as if added by hand. Its own channels go to the end of the default section, or
+come off the radio with --take-off. To keep a section's sources, merge it into
+another instead (rflib radio sections merge).`}
+	cmd.Flags().Bool("take-off", false, "Also take the section's channels off the radio")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		takeOff, _ := cmd.Flags().GetBool("take-off")
 		return withApp(cmd, func(a *app.Service) error {
-			if err := a.RemoveSection(ctx(cmd), args[0], args[1]); err != nil {
+			res, err := a.RemoveSection(ctx(cmd), args[0], args[1], takeOff)
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.ErrOrStderr(), "Removed section %s; its channels are at the end of the default section\n", args[1])
+			status := cmd.ErrOrStderr()
+			fmt.Fprintf(status, "Removed section %s", args[1])
+			if takeOff {
+				fmt.Fprintf(status, " and its %d channels", res.TakenOff)
+			} else {
+				fmt.Fprint(status, "; its channels are at the end of the default section")
+			}
+			fmt.Fprintln(status)
+			for _, src := range res.Sources {
+				fmt.Fprintf(status, "Removed %s, which fed it\n", app.SourceLabel(src))
+			}
 			return nil
 		})
 	}

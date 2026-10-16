@@ -741,3 +741,31 @@ func TestCopyAndCompareRadios(t *testing.T) {
 		t.Errorf("added what the radio can't use: %+v", added)
 	}
 }
+
+// Sections merge, and several memories move to a section at once.
+func TestMergeSectionsAndMoveMany(t *testing.T) {
+	c := newClient(t, "")
+	const L = "/libraries/default"
+	c.seedAndLink("us-noaa")
+	c.do("POST", L+"/radios", map[string]any{"name": "HT", "model": "baofeng-uv5rm"}, 201, nil)
+	c.do("POST", L+"/radios/HT/sections", map[string]any{"name": "Weather"}, 201, nil)
+	c.do("POST", L+"/radios/HT/channels", map[string]any{"query": "band:noaa"}, 200, nil)
+	var mems struct {
+		Memories []Memory `json:"memories"`
+		Cleared  []string `json:"starts_cleared"`
+	}
+	c.do("GET", L+"/radios/HT/memories", nil, 200, &mems)
+	ids := []string{mems.Memories[0].Channel.ID, mems.Memories[1].Channel.ID}
+	c.do("POST", L+"/radios/HT/channels/move", map[string]any{"ids": ids, "section": "Weather"}, 200, &mems)
+	if mems.Memories[0].Channel.ID != ids[0] || mems.Memories[0].Section == mems.Memories[2].Section {
+		t.Fatalf("moved = %+v", mems.Memories[:3])
+	}
+	var merged struct {
+		Sections []Section `json:"sections"`
+		Moved    int       `json:"moved"`
+	}
+	c.do("POST", L+"/radios/HT/sections/Weather/merge", map[string]any{"into": "Other"}, 200, &merged)
+	if merged.Moved != 2 || len(merged.Sections) != 1 || merged.Sections[0].Name != "Other" {
+		t.Errorf("merged = %+v", merged)
+	}
+}

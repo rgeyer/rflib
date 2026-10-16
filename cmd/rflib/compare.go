@@ -24,8 +24,10 @@ func newRadioCompareCommand() *cobra.Command {
 how many both have, what only OTHER has (and whether RADIO's model can use
 it), and what only RADIO has. --add all (or channel IDs, comma-separated) adds
 what OTHER has to RADIO, in OTHER's order, each into RADIO's section of the
-same name, with OTHER's overrides for it; a section RADIO lacks is made as
-OTHER has it, without its start if that doesn't fit.
+same name, with OTHER's overrides for it. A section RADIO lacks is made as
+OTHER has it, at the end, without its start if that doesn't fit there; new
+channels that would push one of RADIO's sections into a later section's start
+go to a section of their own at the end. Nothing already on RADIO moves.
 
 Otherwise, compare a radio with FILE, what the radio holds as its programming software or
 CHIRP saved it (- reads stdin), memory by memory. Starting a radio from its
@@ -304,6 +306,9 @@ func compareRadios(cmd *cobra.Command, radio, other string) error {
 			fmt.Fprintf(status, ", in new sections %s", strings.Join(res.NewSections, ", "))
 		}
 		fmt.Fprintln(status)
+		if len(res.Overflowed) > 0 {
+			fmt.Fprintf(status, "New channels for these sections would have run into a later section's start, so they're in sections of their own at the end: %s\n", strings.Join(res.Overflowed, ", "))
+		}
 		if len(res.Unstarted) > 0 {
 			fmt.Fprintf(status, "Their starts didn't fit here, so these follow the section before them: %s\n", strings.Join(res.Unstarted, ", "))
 		}

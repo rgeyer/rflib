@@ -93,6 +93,20 @@ type SectionRange struct {
 	Last    int
 }
 
+// StartError is a section whose start is behind the memories the sections
+// before it already reach.
+type StartError struct {
+	Section domain.RadioSection
+	Reached int
+}
+
+func (e *StartError) Error() string {
+	return fmt.Sprintf("section %q starts at memory %d, but the sections before it already reach memory %d", e.Section.Name, *e.Section.Start, e.Reached)
+}
+
+// Unwrap makes it an invalid-input error, as domain.Invalidf's are.
+func (e *StartError) Unwrap() error { return domain.ErrInvalid }
+
 // Build lays out a radio's memories, from its entries in list order (each
 // section's together, sections in order). It fails when the list doesn't
 // fit the model's memories, or a section's start is behind the sections
@@ -203,7 +217,7 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry, sections 
 		}
 		if sec.Start != nil {
 			if *sec.Start < next {
-				return p, domain.Invalidf("section %q starts at memory %d, but the sections before it already reach memory %d", sec.Name, *sec.Start, next-1)
+				return p, &StartError{Section: sec, Reached: next - 1}
 			}
 			next = *sec.Start
 		}

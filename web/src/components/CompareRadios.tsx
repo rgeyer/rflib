@@ -34,12 +34,16 @@ export function CompareRadios(props: { lib: string; radio: string }) {
   }, [result.data]);
   const add = useMutation({
     mutationFn: () =>
-      call<{ added: Channel[]; new_sections: string[]; unstarted: string[] }>(
+      call<{ added: Channel[]; new_sections: string[]; unstarted: string[]; overflowed: string[] }>(
         api.POST("/libraries/{lib}/radios/{radio}/compare-radio/apply", { params: { path }, body: { radio: other!, add: [...picked] } }),
       ),
     onSuccess: (r) => {
       ok(`Added ${r.added.length} channels from ${other}${r.new_sections.length ? `, in new sections ${r.new_sections.join(", ")}` : ""}`);
-      if (r.unstarted.length) warn([`Their starts didn't fit here, so these follow the section before them: ${r.unstarted.join(", ")}`]);
+      const notes = [];
+      if (r.overflowed.length)
+        notes.push(`New channels for ${r.overflowed.join(", ")} would have run into a later section's start, so they're in sections of their own at the end`);
+      if (r.unstarted.length) notes.push(`Their starts didn't fit, so these follow the section before them: ${r.unstarted.join(", ")}`);
+      if (notes.length) warn(notes);
       void client.invalidateQueries();
     },
     onError: failed,
@@ -49,8 +53,8 @@ export function CompareRadios(props: { lib: string; radio: string }) {
     <Stack>
       <Text size="sm" c="dimmed">
         Compare this radio with another of yours, by channel, and add what the other has: in its order, each into this radio's section of the same
-        name, with the other radio's name, power, and scan for it. A section this radio lacks is made as the other has it (start, size, and order),
-        without its start if that doesn't fit here.
+        name, with the other radio's name, power, and scan for it. Sections this radio lacks are made as the other has them, at the end, where you can
+        drag them into place; nothing already here moves.
       </Text>
       <Select
         label="Other radio"

@@ -119,7 +119,7 @@ func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.Ra
 		byID[sec.ID] = sec
 	}
 	rows, err := l.q.QueryContext(ctx, `SELECT rc.channel_id, rc.section_id, rc.name, rc.power, rc.skip, coalesce(rc.source_id,''), rc.plan_number,
-		coalesce(src.plan_numbers,'') FROM radio_channels rc JOIN radio_sections s ON s.id=rc.section_id LEFT JOIN radio_sources src ON src.id=rc.source_id
+		coalesce(src.plan_numbers,''), coalesce(src.position+1, 0) FROM radio_channels rc JOIN radio_sections s ON s.id=rc.section_id LEFT JOIN radio_sources src ON src.id=rc.source_id
 		WHERE rc.radio_id=? ORDER BY s.position, rc.position`, radioID)
 	if err != nil {
 		return nil, fmt.Errorf("list radio channels: %w", err)
@@ -131,7 +131,7 @@ func (l *library) RadioEntries(ctx context.Context, radioID string) ([]domain.Ra
 		var id, section, numbers string
 		var skip sql.NullBool
 		var plan sql.NullInt64
-		if err := rows.Scan(&id, &section, &e.Name, &e.Power, &skip, &e.SourceID, &plan, &numbers); err != nil {
+		if err := rows.Scan(&id, &section, &e.Name, &e.Power, &skip, &e.SourceID, &plan, &numbers, &e.SourceNumber); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -375,6 +375,22 @@ func (l *library) ReorderRadioChannels(ctx context.Context, radioID string, chan
 	})
 }
 
+func (l *library) ReleaseRadioChannels(ctx context.Context, radioID string, channelIDs []string) (int, error) {
+	if err := l.ownsRadio(ctx, radioID); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, id := range channelIDs {
+		res, err := l.q.ExecContext(ctx, `UPDATE radio_channels SET source_id=NULL, plan_number=NULL WHERE radio_id=? AND channel_id=? AND source_id IS NOT NULL`, radioID, id)
+		if err != nil {
+			return n, err
+		}
+		k, _ := res.RowsAffected()
+		n += int(k)
+	}
+	return n, nil
+}
+
 func (l *library) SetRadioEntry(ctx context.Context, radioID string, e domain.RadioEntry) error {
 	if err := l.ownsRadio(ctx, radioID); err != nil {
 		return err
@@ -538,20 +554,29 @@ func (l *library) MoveRadioSection(ctx context.Context, radioID, sectionID strin
 	})
 }
 
-func (l *library) DeleteRadioSection(ctx context.Context, radioID, sectionID string) error {
+func (l *library) DeleteRadioSection(ctx context.Context, radioID, sectionID, intoID string) error {
 	return l.inTx(ctx, func(tx *library) error {
 		sec, sections, err := tx.section(ctx, radioID, sectionID)
 		if err != nil {
 			return err
 		}
-		if sec.Default {
-			return domain.Invalidf("%q is the default section; make another section the default before deleting it", sec.Name)
+		if intoID == sectionID {
+			return domain.Invalidf("merge %q into another section", sec.Name)
 		}
-		def, err := tx.sectionOf(ctx, radioID, "")
+		if sec.Default && intoID == "" {
+			return domain.Invalidf("%q is the default section; make another section the default before deleting it, or merge it into another", sec.Name)
+		}
+		def, err := tx.sectionOf(ctx, radioID, intoID)
 		if err != nil {
 			return err
 		}
-		// Its channels go to the end of the default section, in order.
+		if sec.Default {
+			// The section it goes into takes over as the default.
+			if _, err := tx.q.ExecContext(ctx, `UPDATE radio_sections SET is_default=(id=?) WHERE radio_id=?`, def, radioID); err != nil {
+				return err
+			}
+		}
+		// Its channels go to the end of the other section, in order.
 		var next int
 		if err := tx.q.QueryRowContext(ctx, `SELECT coalesce(max(position),-1)+1 FROM radio_channels WHERE radio_id=?`, radioID).Scan(&next); err != nil {
 			return err

@@ -207,21 +207,28 @@ func (s *Service) CompareRadios(ctx context.Context, radio, other string) (Radio
 }
 
 // AddFromResult is what adding from another radio did (or would): the
-// channels added, the sections made for them, and those of the sections
-// made whose start didn't fit here, so they follow the section before them.
+// channels added, the sections made for them, those of the sections made
+// whose start didn't fit here, so they follow the section before them, and
+// the existing sections whose new channels would have run into a later
+// section's start, so went to a section of their own at the end instead.
 type AddFromResult struct {
 	Added       []domain.Channel
 	NewSections []string
 	Unstarted   []string
+	Overflowed  []string
 }
 
 // AddFromRadio adds channels another radio has and this one doesn't (by
 // ID, or all usable ones when ids is empty), in the other's order, each
 // into this radio's section of the same name (ignoring case), with the
 // other radio's overrides for it. A section this radio lacks is made, as
-// the other radio has it (start, size, and order), after the sections it
-// follows there; when its start doesn't fit here, it's made without one.
-// With dryRun it works everything out, then changes nothing.
+// the other radio has it (start, size, and order), at the end, after this
+// radio's sections, so none of them, nor their memory numbers, change;
+// when its start doesn't fit there, it's made without one. New channels
+// that would push one of this radio's sections into a later section's
+// start go to a section of their own at the end instead, named for where
+// they came from. Reorder the sections afterwards as you like. With dryRun it works everything out,
+// then changes nothing.
 func (s *Service) AddFromRadio(ctx context.Context, radio, other string, ids []string, dryRun bool) (RadioComparison, AddFromResult, error) {
 	var res AddFromResult
 	c, err := s.CompareRadios(ctx, radio, other)
@@ -265,16 +272,14 @@ func (s *Service) AddFromRadio(ctx context.Context, radio, other string, ids []s
 	}
 	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		var made []domain.RadioSection
-		// section returns this radio's section of a name, made after the
-		// sections it follows on the other radio when there isn't one.
+		// section returns this radio's section of a name, made at the end
+		// when there isn't one.
 		section := func(name string) (string, error) {
 			ours, err := tx.RadioSections(ctx, c.Radio.ID)
 			if err != nil {
 				return "", err
 			}
-			at := map[string]int{}
-			for i, sec := range ours {
-				at[strings.ToLower(sec.Name)] = i
+			for _, sec := range ours {
 				if strings.EqualFold(sec.Name, name) {
 					return sec.ID, nil
 				}
@@ -283,13 +288,7 @@ func (s *Service) AddFromRadio(ctx context.Context, radio, other string, ids []s
 			if k < 0 {
 				return "", nil // gone from the other radio meanwhile: the default
 			}
-			to := 0
-			for j := k - 1; j >= 0; j-- {
-				if i, ok := at[strings.ToLower(theirs[j].Name)]; ok {
-					to = i + 1
-					break
-				}
-			}
+			to := len(ours)
 			x := theirs[k]
 			sec, err := tx.CreateRadioSection(ctx, domain.RadioSection{RadioID: c.Radio.ID, Name: x.Name, Start: x.Start, Size: x.Size, Sort: x.Sort})
 			if err != nil {
@@ -302,10 +301,27 @@ func (s *Service) AddFromRadio(ctx context.Context, radio, other string, ids []s
 			res.NewSections = append(res.NewSections, sec.Name)
 			return sec.ID, nil
 		}
+		// Channels added to sections this radio had, by section, in order.
+		existing := map[string]bool{}
+		if ours, err := tx.RadioSections(ctx, c.Radio.ID); err != nil {
+			return err
+		} else {
+			for _, sec := range ours {
+				existing[sec.ID] = true
+			}
+		}
+		var grown []string
+		added := map[string][]domain.RadioEntry{}
 		for _, e := range pick {
 			into, err := section(e.Section.Name)
 			if err != nil {
 				return err
+			}
+			if existing[into] {
+				if _, ok := added[into]; !ok {
+					grown = append(grown, into)
+				}
+				added[into] = append(added[into], e)
 			}
 			if _, err := tx.AddRadioChannels(ctx, c.Radio.ID, into, []string{e.Channel.ID}); err != nil {
 				return fmt.Errorf("%s: %w", e.Channel.Name, err)
@@ -315,9 +331,41 @@ func (s *Service) AddFromRadio(ctx context.Context, radio, other string, ids []s
 				return fmt.Errorf("%s: %w", e.Channel.Name, err)
 			}
 		}
+		// A section of this radio's that its new channels push into a later
+		// start gives them up, to a section of their own at the end.
+		err := fits(ctx, tx, c.Radio)
+		for _, id := range grown {
+			if err == nil {
+				break
+			}
+			ours, lerr := tx.RadioSections(ctx, c.Radio.ID)
+			if lerr != nil {
+				return lerr
+			}
+			var name string
+			for _, sec := range ours {
+				if sec.ID == id {
+					name = sec.Name
+				}
+			}
+			spill, cerr := tx.CreateRadioSection(ctx, domain.RadioSection{RadioID: c.Radio.ID, Name: fmt.Sprintf("%s (from %s)", name, c.Other.Name)})
+			if cerr != nil {
+				return cerr
+			}
+			if cerr := tx.MoveRadioSection(ctx, c.Radio.ID, spill.ID, len(ours)); cerr != nil {
+				return cerr
+			}
+			for _, e := range added[id] {
+				if merr := tx.MoveRadioChannel(ctx, c.Radio.ID, e.Channel.ID, spill.ID, len(added[id])); merr != nil {
+					return merr
+				}
+			}
+			res.Overflowed = append(res.Overflowed, name)
+			res.NewSections = append(res.NewSections, spill.Name)
+			err = fits(ctx, tx, c.Radio)
+		}
 		// A start that doesn't fit here goes, section by section, until the
 		// radio lays out.
-		err := fits(ctx, tx, c.Radio)
 		for _, sec := range made {
 			if err == nil {
 				break

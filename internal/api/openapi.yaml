@@ -577,6 +577,42 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/ChannelsResult"}
         default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/channels/keep:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Keep channels a source added, even if it stops matching them
+      description: They then count as added by hand, so no sync takes them off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ids]
+              properties:
+                ids: {type: array, items: {type: string}, minItems: 1}
+      responses:
+        "200": {$ref: "#/components/responses/Memories"}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/channels/move:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}]
+    post:
+      summary: Move several channels to the end of a section, in their order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ids, section]
+              properties:
+                ids: {type: array, items: {type: string}, minItems: 1}
+                section: {type: string, description: "A section's ID or name"}
+      responses:
+        "200": {$ref: "#/components/responses/Memories"}
+        default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/radios/{radio}/channels/{id}:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/id"}]
     patch:
@@ -738,9 +774,57 @@ paths:
         "200": {$ref: "#/components/responses/Sections"}
         default: {$ref: "#/components/responses/Error"}
     delete:
-      summary: Delete a section other than the default; its channels and sources go to the default section
+      summary: Delete a section other than the default, and the sources that feed it
+      description: >-
+        The sources that feed it go with it (their channels elsewhere stay, as
+        if added by hand). Its channels come off the radio with take_off;
+        otherwise they go to the end of the default section.
+      parameters:
+        - {name: take_off, in: query, schema: {type: boolean}}
       responses:
-        "200": {$ref: "#/components/responses/Sections"}
+        "200":
+          description: The sections now, and what went with it
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sections, sources_removed, taken_off]
+                properties:
+                  sections: {type: array, items: {$ref: "#/components/schemas/Section"}}
+                  sources_removed: {type: array, items: {$ref: "#/components/schemas/Source"}}
+                  taken_off: {type: integer}
+        default: {$ref: "#/components/responses/Error"}
+  /libraries/{lib}/radios/{radio}/sections/{section}/merge:
+    parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/section"}]
+    post:
+      summary: Merge a section into another
+      description: >-
+        Its channels go to the end of the other section, in their order (or
+        the other's sort), its sources feed the other, and it goes. Merging
+        the default section makes the other the default. A section whose
+        start the other's growth leaves behind loses its start.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [into]
+              properties:
+                into: {type: string, description: "The other section's ID or name"}
+      responses:
+        "200":
+          description: The sections now, and how many channels moved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sections, moved, starts_cleared]
+                properties:
+                  sections: {type: array, items: {$ref: "#/components/schemas/Section"}}
+                  moved: {type: integer}
+                  starts_cleared: {type: array, items: {type: string}}
         default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/radios/{radio}/sections/{section}/move:
     parameters: [{$ref: "#/components/parameters/lib"}, {$ref: "#/components/parameters/radio"}, {$ref: "#/components/parameters/section"}]
@@ -853,10 +937,12 @@ paths:
       summary: Add channels another radio has and this one doesn't
       description: >-
         In the other radio's order, each into this radio's section of the
-        same name, with the other radio's overrides for it; a section this
-        radio lacks is made as the other has it, after the sections it
-        follows there, without its start if that doesn't fit here. Without
-        add, every one this radio can use.
+        same name, with the other radio's overrides for it. A section this
+        radio lacks is made as the other has it, at the end, without its
+        start if that doesn't fit there; new channels that would push one of
+        this radio's sections into a later start go to a section of their
+        own at the end. Nothing already on this radio moves. Without add,
+        every one this radio can use.
       requestBody:
         required: true
         content:
@@ -876,11 +962,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [added, new_sections, unstarted, dry_run]
+                required: [added, new_sections, unstarted, overflowed, dry_run]
                 properties:
                   added: {type: array, items: {$ref: "#/components/schemas/Channel"}}
                   new_sections: {type: array, items: {type: string}, description: "Sections made for them, as the other radio has them"}
                   unstarted: {type: array, items: {type: string}, description: "Sections made without their start, which didn't fit here"}
+                  overflowed: {type: array, items: {type: string}, description: "This radio's sections whose new channels would have run into a later section's start, so went to a section of their own at the end"}
                   dry_run: {type: boolean}
         default: {$ref: "#/components/responses/Error"}
   /libraries/{lib}/radios/{radio}/compare:
@@ -1320,6 +1407,7 @@ components:
               memories: {type: array, items: {$ref: "#/components/schemas/Memory"}}
               sections: {type: array, items: {$ref: "#/components/schemas/Section"}}
               warnings: {type: array, items: {type: string}}
+              starts_cleared: {type: array, items: {type: string}, description: "After a move: sections whose start it left behind the memories before them, which now follow the section before them"}
     Sections:
       description: The radio's sections, as laid out
       content:
@@ -1329,6 +1417,7 @@ components:
             required: [sections]
             properties:
               sections: {type: array, items: {$ref: "#/components/schemas/Section"}}
+              starts_cleared: {type: array, items: {type: string}, description: "After a move: sections whose start it left behind the memories before them, which now follow the section before them"}
     Sources:
       description: The radio's sources
       content:
@@ -1625,11 +1714,12 @@ components:
         notes: {type: string}
     Memory:
       type: object
-      required: [memory, section, plan_number, overflow, name, fit, deduped, power, scan, exported, not_programmed, receive_only, transmit_tone_only, overrides, channel]
+      required: [memory, section, plan_number, source, overflow, name, fit, deduped, power, scan, exported, not_programmed, receive_only, transmit_tone_only, overrides, channel]
       properties:
         memory: {type: integer, nullable: true, description: "The memory number on the radio; null for a memory that isn't programmed, which takes no number"}
         section: {type: string, description: "The ID of the section the memory is in"}
         plan_number: {type: integer, nullable: true, description: "A plan source's Ch # for the memory"}
+        source: {type: integer, nullable: true, description: "The number of the source that added it, which a sync takes it off when it no longer matches; null when added by hand (or kept)"}
         overflow: {type: boolean, description: "Past the end of its section's size, so spilling into the memories after it"}
         name: {type: string, description: The name on the radio}
         fit: {type: string, enum: [fits, variant, shortened, cut]}

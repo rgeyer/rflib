@@ -80,6 +80,6 @@ func (s *server) addFromRadio(w http.ResponseWriter, r *http.Request, a *app.Ser
 		return err
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"added": newChannels(res.Added), "new_sections": orEmpty(res.NewSections),
-		"unstarted": orEmpty(res.Unstarted), "dry_run": in.DryRun})
+		"unstarted": orEmpty(res.Unstarted), "overflowed": orEmpty(res.Overflowed), "dry_run": in.DryRun})
 	return nil
 }

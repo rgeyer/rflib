@@ -10,7 +10,7 @@ import { CompareRadio } from "../components/CompareRadio";
 import { CompareRadios } from "../components/CompareRadios";
 import { CopyRadio } from "../components/CopyRadio";
 import { FilterMenu, QueryBar } from "../components/QueryBar";
-import { SectionEditor, SectionHeader, useSections } from "../components/Sections";
+import { confirmMerge, SectionEditor, SectionHeader, useMergeSection, useSections } from "../components/Sections";
 import { SourcePreview } from "../components/SourcePreview";
 import { useLib, useTags } from "../lib/library";
 import { failed, ok, warn } from "../lib/notify";
@@ -66,13 +66,19 @@ export function RadioPage() {
   const moveMemory = useMutation({
     mutationFn: ({ id, body }: { id: string; body: { section?: string; before?: string; after?: string; top?: boolean } }) =>
       call(api.POST("/libraries/{lib}/radios/{radio}/channels/{id}/move", { params: { path: { ...path, id } }, body })),
-    onSuccess: refreshAll,
+    onSuccess: (r) => {
+      clearedStarts(r.starts_cleared);
+      refreshAll();
+    },
     onError: failed,
   });
   const moveSection = useMutation({
     mutationFn: ({ id, to }: { id: string; to: number }) =>
       call(api.POST("/libraries/{lib}/radios/{radio}/sections/{section}/move", { params: { path: { ...path, section: id } }, body: { to } })),
-    onSuccess: refreshAll,
+    onSuccess: (r) => {
+      clearedStarts(r.starts_cleared);
+      refreshAll();
+    },
     onError: failed,
   });
   function refreshAll() {
@@ -100,6 +106,25 @@ export function RadioPage() {
     setOver(key);
   };
   useAutoScroll(drag !== null);
+  const merge = useMergeSection(lib, radio);
+  const keep = useMutation({
+    mutationFn: (keepIDs: string[]) => call(api.POST("/libraries/{lib}/radios/{radio}/channels/keep", { params: { path }, body: { ids: keepIDs } })),
+    onSuccess: (_, keepIDs) => {
+      ok(`Kept ${keepIDs.length} memories: no source will take them off`);
+      refreshAll();
+    },
+    onError: failed,
+  });
+  const moveMany = useMutation({
+    mutationFn: (section: string) => call(api.POST("/libraries/{lib}/radios/{radio}/channels/move", { params: { path }, body: { ids, section } })),
+    onSuccess: (r) => {
+      ok(`Moved ${ids.length} memories`);
+      clearedStarts(r.starts_cleared);
+      setSelected(new Set());
+      refreshAll();
+    },
+    onError: failed,
+  });
   const tags = useTags(lib);
   const [facets, setFacets] = useState<Facets>(NO_FACETS);
   const shown = (plan.data?.memories ?? []).filter((m) => matchFacets(m, facets));
@@ -212,6 +237,43 @@ export function RadioPage() {
           <Tabs.Tab value="compare">Compare</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="memories" pt="sm">
+          {drag?.kind === "section" && sections.length > 1 && (
+            // Merging is its own drop target, so a drop on a header always
+            // means reorder.
+            <Affix position={{ top: 8, left: "50%" }} style={{ transform: "translateX(-50%)" }} zIndex={300}>
+              <Paper shadow="md" p="xs" withBorder>
+                <Group gap={6} wrap="wrap" maw="90vw">
+                  <Text size="xs" c="dimmed">
+                    Merge into:
+                  </Text>
+                  {sections
+                    .filter((sec) => sec.id !== drag.id)
+                    .map((sec) => (
+                      <Badge
+                        key={sec.id}
+                        size="lg"
+                        color="grape"
+                        variant={over === `merge-${sec.id}` ? "filled" : "light"}
+                        tt="none"
+                        style={{ cursor: "copy" }}
+                        onDragOver={dragOver(`merge-${sec.id}`)}
+                        onDragLeave={() => setOver(null)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setOver(null);
+                          const from = sections.find((x) => x.id === drag.id);
+                          setDrag(null);
+                          if (from) confirmMerge(from, sec, () => merge.mutate({ from: from.id, into: sec.id }));
+                        }}
+                        data-merge-section={sec.name}
+                      >
+                        {sec.name}
+                      </Badge>
+                    ))}
+                </Group>
+              </Paper>
+            </Affix>
+          )}
           {drag?.kind === "memory" && (
             // Every section, in reach wherever the memory is on the page.
             <Affix position={{ top: 8, left: "50%" }} style={{ transform: "translateX(-50%)" }} zIndex={300}>
@@ -297,6 +359,25 @@ export function RadioPage() {
                   ]}
                   onPick={(b) => bulkSet.mutate(b)}
                 />
+                <Tooltip label="Keep them even if their sources stop matching: they count as added by hand">
+                  <Button size="compact-sm" variant="light" onClick={() => keep.mutate(ids)}>
+                    Keep
+                  </Button>
+                </Tooltip>
+                <Menu position="bottom-start" withinPortal>
+                  <Menu.Target>
+                    <Button size="compact-sm" variant="light" rightSection={<IconChevronDown size={14} />}>
+                      Move to section
+                    </Button>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {sections.map((sec) => (
+                      <Menu.Item key={sec.id} onClick={() => moveMany.mutate(sec.id)}>
+                        {sec.name}
+                      </Menu.Item>
+                    ))}
+                  </Menu.Dropdown>
+                </Menu>
                 <Button
                   size="compact-sm"
                   color="red"
@@ -363,6 +444,7 @@ export function RadioPage() {
                           section={sec}
                           sources={(sources.data?.sources ?? []).filter((src) => src.section_id === sec.id)}
                           onEdit={() => setEditingSection(sec)}
+                          onSelectAll={rows.length ? () => setSelected(new Set([...selected, ...rows.map((m) => m.channel.id)])) : undefined}
                           dragHandle={{
                             draggable: true,
                             onDragStart: () => setDrag({ kind: "section", id: sec.id }),
@@ -428,6 +510,7 @@ export function RadioPage() {
                                 Ch {m.plan_number}
                               </Text>
                             )}
+                            {m.source != null && <SourceMark n={m.source} sources={sources.data?.sources ?? []} />}
                           </Table.Td>
                           <Table.Td>{m.fit !== "fits" && <Badge size="xs" variant="light">{m.fit}</Badge>}</Table.Td>
                           <Table.Td>
@@ -458,6 +541,9 @@ export function RadioPage() {
                                   <Menu.Item leftSection={<IconArrowUp size={14} />} onClick={() => moveMemory.mutate({ id: m.channel.id, body: { top: true } })}>
                                     Top of its section
                                   </Menu.Item>
+                                  {m.source != null && (
+                                    <Menu.Item onClick={() => keep.mutate([m.channel.id])}>Keep, even if source {m.source} stops matching</Menu.Item>
+                                  )}
                                   <Menu.Label>Move to section</Menu.Label>
                                   {sections
                                     .filter((x) => x.id !== m.section)
@@ -937,5 +1023,24 @@ function useAutoScroll(active: boolean) {
       cancelAnimationFrame(frame);
     };
   }, [active]);
+}
+
+/** clearedStarts says which sections a move took starts from. */
+function clearedStarts(names: string[] | undefined) {
+  if (names?.length) warn([`Their starts no longer fit, so these now follow the section before them: ${names.join(", ")}. Set new starts in each section's settings.`]);
+}
+
+/** SourceMark marks a memory a source added: a sync takes it off when the
+ * source no longer matches it. */
+function SourceMark(props: { n: number; sources: Source[] }) {
+  const src = props.sources.find((x) => x.number === props.n);
+  const what = src ? (src.plan ? `plan ${src.plan}` : src.query) : "";
+  return (
+    <Tooltip label={`Added by source ${props.n}${what ? ` (${what})` : ""}; a sync takes it off if that source stops matching it`}>
+      <Badge size="xs" variant="dot" color="grape" ml={6} tt="none" ff="text">
+        S{props.n}
+      </Badge>
+    </Tooltip>
+  );
 }
 

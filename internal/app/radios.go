@@ -251,11 +251,13 @@ type Move struct {
 
 // MoveChannel moves a channel within a radio's list. Placing it in a
 // section sorted by name or freq makes that section manual, in the order it
-// had, so the move holds.
-func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv Move) error {
+// had, so the move holds. A section whose start the move leaves behind the
+// memories before it loses its start (see settle); MoveChannel returns
+// their names.
+func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv Move) ([]string, error) {
 	r, es, err := s.RadioEntries(ctx, radio)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	find := func(ref string) (int, error) {
 		id, err := s.ChannelID(ctx, ref)
@@ -271,13 +273,13 @@ func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv M
 	}
 	from, err := find(channelID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	channelID = es[from].Channel.ID
 	sec := es[from].Section
 	if mv.Section != "" {
 		if sec, err = s.Section(ctx, r.ID, mv.Section); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	// The section's channels, the moving one left out.
@@ -296,13 +298,13 @@ func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv M
 		to = len(members)
 	case mv.To != 0:
 		if mv.To < 1 {
-			return domain.Invalidf("positions count from 1")
+			return nil, domain.Invalidf("positions count from 1")
 		}
 		to = mv.To - 1
 	case mv.Before != "" || mv.After != "":
 		at, err := find(mv.Before + mv.After)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		sec = es[at].Section
 		members = members[:0]
@@ -318,9 +320,10 @@ func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv M
 	case mv.Section != "":
 		to, placed = len(members), false
 	default:
-		return domain.Invalidf("say where to move the channel")
+		return nil, domain.Invalidf("say where to move the channel")
 	}
-	return s.lib.InTx(ctx, func(tx store.Library) error {
+	var dropped []string
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		if placed && sec.Sort != "" {
 			if err := freeze(ctx, tx, r.ID, sec); err != nil {
 				return err
@@ -329,8 +332,10 @@ func (s *Service) MoveChannel(ctx context.Context, radio, channelID string, mv M
 		if err := tx.MoveRadioChannel(ctx, r.ID, channelID, sec.ID, to); err != nil {
 			return err
 		}
-		return fits(ctx, tx, r)
+		dropped, err = settle(ctx, tx, r)
+		return err
 	})
+	return dropped, err
 }
 
 // freeze makes a sorted section manual, keeping the order it has.
@@ -348,6 +353,27 @@ func freeze(ctx context.Context, tx store.Library, radioID string, sec domain.Ra
 	}
 	sec.Sort = ""
 	return tx.UpdateRadioSection(ctx, sec)
+}
+
+// settle lays a radio out after a move, taking the start from any section
+// the move left behind the memories before it (it then follows the section
+// before it), until the radio lays out. It returns those sections' names;
+// anything else that doesn't lay out is an error.
+func settle(ctx context.Context, tx store.Library, r domain.Radio) ([]string, error) {
+	var dropped []string
+	for {
+		err := fits(ctx, tx, r)
+		var late *program.StartError
+		if !errors.As(err, &late) {
+			return dropped, err
+		}
+		sec := late.Section
+		sec.Start = nil
+		if err := tx.UpdateRadioSection(ctx, sec); err != nil {
+			return dropped, err
+		}
+		dropped = append(dropped, sec.Name)
+	}
 }
 
 // fits fails when a radio's list no longer lays out, such as a section
@@ -468,45 +494,185 @@ func (s *Service) UpdateSection(ctx context.Context, radio, ref string, e Sectio
 	})
 }
 
-// MoveSection moves one of a radio's sections to a position (from 1).
-func (s *Service) MoveSection(ctx context.Context, radio, ref string, to int) error {
+// MoveSection moves one of a radio's sections to a position (from 1). A
+// section whose start the move leaves behind the memories before it loses
+// its start (see settle); MoveSection returns their names.
+func (s *Service) MoveSection(ctx context.Context, radio, ref string, to int) ([]string, error) {
 	sec, err := s.Section(ctx, radio, ref)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if to < 1 {
-		return domain.Invalidf("positions count from 1")
+		return nil, domain.Invalidf("positions count from 1")
 	}
 	r, err := s.lib.GetRadio(ctx, sec.RadioID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.lib.InTx(ctx, func(tx store.Library) error {
+	var dropped []string
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		if err := tx.MoveRadioSection(ctx, r.ID, sec.ID, to-1); err != nil {
 			return err
 		}
-		return fits(ctx, tx, r)
+		dropped, err = settle(ctx, tx, r)
+		return err
 	})
+	return dropped, err
 }
 
-// RemoveSection deletes one of a radio's sections other than the default;
-// its channels go to the end of the default section, and its sources feed
-// it.
-func (s *Service) RemoveSection(ctx context.Context, radio, ref string) error {
+// MergeSection merges one of a radio's sections into another: its channels
+// go to the end of the other, in their order (or the other's sort), its
+// sources feed the other, and it goes. Merging the default section makes
+// the other the default. As with moves, a section whose start the other's
+// growth leaves behind loses its start (see settle). It returns how many
+// channels moved and those sections' names.
+func (s *Service) MergeSection(ctx context.Context, radio, from, into string) (int, []string, error) {
+	src, err := s.Section(ctx, radio, from)
+	if err != nil {
+		return 0, nil, err
+	}
+	dst, err := s.Section(ctx, radio, into)
+	if err != nil {
+		return 0, nil, err
+	}
+	r, es, err := s.RadioEntries(ctx, src.RadioID)
+	if err != nil {
+		return 0, nil, err
+	}
+	moved := 0
+	for _, e := range es {
+		if e.Section.ID == src.ID {
+			moved++
+		}
+	}
+	var cleared []string
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
+		if err := tx.DeleteRadioSection(ctx, r.ID, src.ID, dst.ID); err != nil {
+			return err
+		}
+		cleared, err = settle(ctx, tx, r)
+		return err
+	})
+	return moved, cleared, err
+}
+
+// MoveChannels moves channels on a radio (by ID or ID prefix) to the end of
+// a section, in their list order. As with MoveChannel, a section whose start
+// the move leaves behind loses its start; it returns those sections' names.
+func (s *Service) MoveChannels(ctx context.Context, radio string, ids []string, section string) ([]string, error) {
+	r, es, err := s.RadioEntries(ctx, radio)
+	if err != nil {
+		return nil, err
+	}
+	sec, err := s.Section(ctx, r.ID, section)
+	if err != nil {
+		return nil, err
+	}
+	want, err := s.ChannelIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	on := map[string]bool{}
+	for _, e := range es {
+		on[e.Channel.ID] = true
+	}
+	for _, id := range want {
+		if !on[id] {
+			return nil, fmt.Errorf("channel %q is not on %s: %w", id, r.Name, store.ErrNotFound)
+		}
+	}
+	picked := map[string]bool{}
+	for _, id := range want {
+		picked[id] = true
+	}
+	var cleared []string
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
+		for _, e := range es {
+			if picked[e.Channel.ID] && e.Section.ID != sec.ID {
+				if err := tx.MoveRadioChannel(ctx, r.ID, e.Channel.ID, sec.ID, len(es)); err != nil {
+					return err
+				}
+			}
+		}
+		cleared, err = settle(ctx, tx, r)
+		return err
+	})
+	return cleared, err
+}
+
+// RemovedSection is what removing a section did: the sources that fed it,
+// removed with it (their channels elsewhere stay, as if added by hand), and
+// how many of its channels came off the radio.
+type RemovedSection struct {
+	Sources  []domain.RadioSource
+	TakenOff int
+}
+
+// RemoveSection deletes one of a radio's sections other than the default.
+// The sources that feed it go with it, so nothing refills it elsewhere. Its
+// channels come off the radio with takeOff; otherwise they go to the end of
+// the default section, as if added by hand.
+func (s *Service) RemoveSection(ctx context.Context, radio, ref string, takeOff bool) (RemovedSection, error) {
+	var res RemovedSection
 	sec, err := s.Section(ctx, radio, ref)
 	if err != nil {
-		return err
+		return res, err
 	}
-	r, err := s.lib.GetRadio(ctx, sec.RadioID)
+	r, es, err := s.RadioEntries(ctx, sec.RadioID)
 	if err != nil {
-		return err
+		return res, err
 	}
-	return s.lib.InTx(ctx, func(tx store.Library) error {
-		if err := tx.DeleteRadioSection(ctx, r.ID, sec.ID); err != nil {
+	sources, err := s.lib.RadioSources(ctx, r.ID)
+	if err != nil {
+		return res, err
+	}
+	err = s.lib.InTx(ctx, func(tx store.Library) error {
+		if sec.Default {
+			return domain.Invalidf("%q is the default section; make another section the default first, or merge it into another", sec.Name)
+		}
+		for _, src := range sources {
+			if src.SectionID != sec.ID {
+				continue
+			}
+			if _, err := tx.RemoveRadioSource(ctx, src, false); err != nil {
+				return err
+			}
+			res.Sources = append(res.Sources, src)
+		}
+		if takeOff {
+			var ids []string
+			for _, e := range es {
+				if e.Section.ID == sec.ID {
+					ids = append(ids, e.Channel.ID)
+				}
+			}
+			n, err := tx.RemoveRadioChannels(ctx, r.ID, ids)
+			if err != nil {
+				return err
+			}
+			res.TakenOff = n
+		}
+		if err := tx.DeleteRadioSection(ctx, r.ID, sec.ID, ""); err != nil {
 			return err
 		}
 		return fits(ctx, tx, r)
 	})
+	return res, err
+}
+
+// ReleaseChannels makes channels a source added count as added by hand, so
+// they stay on the radio even if the source stops matching them. It
+// returns how many changed.
+func (s *Service) ReleaseChannels(ctx context.Context, radio string, ids []string) (int, error) {
+	r, err := s.lib.GetRadio(ctx, radio)
+	if err != nil {
+		return 0, err
+	}
+	want, err := s.ChannelIDs(ctx, ids)
+	if err != nil {
+		return 0, err
+	}
+	return s.lib.ReleaseRadioChannels(ctx, r.ID, want)
 }
 
 // RadioEntry returns a radio's entry for one of its channels.
@@ -722,8 +888,9 @@ type SourceSync struct {
 	// Resorted is how many of a plan source's channels already on the
 	// radio changed places when put in the plan's order.
 	Resorted int
-	// For a plan: Removed lists the channels taken off because the plan
-	// dropped them, and Note says why nothing changed, such as an archived
+	// Removed lists the channels taken off (or that would be): those the
+	// source added that its search no longer matches, or for a plan, those
+	// the plan dropped. Note says why nothing changed, such as an archived
 	// plan.
 	Removed []domain.Channel
 	Note    string
@@ -745,12 +912,14 @@ type SyncOptions struct {
 	DryRun, AnyBand, AnyMode bool
 }
 
-// Sync adds each source's new matches to its section (see
-// AddSourceChannels). An earlier source claims a channel first; channels
-// outside the radio's bands or in modes it lacks are skipped, and stay
-// unclaimed, unless AnyBand or AnyMode. A channel already on the radio
-// stays where it is, wherever that is. With DryRun nothing changes, and
-// Add lists what would be added.
+// Sync keeps a radio in step with its sources: it adds each source's new
+// matches to its section (see AddSourceChannels), and takes off what a
+// source added that its search no longer matches, wherever it is (a
+// plan's, what the plan dropped). Channels added by hand are never taken
+// off. An earlier source claims a channel first; channels outside the
+// radio's bands or in modes it lacks are skipped, and stay unclaimed,
+// unless AnyBand or AnyMode. A channel already on the radio stays where it
+// is. With DryRun nothing changes, and Add and Removed list what would.
 func (s *Service) Sync(ctx context.Context, radio string, opts SyncOptions) (SyncResult, error) {
 	r, m, err := s.RadioModel(ctx, radio)
 	res := SyncResult{Radio: r}
@@ -824,6 +993,10 @@ func (s *Service) syncSources(ctx context.Context, r domain.Radio, m model.Model
 	if err != nil {
 		return nil, err
 	}
+	entries, err := s.lib.RadioEntries(ctx, r.ID)
+	if err != nil {
+		return nil, err
+	}
 	// Plans claim their channels first: each is a curated list, so its
 	// channels belong in its part of the radio whatever else matches them.
 	plans := map[string]SourceSync{}
@@ -861,6 +1034,25 @@ func (s *Service) syncSources(ctx context.Context, r domain.Radio, m model.Model
 			}
 		}
 		ss := SourceSync{Source: src}
+		// What the source added that its search no longer matches comes
+		// off, wherever it is on the radio; channels added by hand never do.
+		matches := make(map[string]bool, len(cs))
+		for _, c := range cs {
+			matches[c.ID] = true
+		}
+		var off []string
+		for _, e := range entries {
+			if e.SourceID == src.ID && !matches[e.Channel.ID] {
+				ss.Removed = append(ss.Removed, e.Channel)
+				off = append(off, e.Channel.ID)
+				delete(claimed, e.Channel.ID) // a later source may take it
+			}
+		}
+		if !dryRun && len(off) > 0 {
+			if _, err := s.lib.RemoveRadioChannels(ctx, r.ID, off); err != nil {
+				return nil, err
+			}
+		}
 		ss.fit(m, unclaimed, anyBand, opts.AnyMode)
 		ids := make([]string, len(ss.Add))
 		for i, c := range ss.Add {
