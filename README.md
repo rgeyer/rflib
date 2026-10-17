@@ -35,6 +35,14 @@ Download the archive for your system from the [latest release](https://github.co
 
 `rflib version` says which rflib you have; include it when you report a problem.
 
+## Questions, problems, and radios
+
+- **Questions,** and ideas that aren't ready to be a request: [Discussions](https://github.com/rgeyer/rflib/discussions).
+- **Something doesn't work:** a [bug report](https://github.com/rgeyer/rflib/issues/new?template=1-bug.yml).
+- **A radio rflib doesn't have:** a [radio request](https://github.com/rgeyer/rflib/issues/new?template=2-radio-request.yml), with a sample export from its programming software. You may be sent a model file to try; `rflib model install FILE` adds it (see [Radios CHIRP supports but rflib doesn't](#radios-chirp-supports-but-rflib-doesnt)).
+- **A model you've made:** a [radio model submission](https://github.com/rgeyer/rflib/issues/new?template=3-radio-model.yml).
+- **Anything else rflib could do:** a [feature request](https://github.com/rgeyer/rflib/issues/new?template=4-feature.yml).
+
 ## Build
 
 To build rflib from source instead:
@@ -373,7 +381,7 @@ Check the draft against the radio's manual or a CHIRP export of your radio: some
 - **A file that can't be used,** such as one with a mistake, is skipped with a warning, and everything else keeps working. Using the model says what's wrong with its file.
 - **When a fix reaches a release:** once a built-in model says the same as the file replacing it, `model list` suggests `rflib model remove`, so you go back to the built-in and get its later fixes.
 
-**Share it:** once a model works on your radio, [submit it](https://github.com/rgeyer/rflib/issues/new?template=radio-model.yml) with a sample CHIRP export, so others get it built in.
+**Share it:** once a model works on your radio, [submit it](https://github.com/rgeyer/rflib/issues/new?template=3-radio-model.yml) with a sample CHIRP export, so others get it built in.
 
 ### Sections, channel order, and memory numbers
 

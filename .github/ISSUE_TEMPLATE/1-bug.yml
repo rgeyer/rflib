@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in rflib doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting it. Not sure it's a bug? Ask in [Discussions](https://github.com/rgeyer/rflib/discussions/categories/q-a) first.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, and what rflib did. Include any error message as it was printed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen
+      description: Commands you ran, or what you clicked in the web interface, in order.
+      placeholder: |
+        1. rflib radio add HT --model baofeng-uv5rm
+        2. rflib radio export HT
+        3. …
+  - type: textarea
+    id: version
+    attributes:
+      label: rflib version
+      description: Paste what `rflib version` prints. In the web interface, it's at the bottom of the menu.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where you saw it
+      multiple: true
+      options:
+        - Command line
+        - Web interface, on my own computer
+        - Web interface, on a hosted server
+        - HTTP API
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: radio
+    attributes:
+      label: Radio and programming software, if a radio is involved
+      placeholder: Yaesu FTM-150 with ADMS-17, or Baofeng UV-5R with CHIRP 2025-xx-xx
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: Attach anything that shows the problem, such as an exported file or a screenshot. Remove anything private first, such as notes about where you live.
