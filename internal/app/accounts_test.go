@@ -16,13 +16,13 @@ func TestFirstAccountIsTheAdminsAndTakesTheLibrary(t *testing.T) {
 	ctx := context.Background()
 	add(t, s, "Before accounts", 146.52, domain.ServiceAmateur)
 	a := NewAccounts(d)
-	if _, err := a.AddUser(ctx, domain.User{Name: "kd2abc", Role: domain.RoleMember}, "a long password"); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := a.AddUser(ctx, domain.User{Name: "n1call", Role: domain.RoleMember}, "a long password"); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("first account as a member = %v", err)
 	}
-	if _, err := a.Register(ctx, SignupOpen, domain.User{Name: "kd2abc"}, "a long password", ""); !errors.Is(err, ErrForbidden) {
+	if _, err := a.Register(ctx, SignupOpen, domain.User{Name: "n1call"}, "a long password", ""); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("registering with no admin = %v", err)
 	}
-	admin, err := a.AddUser(ctx, domain.User{Name: "K7ADM", Role: domain.RoleAdmin}, "admin password")
+	admin, err := a.AddUser(ctx, domain.User{Name: "N0CALL", Role: domain.RoleAdmin}, "admin password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestFirstAccountIsTheAdminsAndTakesTheLibrary(t *testing.T) {
 		t.Fatalf("admin's channels = %s, %v", names(cs), err)
 	}
 
-	member, err := a.Register(ctx, SignupOpen, domain.User{Name: "KD2ABC", Role: domain.RoleAdmin}, "a long password", "")
+	member, err := a.Register(ctx, SignupOpen, domain.User{Name: "N1CALL", Role: domain.RoleAdmin}, "a long password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestFirstAccountIsTheAdminsAndTakesTheLibrary(t *testing.T) {
 	if _, _, err := theirs.UpdateChannel(mctx, c); err != nil {
 		t.Fatal(err)
 	}
-	if _, revs, err := theirs.History(mctx, c.ID); err != nil || revs[len(revs)-1].Author != "KD2ABC" {
+	if _, revs, err := theirs.History(mctx, c.ID); err != nil || revs[len(revs)-1].Author != "N1CALL" {
 		t.Fatalf("history = %+v, %v", revs, err)
 	}
 }
@@ -74,11 +74,11 @@ func TestMembersReadButDontChangeTheSharedList(t *testing.T) {
 	s, d := newService(t)
 	ctx := context.Background()
 	a := NewAccounts(d)
-	admin, err := a.AddUser(ctx, domain.User{Name: "k7adm", Role: domain.RoleAdmin}, "admin password")
+	admin, err := a.AddUser(ctx, domain.User{Name: "n0call", Role: domain.RoleAdmin}, "admin password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	member, err := a.Register(ctx, SignupOpen, domain.User{Name: "kd2abc"}, "a long password", "")
+	member, err := a.Register(ctx, SignupOpen, domain.User{Name: "n1call"}, "a long password", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestAccountAdministration(t *testing.T) {
 	_, d := newService(t)
 	ctx := context.Background()
 	a := NewAccounts(d)
-	admin, err := a.AddUser(ctx, domain.User{Name: "k7adm", Role: domain.RoleAdmin}, "admin password")
+	admin, err := a.AddUser(ctx, domain.User{Name: "n0call", Role: domain.RoleAdmin}, "admin password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,21 +152,21 @@ func TestAccountAdministration(t *testing.T) {
 		t.Error("a short password passed")
 	}
 
-	member, err := a.AddUser(ctx, domain.User{Name: "kd2abc", Role: domain.RoleMember}, "a long password")
+	member, err := a.AddUser(ctx, domain.User{Name: "n1call", Role: domain.RoleMember}, "a long password")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Users(WithUser(ctx, member)); !errors.Is(err, ErrForbidden) {
 		t.Errorf("a member listing accounts = %v", err)
 	}
-	_, token, err := a.SignIn(ctx, "KD2ABC", "a long password")
+	_, token, err := a.SignIn(ctx, "N1CALL", "a long password")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if u, err := a.SessionUser(ctx, token); err != nil || u.ID != member.ID {
 		t.Fatalf("session = %+v, %v", u, err)
 	}
-	if _, _, err := a.SignIn(ctx, "kd2abc", "a wrong password"); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err := a.SignIn(ctx, "n1call", "a wrong password"); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("wrong password = %v", err)
 	}
 	if _, _, err := a.SignIn(ctx, "nobody", "a long password"); !errors.Is(err, ErrUnauthorized) || !strings.Contains(err.Error(), "name or password") {
@@ -180,7 +180,7 @@ func TestAccountAdministration(t *testing.T) {
 	if _, err := a.SessionUser(ctx, token); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("a disabled user's session = %v", err)
 	}
-	if _, _, err := a.SignIn(ctx, "kd2abc", "a long password"); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err := a.SignIn(ctx, "n1call", "a long password"); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("a disabled user signing in = %v", err)
 	}
 	if _, err := a.SetRole(ctx, member.Name, domain.RoleMember, false); err != nil {
@@ -188,22 +188,22 @@ func TestAccountAdministration(t *testing.T) {
 	}
 
 	// An admin's reset signs the user out everywhere.
-	_, token, err = a.SignIn(ctx, "kd2abc", "a long password")
+	_, token, err = a.SignIn(ctx, "n1call", "a long password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.SetPassword(ctx, "kd2abc", "a new long password"); err != nil {
+	if _, err := a.SetPassword(ctx, "n1call", "a new long password"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.SessionUser(ctx, token); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("session after a reset = %v", err)
 	}
-	if _, _, err := a.SignIn(ctx, "kd2abc", "a new long password"); err != nil {
+	if _, _, err := a.SignIn(ctx, "n1call", "a new long password"); err != nil {
 		t.Errorf("signing in with the new password = %v", err)
 	}
 
 	// Removing an account deletes its library.
-	if _, err := a.RemoveUser(ctx, "kd2abc"); err != nil {
+	if _, err := a.RemoveUser(ctx, "n1call"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.GetLibrary(ctx, member.LibraryID); !errors.Is(err, store.ErrNotFound) {
@@ -215,7 +215,7 @@ func TestInvitationsAreSpentOnce(t *testing.T) {
 	_, d := newService(t)
 	ctx := context.Background()
 	a := NewAccounts(d)
-	if _, err := a.AddUser(ctx, domain.User{Name: "k7adm", Role: domain.RoleAdmin}, "admin password"); err != nil {
+	if _, err := a.AddUser(ctx, domain.User{Name: "n0call", Role: domain.RoleAdmin}, "admin password"); err != nil {
 		t.Fatal(err)
 	}
 	code, _, err := a.Invite(ctx)
@@ -223,16 +223,16 @@ func TestInvitationsAreSpentOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A registration that fails doesn't spend the code.
-	if _, err := a.Register(ctx, SignupInvite, domain.User{Name: "k7adm"}, "a long password", code); !errors.Is(err, store.ErrConflict) {
+	if _, err := a.Register(ctx, SignupInvite, domain.User{Name: "n0call"}, "a long password", code); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("taken name = %v", err)
 	}
-	if _, err := a.Register(ctx, SignupInvite, domain.User{Name: "kd2abc"}, "a long password", code); err != nil {
+	if _, err := a.Register(ctx, SignupInvite, domain.User{Name: "n1call"}, "a long password", code); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Register(ctx, SignupInvite, domain.User{Name: "kd2abd"}, "a long password", code); !errors.Is(err, store.ErrNotFound) {
+	if _, err := a.Register(ctx, SignupInvite, domain.User{Name: "n2call"}, "a long password", code); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("a spent code = %v", err)
 	}
-	if _, err := a.Register(ctx, SignupClosed, domain.User{Name: "kd2abd"}, "a long password", ""); !errors.Is(err, ErrForbidden) {
+	if _, err := a.Register(ctx, SignupClosed, domain.User{Name: "n2call"}, "a long password", ""); !errors.Is(err, ErrForbidden) {
 		t.Errorf("closed sign-up = %v", err)
 	}
 }
@@ -254,7 +254,7 @@ func TestPasswordHashes(t *testing.T) {
 }
 
 func TestCallsignForm(t *testing.T) {
-	for name, want := range map[string]bool{"K7ADM": true, "kd2abc": true, "W1AW": true, "VE3XYZ": true, "2E0ABC": true, "WRAB123": true, "pat": false, "radio-fan": false} {
+	for name, want := range map[string]bool{"N0CALL": true, "n1call": true, "W1CALL": true, "VE3CALL": true, "2E0CALL": true, "XXXX000": true, "pat": false, "radio-fan": false} {
 		if got := domain.IsCallsign(name); got != want {
 			t.Errorf("IsCallsign(%q) = %v", name, got)
 		}

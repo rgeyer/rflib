@@ -12,7 +12,7 @@ execFileSync(rflib, ["--db", db, "init"], { stdio: "inherit" });
 // A second server has accounts, with an admin and open sign-up.
 const accountsDB = join(mkdtempSync(join(tmpdir(), "rflib-e2e-")), "accounts.db");
 execFileSync(rflib, ["--db", accountsDB, "init"], { stdio: "inherit" });
-execFileSync(rflib, ["--db", accountsDB, "user", "add", "K7ADM", "--admin"], { input: "admin password\n", stdio: ["pipe", "inherit", "inherit"] });
+execFileSync(rflib, ["--db", accountsDB, "user", "add", "N0CALL", "--admin"], { input: "admin password\n", stdio: ["pipe", "inherit", "inherit"] });
 const servers = [
   spawn(rflib, ["--db", db, "serve", "--addr", "127.0.0.1:18765"], { stdio: "inherit" }),
   spawn(rflib, ["--db", accountsDB, "serve", "--addr", "127.0.0.1:18766", "--accounts", "--signup", "open"], { stdio: "inherit" }),

@@ -17,12 +17,12 @@ type authInfo struct {
 	User     *User  `json:"user"`
 }
 
-// accountsServer serves a database with an admin, "k7adm", and sign-up
+// accountsServer serves a database with an admin, "n0call", and sign-up
 // as given.
 func accountsServer(t *testing.T, signup app.Signup) (*client, *sqlite.DB) {
 	t.Helper()
 	c, d := newServer(t, Options{Accounts: &AccountOptions{Signup: signup}})
-	if _, err := app.NewAccounts(d).AddUser(context.Background(), domain.User{Name: "K7ADM", Role: domain.RoleAdmin}, "admin password"); err != nil {
+	if _, err := app.NewAccounts(d).AddUser(context.Background(), domain.User{Name: "N0CALL", Role: domain.RoleAdmin}, "admin password"); err != nil {
 		t.Fatal(err)
 	}
 	return c, d
@@ -45,18 +45,18 @@ func TestAccountsSignInAndRegister(t *testing.T) {
 	if code := admin.errCode("GET", "/libraries", nil, 401); code != "unauthorized" {
 		t.Errorf("signed out: %s", code)
 	}
-	if code := admin.errCode("POST", "/auth/signin", map[string]any{"name": "k7adm", "password": "wrong password"}, 401); code != "unauthorized" {
+	if code := admin.errCode("POST", "/auth/signin", map[string]any{"name": "n0call", "password": "wrong password"}, 401); code != "unauthorized" {
 		t.Errorf("wrong password: %s", code)
 	}
 	if code := admin.errCode("POST", "/auth/signin", map[string]any{"name": "nobody", "password": "admin password"}, 401); code != "unauthorized" {
 		t.Errorf("no such user: %s", code)
 	}
 	// The first admin took the library there was before accounts.
-	if u := admin.signIn("k7adm", "admin password"); u.Role != "admin" || u.Library != "default" || !u.Callsign {
+	if u := admin.signIn("n0call", "admin password"); u.Role != "admin" || u.Library != "default" || !u.Callsign {
 		t.Fatalf("admin = %+v", u)
 	}
 	admin.do("GET", "/auth", nil, 200, &info)
-	if info.User == nil || info.User.Name != "K7ADM" {
+	if info.User == nil || info.User.Name != "N0CALL" {
 		t.Fatalf("signed in: %+v", info)
 	}
 
@@ -132,7 +132,7 @@ func TestAccountsSignInAndRegister(t *testing.T) {
 
 func TestAccountsSignupSettings(t *testing.T) {
 	c, d := accountsServer(t, app.SignupInvite)
-	body := map[string]any{"name": "kd2abc", "password": "a long password"}
+	body := map[string]any{"name": "n1call", "password": "a long password"}
 	if code := c.errCode("POST", "/auth/register", body, 400); code != "invalid" {
 		t.Errorf("no code: %s", code)
 	}
@@ -146,7 +146,7 @@ func TestAccountsSignupSettings(t *testing.T) {
 	}
 	body["invite"] = code
 	c.do("POST", "/auth/register", body, 201, nil)
-	body["name"] = "kd2abd"
+	body["name"] = "n2call"
 	if got := c.another().errCode("POST", "/auth/register", body, 404); got != "not_found" {
 		t.Errorf("spent code: %s", got)
 	}
@@ -169,10 +169,10 @@ func TestAccountsSignupSettings(t *testing.T) {
 func TestSignInThrottled(t *testing.T) {
 	c, _ := accountsServer(t, app.SignupClosed)
 	for range 5 {
-		c.errCode("POST", "/auth/signin", map[string]any{"name": "k7adm", "password": "wrong password"}, 401)
+		c.errCode("POST", "/auth/signin", map[string]any{"name": "n0call", "password": "wrong password"}, 401)
 	}
 	// Even the right password waits out the window now.
-	if code := c.errCode("POST", "/auth/signin", map[string]any{"name": "k7adm", "password": "admin password"}, 429); code != "too_many" {
+	if code := c.errCode("POST", "/auth/signin", map[string]any{"name": "n0call", "password": "admin password"}, 429); code != "too_many" {
 		t.Errorf("throttled: %s", code)
 	}
 }
@@ -182,7 +182,7 @@ func TestSignInThrottled(t *testing.T) {
 // to the shared list or someone else's library fails without changing it.
 func TestMembersDontChangeTheSharedList(t *testing.T) {
 	admin, _ := accountsServer(t, app.SignupOpen)
-	admin.signIn("k7adm", "admin password")
+	admin.signIn("n0call", "admin password")
 	admin.do("POST", "/seeds/us-noaa/update", map[string]any{}, 200, nil)
 	var wx struct{ Channels []Channel }
 	admin.do("GET", "/libraries/shared/channels?q=service:noaa", nil, 200, &wx)
