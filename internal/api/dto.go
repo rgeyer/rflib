@@ -546,6 +546,7 @@ type Model struct {
 	Power       []PowerLevel `json:"power"`
 	Notes       string       `json:"notes"`
 	Source      string       `json:"source"`
+	Origin      string       `json:"origin"`
 }
 
 type PowerLevel struct {
@@ -554,9 +555,14 @@ type PowerLevel struct {
 	Intent string   `json:"intent"`
 }
 
-func newModel(m model.Model) Model {
+// modelOrigins are a model's Status as the API says it, without the
+// server's file paths.
+var modelOrigins = map[string]string{"built-in": "builtin", "local": "local", "replaces the built-in": "replaces_builtin", "same as the built-in": "same_as_builtin"}
+
+func newModel(e model.Entry) Model {
+	m := e.Model
 	o := Model{Name: m.Name, Description: m.Description, Format: m.Format, ChirpModel: m.ChirpModel, Memories: [2]int{m.Memories.First, m.Memories.Last},
-		NameLength: m.Names.MaxLength, Modes: nonNil(m.Modes), BandsMHz: nonNil(m.BandsMHz), Power: []PowerLevel{}, Notes: m.Notes, Source: m.Source}
+		NameLength: m.Names.MaxLength, Modes: nonNil(m.Modes), BandsMHz: nonNil(m.BandsMHz), Power: []PowerLevel{}, Notes: m.Notes, Source: m.Source, Origin: modelOrigins[e.Status()]}
 	for _, l := range m.Power {
 		o.Power = append(o.Power, PowerLevel{l.Label, l.Watts, string(l.Intent)})
 	}

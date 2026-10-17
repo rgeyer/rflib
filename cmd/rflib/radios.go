@@ -23,8 +23,10 @@ func newModelCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "model", Short: "List the radio models rflib can program, and add your own",
 		Long: `A radio model describes radio hardware: its programming format, memories,
 names, power levels, bands, and modes. Built-in models ship with rflib; add
-your own as .yaml files in the directory shown by "rflib model list" (rflib
-model new writes one). A file there with a built-in's name replaces it.
+your own with rflib model install FILE, which copies a file into the directory
+shown by "rflib model list" (rflib model new starts one there). A model of
+yours with a built-in's name replaces it. A file there that can't be used is
+skipped, with a warning.
 
 For a radio CHIRP supports but rflib doesn't, use chirp-generic, or copy it
 with rflib model new and fill in the radio's limits.`}
@@ -39,8 +41,9 @@ with rflib model new and fill in the radio's limits.`}
 			return err
 		}
 		if dir, err := model.UserDir(); err == nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "User models are read from %s\n", dir)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Your models are read from %s\n", dir)
 		}
+		userModels.reportFiles(cmd)
 		return nil
 	}
 	show := &cobra.Command{Use: "show MODEL", Short: "Show a radio model's facts and where they came from", Args: cobra.ExactArgs(1)}
@@ -68,8 +71,13 @@ then check it with rflib model validate.`}
 		}
 		return nil
 	}
-	validate := &cobra.Command{Use: "validate FILE", Short: "Check a model file for errors", Args: cobra.ExactArgs(1)}
+	validate := &cobra.Command{Use: "validate [FILE]", Short: "Check a model file for errors, or all of yours", Args: cobra.MaximumNArgs(1),
+		Long: `Checks a model file for errors. With no file, it checks every model of yours,
+in the directory rflib model list shows.`}
 	validate.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return userModels.validateAll(cmd)
+		}
 		m, err := model.Load(args[0])
 		if err != nil {
 			return err
@@ -77,7 +85,7 @@ then check it with rflib model validate.`}
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s is valid (memories %d-%d)\n", m.Name, m.Memories.First, m.Memories.Last)
 		return nil
 	}
-	cmd.AddCommand(list, show, create, validate)
+	cmd.AddCommand(list, show, create, validate, userModels.installCommand(), userModels.removeCommand())
 	return cmd
 }
 
@@ -134,7 +142,8 @@ var modelListing = listing[model.Entry]{
 		{name: "memories", text: func(e model.Entry) string { return fmt.Sprintf("%d-%d", e.Model.Memories.First, e.Model.Memories.Last) }},
 		{name: "name_length", text: func(e model.Entry) string { return strconv.Itoa(e.Model.Names.MaxLength) }, json: func(e model.Entry) any { return e.Model.Names.MaxLength }},
 		{name: "modes", text: func(e model.Entry) string { return strings.Join(e.Model.Modes, ",") }, json: func(e model.Entry) any { return nonNil(e.Model.Modes) }},
-		{name: "origin", text: func(e model.Entry) string { return e.Origin }},
+		{name: "origin", text: func(e model.Entry) string { return origin(e.Origin, e.Status()) }, json: func(e model.Entry) any { return e.Origin }},
+		{name: "status", text: func(e model.Entry) string { return e.Status() }},
 	},
 	defaults: []string{"name", "description", "format", "origin"},
 }
@@ -396,7 +405,7 @@ func newRadioShowCommand() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(out, "%s\nname: %s\nmodel: %s\nchannels: %d\ndefault power: %s\ndedupe: %s\nname length: %s\nnotes: %s\ndraft: %s\nrevision: %s\nprogramming: %s\nsources:",
-				r.ID, r.Name, r.Model, len(es), powerName(r.DefaultPower), orDefault(r.Dedupe, "none"), nameLength(r.NameLength), r.Notes, draft,
+				r.ID, r.Name, r.Model+modelOrigin(r.Model), len(es), powerName(r.DefaultPower), orDefault(r.Dedupe, "none"), nameLength(r.NameLength), r.Notes, draft,
 				revisionText(st), programmingText(st))
 			if len(sources) == 0 {
 				fmt.Fprint(out, " none")
@@ -1124,6 +1133,9 @@ day and "saved automatically by CLI export"); see rflib radio revisions.`}
 				return err
 			}
 			printWarnings(cmd.ErrOrStderr(), p)
+			if o := modelOrigin(p.Radio.Model); o != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "note: model %s%s\n", p.Radio.Model, o)
+			}
 			if err := writeOutput(cmd, func(w io.Writer) (int, error) {
 				return program.Write(w, p, skipInvalid, cmd.ErrOrStderr())
 			}); err != nil {

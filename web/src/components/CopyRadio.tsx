@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, call, type Channel, type Model, type Radio } from "../api/client";
+import { modelLabel } from "../lib/radio";
 import { failed, ok, warn } from "../lib/notify";
 
 /** CopyRadio makes a new radio from this one as it is now, for another
@@ -41,7 +42,7 @@ export function CopyRadio(props: { lib: string; radio: string; onClose: () => vo
           label="Model"
           required
           searchable
-          data={(models.data?.models ?? []).map((m) => ({ value: m.name, label: `${m.description} (${m.name})` }))}
+          data={(models.data?.models ?? []).map((m) => ({ value: m.name, label: modelLabel(m) }))}
           value={model}
           onChange={setModel}
         />

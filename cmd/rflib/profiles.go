@@ -12,7 +12,8 @@ var profileListing = listing[profile.Entry]{
 	fields: []field[profile.Entry]{
 		{name: "name", text: func(e profile.Entry) string { return e.Profile.Name }},
 		{name: "description", text: func(e profile.Entry) string { return e.Profile.Description }},
-		{name: "origin", text: func(e profile.Entry) string { return e.Origin }},
+		{name: "origin", text: func(e profile.Entry) string { return origin(e.Origin, e.Status()) }, json: func(e profile.Entry) any { return e.Origin }},
+		{name: "status", text: func(e profile.Entry) string { return e.Status() }},
 	},
 	defaults: []string{"name", "description", "origin"},
 }
@@ -20,8 +21,10 @@ var profileListing = listing[profile.Entry]{
 func newProfileCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "profile", Short: "List and check export profiles",
 		Long: `Export profiles describe CSV formats for radio programming software. Built-in
-profiles ship with rflib; add your own as .yaml files in the directory shown by
-"rflib profile list". A file there with a built-in's name replaces it.`}
+profiles ship with rflib; add your own with rflib profile install FILE, which
+copies a file into the directory shown by "rflib profile list". A profile of
+yours with a built-in's name replaces it. A file there that can't be used is
+skipped, with a warning.`}
 
 	list := &cobra.Command{Use: "list", Short: "List available profiles", Args: cobra.NoArgs}
 	profileListing.flags(list)
@@ -34,8 +37,9 @@ profiles ship with rflib; add your own as .yaml files in the directory shown by
 			return err
 		}
 		if dir, err := profile.UserDir(); err == nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "User profiles are read from %s\n", dir)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Your profiles are read from %s\n", dir)
 		}
+		userProfiles.reportFiles(cmd)
 		return nil
 	}
 
@@ -58,8 +62,13 @@ profiles ship with rflib; add your own as .yaml files in the directory shown by
 		return err
 	}
 
-	validate := &cobra.Command{Use: "validate FILE", Short: "Check a profile file for errors", Args: cobra.ExactArgs(1)}
+	validate := &cobra.Command{Use: "validate [FILE]", Short: "Check a profile file for errors, or all of yours", Args: cobra.MaximumNArgs(1),
+		Long: `Checks a profile file for errors. With no file, it checks every profile of
+yours, in the directory rflib profile list shows.`}
 	validate.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return userProfiles.validateAll(cmd)
+		}
 		p, err := profile.Load(args[0])
 		if err != nil {
 			return err
@@ -68,6 +77,6 @@ profiles ship with rflib; add your own as .yaml files in the directory shown by
 		return nil
 	}
 
-	cmd.AddCommand(list, show, validate)
+	cmd.AddCommand(list, show, validate, userProfiles.installCommand(), userProfiles.removeCommand())
 	return cmd
 }

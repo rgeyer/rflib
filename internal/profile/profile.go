@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/naming"
 	"github.com/ryan/rflib/internal/paths"
+	"github.com/ryan/rflib/internal/userfiles"
 	"gopkg.in/yaml.v3"
 )
 
@@ -196,10 +198,83 @@ type Entry struct {
 	Profile Profile
 	// Origin is "built-in" or the file the profile was loaded from.
 	Origin string
+	// Builtin is the built-in profile a user file replaces, by having its
+	// name; nil when it replaces none.
+	Builtin *Profile
+}
+
+// Local reports whether the profile comes from a file of the user's own.
+func (e Entry) Local() bool { return e.Origin != builtinOrigin }
+
+// SameAsBuiltin reports whether a user file replacing a built-in profile
+// now says just what the built-in does (see model.Entry.SameAsBuiltin).
+func (e Entry) SameAsBuiltin() bool {
+	return e.Builtin != nil && reflect.DeepEqual(e.Profile, *e.Builtin)
+}
+
+// Status says where a profile comes from: "built-in", "local", "replaces
+// the built-in", or "same as the built-in".
+func (e Entry) Status() string {
+	switch {
+	case !e.Local():
+		return builtinOrigin
+	case e.SameAsBuiltin():
+		return "same as the built-in"
+	case e.Builtin != nil:
+		return "replaces the built-in"
+	}
+	return "local"
+}
+
+const builtinOrigin = "built-in"
+
+// files are the user's profile files.
+var files = userfiles.Kind[Profile]{What: "profile", Dir: UserDir, Parse: Parse, Name: func(p Profile) string { return p.Name }}
+
+// Problems lists the user's profile files that can't be used, which
+// Available leaves out.
+func Problems() []userfiles.Problem {
+	_, problems := files.Scan()
+	return problems
+}
+
+// Install checks a profile file and copies it into UserDir, replacing an
+// installed profile of the same name only with replace. It returns the
+// installed profile and the file it replaced ("" for none).
+func Install(path string, replace bool) (Entry, string, error) {
+	f, old, err := files.Install(path, replace)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	e, err := Find(f.Value.Name)
+	return e, old, err
+}
+
+// Remove deletes the user's file for a profile, and returns it as it was.
+func Remove(name string) (Entry, error) {
+	es, _ := Available()
+	var was Entry
+	for _, e := range es {
+		if e.Profile.Name == name {
+			was = e
+		}
+	}
+	if was.Profile.Name != "" && !was.Local() {
+		return was, domain.Invalidf("%s is a built-in profile, with no file of yours to remove", name)
+	}
+	f, err := files.Remove(name)
+	if err != nil {
+		return was, domain.Invalidf("%v", err)
+	}
+	if was.Profile.Name == "" {
+		was.Origin = f.Path
+	}
+	return was, nil
 }
 
 // Available lists built-in profiles and those in UserDir. A user profile
 // with a built-in's name replaces it, so a format can be fixed locally.
+// User files that can't be used are left out (see Problems).
 func Available() ([]Entry, error) {
 	byName := map[string]Entry{}
 	builtins, err := fs.Glob(builtinFS, "builtin/*.yaml")
@@ -215,18 +290,15 @@ func Available() ([]Entry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("built-in %s: %w", path, err)
 		}
-		byName[p.Name] = Entry{p, "built-in"}
+		byName[p.Name] = Entry{Profile: p, Origin: builtinOrigin}
 	}
-	if dir, err := UserDir(); err == nil {
-		files, _ := filepath.Glob(filepath.Join(dir, "*.yaml"))
-		more, _ := filepath.Glob(filepath.Join(dir, "*.yml"))
-		for _, path := range append(files, more...) {
-			p, err := Load(path)
-			if err != nil {
-				return nil, err
-			}
-			byName[p.Name] = Entry{p, path}
+	user, _ := files.Scan()
+	for _, f := range user {
+		e := Entry{Profile: f.Value, Origin: f.Path}
+		if b, ok := byName[f.Value.Name]; ok && !b.Local() {
+			e.Builtin = &b.Profile
 		}
+		byName[f.Value.Name] = e
 	}
 	out := make([]Entry, 0, len(byName))
 	for _, e := range byName {
@@ -254,7 +326,7 @@ func Load(path string) (Profile, error) {
 func Find(ref string) (Entry, error) {
 	if strings.HasSuffix(ref, ".yaml") || strings.HasSuffix(ref, ".yml") || strings.ContainsRune(ref, os.PathSeparator) {
 		p, err := Load(ref)
-		return Entry{p, ref}, err
+		return Entry{Profile: p, Origin: ref}, err
 	}
 	entries, err := Available()
 	if err != nil {
@@ -268,6 +340,9 @@ func Find(ref string) (Entry, error) {
 		names = append(names, e.Profile.Name)
 	}
 	slices.Sort(names)
+	if p, ok := userfiles.ProblemWith(Problems(), ref); ok {
+		return Entry{}, domain.Invalidf("the profile file %s can't be used: %v", p.Path, p.Err)
+	}
 	return Entry{}, domain.Invalidf("unknown profile %q; available: %s", ref, strings.Join(names, ", "))
 }
 

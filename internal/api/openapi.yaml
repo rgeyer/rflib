@@ -2372,7 +2372,7 @@ components:
 
     Model:
       type: object
-      required: [name, description, format, chirp_model, memories, name_length, modes, bands_mhz, power, notes, source]
+      required: [name, description, format, chirp_model, memories, name_length, modes, bands_mhz, power, notes, source, origin]
       properties:
         name: {type: string}
         description: {type: string}
@@ -2393,6 +2393,7 @@ components:
               intent: {type: string}
         notes: {type: string}
         source: {type: string}
+        origin: {type: string, enum: [builtin, local, replaces_builtin, same_as_builtin], description: "Built into rflib, or from a file installed on the server (rflib model install): a model of its own, one replacing the built-in model of its name, or one that replaces it but now says the same"}
     Seed:
       type: object
       required: [id, description, count, installed, pending]

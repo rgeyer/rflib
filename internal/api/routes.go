@@ -1447,24 +1447,24 @@ func (s *server) exportRadio(w http.ResponseWriter, r *http.Request, a *app.Serv
 // --- catalog ---
 
 func (s *server) listModels(w http.ResponseWriter, _ *http.Request) error {
-	all, err := model.All()
+	all, err := model.Available()
 	if err != nil {
 		return err
 	}
 	out := make([]Model, len(all))
-	for i, m := range all {
-		out[i] = newModel(m)
+	for i, e := range all {
+		out[i] = newModel(e)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"models": out})
 	return nil
 }
 
 func (s *server) getModel(w http.ResponseWriter, r *http.Request) error {
-	m, err := model.Find(r.PathValue("name"))
+	e, err := model.Lookup(r.PathValue("name"))
 	if err != nil {
 		return apiError{http.StatusNotFound, "not_found", err.Error()}
 	}
-	writeJSON(w, http.StatusOK, newModel(m))
+	writeJSON(w, http.StatusOK, newModel(e))
 	return nil
 }
 
