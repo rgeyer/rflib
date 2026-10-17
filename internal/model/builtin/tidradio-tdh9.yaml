@@ -1,0 +1,23 @@
+name: tidradio-tdh9
+description: TIDRADIO TD-H9, in any of its modes (Normal, Ham, or GMRS)
+format: chirp
+software: "ODmaster's web interface (import the CSV file)"
+memories: {first: 1, last: 199}
+names: {max_length: 8, charset: alnum}
+power:
+  - {label: Low, watts: 1, intent: low}
+  - {label: High, watts: 4, intent: high}
+bands_mhz: [[100, 600]]
+modes: [FM, NFM, AM]
+notes: >-
+  Program it with ODmaster's web interface, which reads and writes CHIRP's CSV
+  layout; other ways of programming the TD-H9 may want other files. The three
+  modes (Normal, Ham, and GMRS) show as different radios in ODmaster but use
+  the same file, so one model serves all three; the radio's mode decides where
+  it transmits. It takes any frequency from 100 to 600 MHz; rflib still
+  programs a channel to transmit only in the amateur bands and on FRS, GMRS,
+  MURS, and CB channels. CHIRP doesn't support the TD-H9.
+source: >-
+  The user's ODmaster exports from a TD-H9 in each mode, and its channel
+  editor: 8-character names, 100-600 MHz (2026-10-17); 199 memories from the
+  AA4TE TD-H9 field guide (qsl.net/aa4te/tdh9.html)

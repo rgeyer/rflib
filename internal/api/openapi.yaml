@@ -2376,12 +2376,13 @@ components:
 
     Model:
       type: object
-      required: [name, description, format, chirp_model, memories, name_length, modes, bands_mhz, power, notes, source, origin]
+      required: [name, description, format, chirp_model, software, memories, name_length, modes, bands_mhz, power, notes, source, origin]
       properties:
         name: {type: string}
         description: {type: string}
         format: {type: string}
         chirp_model: {type: string}
+        software: {type: string, description: "The software that loads a chirp format file when CHIRP doesn't support the radio, such as the maker's app; empty for CHIRP"}
         memories: {type: array, items: {type: integer}, minItems: 2, maxItems: 2}
         name_length: {type: integer}
         modes: {type: array, items: {type: string}}

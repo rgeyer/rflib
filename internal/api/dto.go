@@ -539,6 +539,7 @@ type Model struct {
 	Description string       `json:"description"`
 	Format      string       `json:"format"`
 	ChirpModel  string       `json:"chirp_model"`
+	Software    string       `json:"software"`
 	Memories    [2]int       `json:"memories"`
 	NameLength  int          `json:"name_length"`
 	Modes       []string     `json:"modes"`
@@ -561,7 +562,7 @@ var modelOrigins = map[string]string{"built-in": "builtin", "local": "local", "r
 
 func newModel(e model.Entry) Model {
 	m := e.Model
-	o := Model{Name: m.Name, Description: m.Description, Format: m.Format, ChirpModel: m.ChirpModel, Memories: [2]int{m.Memories.First, m.Memories.Last},
+	o := Model{Name: m.Name, Description: m.Description, Format: m.Format, ChirpModel: m.ChirpModel, Software: m.Software, Memories: [2]int{m.Memories.First, m.Memories.Last},
 		NameLength: m.Names.MaxLength, Modes: nonNil(m.Modes), BandsMHz: nonNil(m.BandsMHz), Power: []PowerLevel{}, Notes: m.Notes, Source: m.Source, Origin: modelOrigins[e.Status()]}
 	for _, l := range m.Power {
 		o.Power = append(o.Power, PowerLevel{l.Label, l.Watts, string(l.Intent)})

@@ -30,7 +30,7 @@ func TestBuiltinsAreValid(t *testing.T) {
 			}
 		}
 	}
-	want := "baofeng-uv5rm,chirp-generic,explorer-qrz1,radioddity-uv5g,tidradio-tdh3-gmrs,tyt-th9800,yaesu-ft857,yaesu-ftm150,yaesu-ftm6000"
+	want := "baofeng-uv5rm,chirp-generic,explorer-qrz1,radioddity-uv5g,tidradio-tdh3-gmrs,tidradio-tdh9,tyt-th9800,yaesu-ft857,yaesu-ftm150,yaesu-ftm6000"
 	if got := strings.Join(names, ","); got != want {
 		t.Fatalf("built-ins = %s", got)
 	}
