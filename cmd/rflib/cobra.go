@@ -24,7 +24,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.PersistentFlags().String("db", "", "SQLite database path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
-	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newSharedCommand(), newTagCommand(), newServeCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newOrgCommand(), newSystemCommand(), newPlanCommand())
+	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newSharedCommand(), newTagCommand(), newServeCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newOrgCommand(), newSystemCommand(), newPlanCommand(), newUserCommand())
 	return root
 }
 

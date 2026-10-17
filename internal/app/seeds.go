@@ -106,6 +106,9 @@ func (s *Service) RecordSeeds(ctx context.Context) error {
 	if !s.info.Shared {
 		return errNotShared
 	}
+	if err := maintaining(ctx); err != nil {
+		return err
+	}
 	for _, l := range seed.Lists() {
 		st, err := s.SeedStatus(ctx, l)
 		if err != nil {
@@ -128,6 +131,9 @@ func (s *Service) RecordSeeds(ctx context.Context) error {
 func (s *Service) UpdateSeed(ctx context.Context, l seed.List, dryRun bool) (SeedStatus, error) {
 	if !s.info.Shared {
 		return SeedStatus{List: l}, errNotShared
+	}
+	if err := maintaining(ctx); err != nil {
+		return SeedStatus{List: l}, err
 	}
 	b, err := l.Batch()
 	if err != nil {

@@ -14,10 +14,20 @@ info:
 
     Errors are `{"error": {"code", "message"}}`: 400 `invalid` for a request
     to fix, 401 `unauthorized`, 403 `read_only` for everyday changes to the
-    shared library, 404 `not_found`, 409 `conflict` for a name in use,
+    shared library and `forbidden` for what the signed-in user's role
+    doesn't allow, 404 `not_found`, 409 `conflict` for a name in use,
     `no_draft` for a change to a radio's list with no draft open, and
     `stale_draft` for a change made against a draft that's no longer the
-    one open, 413 `too_large`, and 500 `internal`.
+    one open, 413 `too_large`, 429 `too_many`, and 500 `internal`.
+
+    A server runs in one of two ways. Without accounts, a request sends
+    the server's token, if it has one, as `Authorization: Bearer TOKEN`.
+    With accounts (`rflib serve --accounts`), a browser signs in
+    (`POST /auth/signin`), which sets a session cookie; a member sees only
+    their own library and the shared list, which they read, and an admin
+    also changes the shared list. A request a browser sends from another
+    site's page (by `Sec-Fetch-Site`, or a change's `Origin`) is refused
+    (403 `forbidden`).
 
     Changes to a radio's list (its channels, sections, and sources, and
     sync) go to its open draft, which saving makes the radio's. With no
@@ -39,6 +49,7 @@ servers:
   - url: /api/v1
 security:
   - bearer: []
+  - session: []
 
 paths:
   /health:
@@ -66,6 +77,103 @@ paths:
           content:
             application/yaml:
               schema: {type: object}
+
+  /auth:
+    get:
+      summary: Say whether the server has accounts, who may register, and who is signed in
+      security: []
+      responses:
+        "200":
+          description: The server's sign-in
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accounts]
+                properties:
+                  accounts: {type: boolean, description: "Whether the server has accounts (rflib serve --accounts); without them, it uses a token or none"}
+                  signup: {type: string, enum: [open, invite, closed], description: "Who may register, with accounts"}
+                  user: {$ref: "#/components/schemas/User"}
+        default: {$ref: "#/components/responses/Error"}
+  /auth/signin:
+    post:
+      summary: Sign in, setting the session cookie
+      description: Repeated failures for a name or from one address are refused for a while (429 `too_many`).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, password]
+              properties:
+                name: {type: string, description: "A callsign or username, ignoring case"}
+                password: {type: string}
+      responses:
+        "200": {$ref: "#/components/responses/SignedIn"}
+        default: {$ref: "#/components/responses/Error"}
+  /auth/register:
+    post:
+      summary: Make an account, as the server's sign-up allows, and sign in
+      description: "The account gets its own library, named after it. With sign-up by invitation, it needs an invitation code from an admin (rflib user invite)."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, password]
+              properties:
+                name: {type: string, description: "A callsign or username: 3 to 32 letters, digits, dots, dashes, or underscores"}
+                password: {type: string, minLength: 10}
+                display_name: {type: string}
+                email: {type: string}
+                invite: {type: string, description: An invitation code}
+      responses:
+        "201": {$ref: "#/components/responses/SignedIn"}
+        default: {$ref: "#/components/responses/Error"}
+  /auth/signout:
+    post:
+      summary: Sign out, ending the session
+      security: []
+      responses:
+        "204": {description: Signed out}
+        default: {$ref: "#/components/responses/Error"}
+  /auth/me:
+    patch:
+      summary: Change the signed-in user's display name or email
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: {type: string}
+                email: {type: string}
+      responses:
+        "200": {$ref: "#/components/responses/SignedIn"}
+        default: {$ref: "#/components/responses/Error"}
+  /auth/password:
+    post:
+      summary: Change the signed-in user's password, signing out their other sessions
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current, password]
+              properties:
+                current: {type: string}
+                password: {type: string, minLength: 10}
+      responses:
+        "204": {description: Changed}
+        default: {$ref: "#/components/responses/Error"}
 
   /libraries:
     get:
@@ -1560,7 +1668,12 @@ components:
     bearer:
       type: http
       scheme: bearer
-      description: Required when the server has a token ($RFLIB_API_TOKEN).
+      description: Required when the server has a token ($RFLIB_API_TOKEN) and no accounts.
+    session:
+      type: apiKey
+      in: cookie
+      name: rflib_session
+      description: "On a server with accounts (rflib serve --accounts): the session cookie that signing in sets."
 
   parameters:
     lib: {name: lib, in: path, required: true, description: "A library's name or ID", schema: {type: string}}
@@ -1575,6 +1688,15 @@ components:
     plan: {name: plan, in: path, required: true, description: "A plan's name or ID", schema: {type: string}}
 
   responses:
+    SignedIn:
+      description: The signed-in user
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [user]
+            properties:
+              user: {$ref: "#/components/schemas/User"}
     Error:
       description: An error
       content:
@@ -1651,7 +1773,7 @@ components:
           type: object
           required: [code, message]
           properties:
-            code: {type: string, enum: [invalid, unauthorized, read_only, not_found, conflict, no_draft, stale_draft, too_large, internal]}
+            code: {type: string, enum: [invalid, unauthorized, forbidden, read_only, not_found, conflict, no_draft, stale_draft, too_large, too_many, internal]}
             message: {type: string}
 
     Library:
@@ -1665,6 +1787,18 @@ components:
         default: {type: boolean, description: "The user's own library, as opposed to the shared list"}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+
+    User:
+      type: object
+      required: [id, name, display_name, email, role, callsign, library]
+      properties:
+        id: {type: string}
+        name: {type: string, description: What the user signs in with}
+        display_name: {type: string}
+        email: {type: string}
+        role: {type: string, enum: [admin, member], description: "An admin also maintains the shared list"}
+        callsign: {type: boolean, description: "Whether the name has a callsign's form; unverified"}
+        library: {type: string, description: "The user's own library's name"}
 
     Location:
       type: object

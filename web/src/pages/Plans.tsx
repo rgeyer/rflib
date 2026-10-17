@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, call, type Plan, type PlanEntry, type PlanRow, type RecordRevision } from "../api/client";
+import { useMaintainer } from "../lib/auth";
 import { History, ReasonModal, SharedChannelPicker } from "../components/Records";
 import { enc, useLib } from "../lib/library";
 import { failed, ok } from "../lib/notify";
@@ -35,6 +36,7 @@ const statusColor: Record<string, string> = { draft: "gray", published: "green",
 
 /** Plans lists communications plans, such as an event's channels. */
 export function Plans() {
+  const maintainer = useMaintainer();
   const lib = useLib();
   const navigate = useNavigate();
   const client = useQueryClient();
@@ -54,7 +56,7 @@ export function Plans() {
     <Stack>
       <Group justify="space-between">
         <Title order={2}>Plans</Title>
-        <Button onClick={() => setForm({ name: "", description: "", starts: "", ends: "", status: "draft" })}>New plan</Button>
+        {maintainer && <Button onClick={() => setForm({ name: "", description: "", starts: "", ends: "", status: "draft" })}>New plan</Button>}
       </Group>
       <Text size="sm" c="dimmed">
         Communications plans: shared channels with their names and assignments, laid out as ICS 205 lists them. Program one onto a radio from the
@@ -100,6 +102,7 @@ type EntryForm = { title: string; at: number; entry: PlanEntry; isNew: boolean }
 
 /** PlanPage shows a plan as ICS 205 does, and edits its entries. */
 export function PlanPage() {
+  const maintainer = useMaintainer();
   const lib = useLib();
   const name = useParams().plan ?? "";
   const client = useQueryClient();
@@ -165,9 +168,11 @@ export function PlanPage() {
           </Badge>
           <Text c="dimmed">{planDates(p)}</Text>
         </Group>
-        <Button variant="light" onClick={() => setForm({ name: p.name, description: p.description, starts: p.starts ?? "", ends: p.ends ?? "", status: p.status })}>
-          Edit
-        </Button>
+        {maintainer && (
+          <Button variant="light" onClick={() => setForm({ name: p.name, description: p.description, starts: p.starts ?? "", ends: p.ends ?? "", status: p.status })}>
+            Edit
+          </Button>
+        )}
       </Group>
       {p.description && <Text size="sm">{p.description}</Text>}
       <Title order={4}>Channels (ICS 205)</Title>
@@ -222,7 +227,7 @@ export function PlanPage() {
               <Table.Td>{e.name}</Table.Td>
               <Table.Td>{e.assignment}</Table.Td>
               <Table.Td>{e.section_start ?? ""}</Table.Td>
-              <Table.Td>
+              <Table.Td display={maintainer ? undefined : "none"}>
                 <Group gap={4} wrap="nowrap">
                   <ActionIcon variant="subtle" aria-label={`Move entry ${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)}>
                     <IconArrowUp size={14} />
@@ -247,11 +252,13 @@ export function PlanPage() {
           ))}
         </Table.Tbody>
       </Table>
-      <SharedChannelPicker
-        label="Add a shared channel"
-        onPick={(c) => setEditing({ title: `Add ${c.name}`, at: entries.length, entry: { ...blank, channel_id: c.id }, isNew: true })}
-      />
-      <Group align="end">
+      {maintainer && (
+        <SharedChannelPicker
+          label="Add a shared channel"
+          onPick={(c) => setEditing({ title: `Add ${c.name}`, at: entries.length, entry: { ...blank, channel_id: c.id }, isNew: true })}
+        />
+      )}
+      <Group align="end" display={maintainer ? undefined : "none"}>
         <TextInput flex={1} label="Add a query section" placeholder='system:"SBARC Hub"' value={query} onChange={(e) => setQuery(e.currentTarget.value)} />
         <Button
           variant="light"

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, call, type Channel, type OrgRef, type RecordRevision, type System, type SystemMember } from "../api/client";
+import { useMaintainer } from "../lib/auth";
 import { History, NetworkLinks, ReasonModal, SharedChannelPicker } from "../components/Records";
 import { enc, useLib } from "../lib/library";
 import { failed, ok } from "../lib/notify";
@@ -55,6 +56,7 @@ function orgNames(refs: OrgRef[], role: string) {
 
 /** Systems lists the shared list's systems of linked channels. */
 export function Systems() {
+  const maintainer = useMaintainer();
   const lib = useLib();
   const navigate = useNavigate();
   const client = useQueryClient();
@@ -74,7 +76,7 @@ export function Systems() {
     <Stack>
       <Group justify="space-between">
         <Title order={2}>Systems</Title>
-        <Button onClick={() => setForm(toForm(null))}>New system</Button>
+        {maintainer && <Button onClick={() => setForm(toForm(null))}>New system</Button>}
       </Group>
       <Text size="sm" c="dimmed">
         Linked repeaters as their operators intend them. Find a system's channels with system:NAME.
@@ -117,6 +119,7 @@ export function Systems() {
 
 /** SystemPage shows a system, its members, and a map of the links. */
 export function SystemPage() {
+  const maintainer = useMaintainer();
   const lib = useLib();
   const name = useParams().system ?? "";
   const client = useQueryClient();
@@ -174,7 +177,7 @@ export function SystemPage() {
           <Title order={2}>{x.name}</Title>
           {x.link && <Badge variant="light">{x.link}</Badge>}
         </Group>
-        <Group>
+        <Group display={maintainer ? undefined : "none"}>
           <Button variant="light" onClick={() => setForm(toForm(x))}>
             Edit
           </Button>
@@ -233,7 +236,7 @@ export function SystemPage() {
                 <NetworkLinks networks={channels[i].networks} />
               </Table.Td>
               <Table.Td>{m.notes}</Table.Td>
-              <Table.Td>
+              <Table.Td display={maintainer ? undefined : "none"}>
                 <ActionIcon
                   variant="subtle"
                   color="red"
@@ -247,7 +250,7 @@ export function SystemPage() {
           ))}
         </Table.Tbody>
       </Table>
-      <SharedChannelPicker label="Add a member" onPick={(c) => setAdding({ channel: c, linking: "full-time", notes: "" })} />
+      {maintainer && <SharedChannelPicker label="Add a member" onPick={(c) => setAdding({ channel: c, linking: "full-time", notes: "" })} />}
       <Suspense fallback={<Loader />}>
         <SystemMap system={x} channels={channels} />
       </Suspense>

@@ -1,6 +1,8 @@
 # rflib
 
-`rflib` is a local, SQLite-backed library for analog radio channels. It stores source information separately from radio-programming formats, so future exporters can adapt the same library to CHIRP and vendor-specific software.
+`rflib` keeps your analog radio channels in one library and programs your radios from it. You collect channels once, your own and those on a shared list of repeaters and common frequencies, then build each radio from them and export its programming file for CHIRP or the manufacturer's software (Yaesu ADMS). When a shared channel changes, such as a repeater's new tone, the radios that use it show they need programming again.
+
+It's one program, `rflib`, with a command line and a web interface (`rflib serve`), on a single SQLite file. Run it on your own machine, or host it for a club, with an account for each person (see [Accounts](#accounts)).
 
 ## Build
 
@@ -8,26 +10,28 @@
 make build    # or: go build -o rflib ./cmd/rflib
 ```
 
+Building needs Go. The web interface also needs Node.js to build; without it, `rflib` works, and `rflib serve` serves a page saying the interface isn't built (see [Web interface](#web-interface)).
+
 ## Library location
 
-Every command takes `--db PATH`. When it is omitted, `rflib` uses `$RFLIB_DB`, then `$XDG_DATA_HOME/rflib/library.db` (`~/.local/share/rflib/library.db` by default). The examples below set `RFLIB_DB` once instead of repeating `--db`.
+Every command takes `--db PATH`. When it is omitted, `rflib` uses `$RFLIB_DB`, then `$XDG_DATA_HOME/rflib/library.db` (`~/.local/share/rflib/library.db` by default, and `%USERPROFILE%\.local\share\rflib\library.db` on Windows). The examples below set `RFLIB_DB` once instead of repeating `--db`, and run `./rflib` from a Unix shell. On Windows, run `rflib.exe`, and set the variable with `$env:RFLIB_DB = "radio-library.db"` in PowerShell or `set RFLIB_DB=radio-library.db` in the Command Prompt.
 
-The CLI only creates a database when you explicitly initialize one. After upgrading `rflib`, commands may report that the library schema is out of date; re-run `init` to upgrade it in place. Back up the database file first, since upgrades can convert data (for example, power text becoming [power intents](#power)).
+The CLI only creates a database when you explicitly initialize one. After upgrading `rflib`, commands may report that the library schema is out of date; re-run `init` to upgrade it in place. Back up the database file first, since an upgrade can convert data.
 
 ```sh
 export RFLIB_DB=./radio-library.db
 ./rflib init                 # a new database's shared list starts with the built-in lists
 ```
 
-Back up the database by copying it while the CLI is not running.
+Back up the database by copying it while neither the CLI nor `rflib serve` is running, or with `rflib export json` (see [Export](#export)).
 
 ## Your library and the shared list
 
-A database holds **your library**, your own channels, radios, and saved searches, and the **shared list**, channels shared with everyone (see [Shared channels](#shared-channels)). Commands work on your library; the `rflib shared` commands work on the shared list. For a separate collection, such as a scratch space to try an import or someone else's radios, use a separate database file with `--db` or `$RFLIB_DB`.
+A database holds **your library**, your own channels, radios, and saved searches, and the **shared list**, channels shared with everyone (see [Shared channels](#shared-channels)). Commands work on your library; the `rflib shared` commands work on the shared list. For a separate collection, such as a scratch space to try an import or someone else's radios, use a separate database file with `--db` or `$RFLIB_DB`. On a server with accounts, each person has a library of their own, and everyone shares the one shared list.
 
 ## Shared channels
 
-The `shared` library holds channels shared with everyone: the built-in lists, and the club's own. Your radios use shared channels directly, by their IDs, and follow their corrections, such as a repeater's new tone. Searches for radios (`radio channels add -q`, and radio sources) look at your own channels and the whole shared list.
+The shared list holds channels shared with everyone: the built-in lists, and the club's own. Your radios use shared channels directly, by their IDs, and follow their corrections, such as a repeater's new tone. Searches for radios (`radio channels add -q`, and radio sources) look at your own channels and the whole shared list.
 
 ```sh
 ./rflib channel list in:shared band:noaa            # search the whole shared list
@@ -43,7 +47,7 @@ The `shared` library holds channels shared with everyone: the built-in lists, an
 - **Names:** a shared channel shows the shared name. Rename it on a radio (`radio channels set --name`), or give it short names. Converting one of your channels keeps a name of your own as a short name.
 - **Converting:** `shared link` replaces a private channel with the shared one it matches on the air (the same frequencies, tones, and tone squelch, and the same service, or none; FRS and GMRS share frequencies, so the service keeps them apart). The shared channel takes its place on your radios, its tags, notes, and name become yours on the shared channel, and the private channel is retired, with the shared channel as its replacement. In the web interface, **Link to shared list** on the Channels page lists your matching channels and replaces the ones you pick.
 - **Shared tags** come from a short list with agreed meanings: `rflib tag list`. None repeats a channel's fields (service, band, mode, or duplex), which search finds without a tag. Your own tags are free-form, and one with a shared tag's name means the same thing. Adding one of your own that repeats the channel's fields, such as `cb` on a CB channel, `ham` on an amateur one, or `repeater` on a repeater, is allowed but warns you that `service:cb` (and so on) already finds it.
-- **The shared library is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`.
+- **The shared list is read-only** to everyday commands. Its maintainer changes it with `rflib shared import`, `update`, and `status`, each with a `--reason`. On a server with accounts, the maintainers are its admins.
 
 ### Status and changes
 
@@ -101,8 +105,6 @@ Updates change only explicitly supplied flags. Supplying an empty `--tx`, `--lat
 ```
 
 **Location.** `--lat` and `--lon` say where a channel is used, such as a repeater's site, and `--radius-km` how far that reaches: either how rough the position is, or the repeater's coverage. Searches use it with `near:` (see [Search](#search)). `--grid CM94sq` gives a Maidenhead grid square instead (4, 6, or 8 characters): its center, with a radius reaching its corners unless `--radius-km` says otherwise; a CSV import's `grid` column does the same. `--radius-km` alone changes the radius and keeps the coordinates; an empty `--lat` and `--lon` clear the location.
-
-**Groups are gone.** Earlier versions collected channels into groups. Upgrading (`rflib init`) gives each grouped channel its group's location and power, where it had none, and a tag named after the group. Saved searches and radio sources that used `group:NAME` now say `tag:NAME`, and `group:NAME` still works as `tag:NAME`. Old backups and CSV files with groups import the same way.
 
 `--short-names` gives a channel your own abbreviations for radios with narrow displays, such as `--short-names "SB Sheriff Disp,SBSO Disp"`. See [Names on radio displays](#names-on-radio-displays).
 
@@ -174,12 +176,12 @@ List commands print a table. On a terminal it has aligned columns, a header, and
 | `status:` | `active`, `off-air`, or `retired` (see [Status and changes](#status-and-changes)) |
 | `in:` | `use` (the default): your own channels and the shared channels you annotate or have on a radio; `mine`: only your own; `shared`: the whole shared list; `all`: both. Only at the top level of a query. Radio sources and adding to a radio search your own channels and the whole shared list unless a query says otherwise. |
 | `org:` | An organization's name or ID: channels it operates |
-| `system:` | A system's name or ID: its members, or links to them |
+| `system:` | A system's name or ID: its members |
 | `allstar:`, `echolink:`, `irlp:`, `wires-x:` | A node number on that network |
 
 **Location.** `near:` matches when a channel's location is within the distance plus the channel's own `--radius-km`, so a repeater whose coverage reaches you counts. A grid square searches from its center: `near:CM94sq,40`. Channels without a location never match `near:`. To keep them, say so: `near:34.64,-120.46,40 OR -has:location`.
 
-**Shorthand flags.** `--tag`, `--service`, and `--lat`/`--lon`/`--radius-km` still work and are added to the query.
+**Shorthand flags.** `--tag`, `--service`, and `--lat`/`--lon`/`--radius-km` also work, and are added to the query.
 
 ### Saved searches
 
@@ -248,7 +250,7 @@ Built-in lists fill the shared list; your library takes channels from there (see
 
 ## Radios
 
-A radio is one of your own radios: a model, the channels programmed into it in your order, and per-radio choices. Build each radio from the shared library, then export its programming file.
+A radio is one of your own radios: a model, the channels programmed into it in your order, and per-radio choices. Build each radio from your channels and the shared list, then export its programming file.
 
 ```sh
 ./rflib model list
@@ -421,7 +423,6 @@ A **revision** is the saved radio as it was at one time: its settings, sections,
 - **Export reasons:** the CLI's export saves its revision with the day and "saved automatically by CLI export" unless `--reason` says otherwise; the web asks why before an export that saves one. Exporting a radio that hasn't changed saves no revision.
 - **Compare:** a revision against the radio as it is now (its draft, if one is open): memories added, removed, moved to another section, renumbered, or with other settings, channels whose own values changed, and sections and sources added or removed. On the web, pick a revision on the **Revisions** tab.
 - **Restore:** a revision's sections, sources, and memories go into the radio's draft, to review and save or discard (see [Drafts](#drafts)). Settings stay as they are, and channels are as they are now, since they belong to the library: one retired since comes back crossed out. With a draft open, `--replace-draft` (or confirming on the web) replaces it.
-- **When you upgrade,** each radio gets revision 1, "as of the upgrade", counted as exported: rflib takes your radios to hold what it has now.
 
 ### Copying a radio
 
@@ -458,7 +459,7 @@ Used and kept memories keep their numbers where rflib has nothing there, startin
 
 ## Organizations, systems, and plans
 
-The shared list also records who runs its repeaters, how they're linked, and the communications plans that use them. All three live in the shared library, so the commands work the same from any library. Changes are maintainer operations: each takes a `--reason`, and every change is kept in a history (`rflib org|system|plan history NAME`).
+The shared list also records who runs its repeaters, how they're linked, and the communications plans that use them. Everyone reads them; changes are the maintainer's: each takes a `--reason`, and every change is kept in a history (`rflib org|system|plan history NAME`).
 
 ### Network nodes
 
@@ -468,8 +469,6 @@ A channel can carry its nodes on linking networks: AllStar, EchoLink, IRLP, and 
 ./rflib channel update --id <id> --networks allstar:43761,echolink:12345
 ./rflib shared update --id <id> --networks allstar:43761 --reason "node numbers"
 ```
-
-The shared tags `linked`, `allstar`, `echolink`, and `wires-x` are gone: network nodes and systems say it better. So is `simplex`, which `is:simplex` finds. Upgrading (`rflib init`) takes them off shared channels; your own tags stay.
 
 ### Organizations
 
@@ -486,7 +485,7 @@ An organization attached to anything can't be deleted.
 
 ### Systems
 
-A system is a set of interconnected channels, such as a club's linked repeaters, as its operators intend it: not its live connections. Members are shared channels, linked **full-time** (usually linked) or **on demand** (may be linked), with a note on how. A system can have nodes of its own, such as a hub's AllStar node, and its members can belong to different organizations. `system:NAME` finds a system's channels, in your library through your links.
+A system is a set of interconnected channels, such as a club's linked repeaters, as its operators intend it: not its live connections. Members are shared channels, linked **full-time** (usually linked) or **on demand** (may be linked), with a note on how. A system can have nodes of its own, such as a hub's AllStar node, and its members can belong to different organizations. `system:NAME` finds a system's channels.
 
 ```sh
 ./rflib system add "SBARC Hub" --link allstar --networks allstar:43763 --operators SBARC --reason "pilot"
@@ -543,7 +542,7 @@ If a model has no level for the intent, `low` takes its lowest level, and `mediu
 - **ADMS radios** get the level name (`HIGH`, `MID`, `LOW`).
 - **Exports without a radio** (`export chirp`, `export profile`) have no model to map through. CHIRP's Power column is left blank, which some CHIRP radios reject; export through a radio (`radio export`) for those. Profiles map the intent name.
 
-**Older power text.** Power written as text before this version is migrated: HIGH, MID, LOW, and similar become intents, and anything else, such as `50W`, is dropped. Imports read power the same way. Watts in a RadioReference or CHIRP file describe the source's radio, not yours.
+**Power in imported files.** Imports read power text as intents: HIGH, MID, LOW, and similar become `high`, `medium`, and `low`, and anything else, such as `50W`, is dropped. Watts in a RadioReference or CHIRP file describe the source's radio, not yours.
 
 ## Export
 
@@ -555,7 +554,7 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 ./rflib export json --output backup.json
 ```
 
-- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and location. New columns are only ever added at the end; the group columns were removed when groups were.
+- **`export csv`** is deliberately vendor-neutral: stable headers for the library's normalized channel data, including receive/transmit frequencies, tones, tags, notes, service, receive-only, short names, and location. New columns are only ever added at the end.
 - **`export chirp`** writes a file for CHIRP's *File > Import*. See [CHIRP](#chirp) below.
 - **`export profile NAME`** writes a radio programming tool's own CSV format, such as Yaesu ADMS. See [Export profiles](#export-profiles) below.
 - **`export json`** is a full-fidelity backup, including IDs and timestamps, which the CSV leaves out. Your notes, tags, and short names on shared channels are kept, with the shared channel as it was; restored into a database without that shared channel, it becomes a private copy. `rflib shared export json` backs up the shared list, with its organizations, systems, and plans, and `rflib shared import json` restores it. The CSV writes a shared channel's tags and notes and yours together.
@@ -570,12 +569,11 @@ Exports write to stdout unless `--output PATH` is given, and select channels wit
 ./rflib export csv --tag ham | ./rflib --db other.db import csv
 ```
 
-`import csv` reads the generic CSV format. Columns are matched by header name, so they can be in any order and extra columns are ignored. Only `name` and `receive_mhz` are required, which makes hand-built spreadsheets easy to load. `import json` restores a backup exactly. A link stays a link when its shared channel is in this database's shared list; otherwise it becomes a private copy, with a warning. Imported channels are always private and active. `import chirp` reads a file saved with CHIRP's *File > Export*.
+`import csv` reads the generic CSV format. Columns are matched by header name, so they can be in any order and extra columns are ignored. Only `name` and `receive_mhz` are required, which makes hand-built spreadsheets easy to load. `import json` restores a backup exactly. Your notes, tags, and short names on a shared channel go back on it when it's in this database's shared list; otherwise the channel becomes a private copy, with a warning. Imported channels are always private and active. `import chirp` reads a file saved with CHIRP's *File > Export*.
 
 - **All or nothing:** any invalid row is reported with its line number and nothing is imported. Use `--skip-invalid` to import the valid rows anyway. A failure partway through also writes nothing.
 - **`--dry-run`** runs the whole import and then discards it, so its summary is exactly what a real import would do.
 - **Duplicates:** a channel is a duplicate when it has the same ID as an existing channel, or the same name, receive and transmit frequencies, tones, and tone squelch. Channels that only share a name and frequency, such as two sites with different tones, are kept apart. `--on-duplicate` chooses `skip` (the default), `update`, or `create`. `--match programmed` drops the name from the comparison and matches on frequencies, tones, and tone squelch alone. Use it for a file read from a radio, where names are shortened. With `--on-duplicate update`, the matched channel takes the file's name. Two rows in the same file with the same programming also match each other. `update` changes details like power, notes, skip, and tags; a different tone or frequency counts as a new channel. Re-running an import is therefore safe.
-- **Old files with groups:** a group becomes a tag named after it, and its coordinates the channel's location (see [Channels](#channels)).
 - **`--tags`** adds tags to every imported channel.
 
 ## Names on radio displays
@@ -630,8 +628,8 @@ Some radios are programmed with the manufacturer's software rather than CHIRP. A
 
 ### Yaesu FTM-150 and FTM-6000
 
-| Profile | Software | Names |
-|---|---|---|
+| Profile | Software | Names | Modes |
+|---|---|---|---|
 | `yaesu-ftm150` | ADMS-17 | 16 characters | FM, NFM, AM |
 | `yaesu-ftm6000` | ADMS-13 | 6 characters | FM, NFM, AM |
 
@@ -738,16 +736,14 @@ CHIRP export accepts every library mode, but only the 50 standard CTCSS tones an
 `rflib serve` also serves a web interface at `http://127.0.0.1:8080/`, built into the binary:
 
 - **Channels:** search with the query language (the Band, Service, Type, Tone, Status, and Tag buttons write their terms into the search for you), add and edit channels (with a tone picker), select several to tag, set their service, retire, relink retired ones to their replacements, or add to a radio, open one to set its status (active, off the air, or retired with a replacement, yours or shared), show retired channels, which the list hides, and choose Source (in use, by default) to search the whole shared list as well as the channels you use; when the shared list has more matches, a link next to the count searches there too. **Clear** starts the search and its filters over. A globe marks a shared channel, and a note icon your notes or tags on one.
-- **Shared list:** opened from its own item in the navigation. As the maintainer, open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who uses the channel. Corrections are made one channel at a time.
+- **Shared list:** for the maintainer (an admin, on a server with accounts), opened from its own item in the navigation. Open a channel to correct it (its frequencies, tones, location, curated tags, notes, organizations, and nodes) or to set its status (off the air with a note and an expected-back date, retired with its replacement, or active). Each correction asks for a reason and reaches everyone who uses the channel. Corrections are made one channel at a time.
 - **Map:** channels with a location, and how far each reaches. The map background comes from OpenStreetMap, so it needs an internet connection; everything else works without one.
 - **Radios:** the list marks a radio with an open draft, one that needs programming, and one a sync would change. A radio's **Revisions** tab lists its revisions, saves one, compares one with now, and restores one into the draft (see [Revisions and programming](#revisions-and-programming)). Each radio's changes go to its draft, with **Save draft** and **Discard draft** (see [Drafts](#drafts)); each radio's memories as they'll be programmed, with warnings, scan switches, and moves. Search them as you would channels, filter by this radio's own settings (scan, power, overrides, how the name fit, and how it's programmed), and see in the Programmed column, and the count above the list, which memories aren't programmed (struck through, with no number, as on the programmed radio), which are receive-only, and which carry only their transmit tone, and select several (shift-click selects a range) to set scan or power, or take them off the radio; memories are grouped by section, with each section's memory range and sources, and you drag memories within and between sections (while dragging, a bar at the top of the window takes a memory to any section, and the page scrolls near the window's edges), and drag sections by their handles to reorder them (a menu on each memory moves it too); **Add section** and each section's edit button set its name, start, size or end, order, and whether it's the default, or merge it into another (or drag a section onto the **Merge into** bar that appears while dragging it); selected memories move to a section with **Move to section**; its sources, with a preview of what a new source would add before you add it; sync with a preview; the programming file to download; **Copy**, which makes a new radio from this one for another model; the **⋯** menu, to edit the radio's settings (name, default power, duplicate names, name length, and notes) or delete it, which needs its name typed and leaves its channels in the library; and **Compare**: with another radio, by channel, adding what the other has; or with the radio's file, which reads the radio's current file and lets you choose, memory by memory, a matching channel, keeping it as programmed, or taking the radio's changes; **Ignore memory numbers** makes it a first import that only checks everything on the radio is in rflib. On the Channels page, **Add search as source** puts the current search on a radio as a source, with the same preview.
-- **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries to edit, and organizations with what they run. Each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
+- **Systems, Plans, and Organizations:** the shared list's systems with a map of their links, plans laid out as ICS 205 with their entries, and organizations with what they run. The maintainer edits them; each change asks for a reason and shows in the page's history. A radio's Sources tab adds a plan as a source.
 - **Import:** a file, its options, a dry-run preview, then the import.
 - **Built-in lists** (under the Shared list, for the maintainer) and **shared changes**, as `rflib seed update` and `rflib shared changes` do. Each list shows whether the shared list is up to date with it; reviewing an update lists the channels to add, update, and retire, and any correction it keeps.
 
-The switch at the top moves between **My library** (the default library) and the **Shared list**. Once you have more than one library of your own, it becomes a list of their names.
-
-When the server needs a token (`$RFLIB_API_TOKEN`), the page asks for it once and keeps it in the browser.
+When the server needs a token (`$RFLIB_API_TOKEN`), the page asks for it once and keeps it in the browser. On a server with accounts, the page asks you to sign in or make an account instead (see [Accounts](#accounts)), and the menu at the top right changes your display name, email, and password, or signs you out.
 
 Building the interface needs Node.js: `make web` builds it into `web/dist`, and `make build` then embeds it. An rflib built without it serves a page saying so. See [Development](#development).
 
@@ -762,12 +758,30 @@ curl -H "Authorization: Bearer s3cret" 'localhost:8080/api/v1/libraries/default/
 ```
 
 - **The description:** `GET /api/v1/openapi.yaml` is the OpenAPI document, which lists every endpoint and shape. Its source is `internal/api/openapi.yaml`, and the tests hold every route and response to it.
-- **Authentication:** with `$RFLIB_API_TOKEN` set, every request but `/health` and the document needs `Authorization: Bearer TOKEN`. Serving on anything but a loopback address requires a token.
+- **Authentication:** with `$RFLIB_API_TOKEN` set, every request but `/health` and the document needs `Authorization: Bearer TOKEN`. Serving on anything but a loopback address requires a token. On a server with accounts, `POST /auth/signin` sets a session cookie instead, `GET /auth` says who's signed in, and a change sent from a browser must come from the server's own pages (see [Accounts](#accounts)).
 - **Resources:** everything lives under `/api/v1/libraries/{lib}/`: `channels` (with `bulk-update`, `bulk-status`, `relink`, and `copy`; channels are retired, never deleted, and `hide_retired` lists them as the Channels page does; a shared channel's ID gives your view of it, and saving it saves your notes, tags, and short names), `radios` (memories, channels, overrides, sources, sync, `draft`, `revisions`, and export, which saves a revision when the radio changed; changes to a radio's list go to its draft, as the spec's introduction describes), `searches`, `imports/{format}`, `exports/{format}`, `shared` (convert, changes, ack, and relink), and `feed`. `organizations`, `systems`, and `plans` (each with `history`), which live in the shared list, and `models`, `profiles`, `seeds` (with `update`), and `tags` sit beside `libraries`.
 - **Values:** frequencies are exact integer Hz, and tones use the library's syntax (`ctcss:100.000`, `dcs:023`). Queries are the same as the CLI's, in a `q` parameter or a `query` field. Channel IDs can be shortened to a unique prefix.
 - **Changes:** `PATCH` changes only the fields given, and `null` clears `tx_hz` and `location`. Changes to the `shared` library, organizations, systems, and plans need a `reason`.
-- **Errors** are `{"error": {"code", "message"}}`: 400 for a request to fix, 401 without a valid token, 403 for everyday changes to the shared library, 404, 409 for a name in use, and 500 for anything else (the detail goes to the server's log).
+- **Errors** are `{"error": {"code", "message"}}`: 400 for a request to fix, 401 without a valid token or session, 403 for everyday changes to the shared library and for what your role doesn't allow, 404, 409 for a name in use, 429 after too many failed sign-ins, and 500 for anything else (the detail goes to the server's log).
 - **The feed:** `GET /libraries/shared/feed?since=CURSOR` returns shared channels changed since a previous response's `cursor`. It's how a local copy will keep up with a hosted shared list.
+
+## Accounts
+
+By default, `rflib serve` serves one library, yours, to whoever has the token. To host rflib for other people, start it with accounts: each person signs in and has a library of their own.
+
+```sh
+./rflib user add K7ABC --admin                     # the first account; it takes the library you have now
+./rflib serve --accounts --signup invite --addr :8080 --behind-tls
+./rflib user invite                                # a code that lets one person register
+```
+
+- **Accounts:** you sign in with a callsign or a username. rflib checks a callsign's form, but not that you hold it. Each account gets its own library, named after it, holding its channels, notes, radios, and saved searches. No one else sees it, except an admin.
+- **Roles:** a **member** uses their own library and reads the shared list, with its organizations, systems, and plans. An **admin** also maintains the shared list (corrections, built-in lists, organizations, systems, and plans) and the accounts. The shared list's history records who made each change.
+- **Sign-up:** `--signup` says who may register from the sign-in page: `open` (anyone who can reach the server), `invite` (with a code from `rflib user invite`, good for one sign-up for two weeks), or `closed` (the default: only accounts from `rflib user add`).
+- **Administration** works on the database directly, on the server: `rflib user list`, `add`, `role` (`--admin`, `--member`, `--disable`, or `--enable`), `passwd` (for someone who forgot their password, since rflib sends no email; it signs them out everywhere), `remove` (which deletes the account's library), and `invite`. The last admin can't be demoted or removed.
+- **HTTPS:** signing in sends a password, and every request after it a session cookie, so off this machine rflib needs HTTPS. rflib doesn't serve HTTPS itself. Put it behind a proxy that does, such as Traefik or Caddy, and pass `--behind-tls`: the session cookie is then sent only over HTTPS, and rflib takes each client's address from the proxy's `X-Forwarded-For` to slow repeated failed sign-ins. Where HTTPS isn't possible, such as on an AREDN mesh network, `--plain-http` serves sign-in over plain HTTP anyway. Anyone on the path can then read passwords and take sessions, so use a password you use nowhere else.
+- **Sessions** last 30 days from when they were last used. Changing your password signs out your other sessions.
+- **The CLI** still works on the database directly, as the admin, on the admin's library. Scripts against a server with accounts, and personal API tokens, come later. Until then, a server with accounts doesn't use `$RFLIB_API_TOKEN`.
 
 ## Development
 

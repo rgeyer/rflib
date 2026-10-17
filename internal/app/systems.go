@@ -20,6 +20,15 @@ func (s *Service) records(ctx context.Context) (store.Library, error) {
 	return s.sharedLibrary(ctx)
 }
 
+// editRecords returns the shared library for a change to its
+// organizations, systems, or plans, which only an admin makes.
+func (s *Service) editRecords(ctx context.Context) (store.Library, error) {
+	if err := maintaining(ctx); err != nil {
+		return nil, err
+	}
+	return s.sharedLibrary(ctx)
+}
+
 // Revision kinds for RecordHistory.
 const (
 	KindOrganization = "organization"
@@ -99,7 +108,7 @@ func (s *Service) RecordHistory(ctx context.Context, kind, ref string) ([]domain
 // --- organizations ---
 
 func (s *Service) CreateOrg(ctx context.Context, o domain.Organization, reason string) (domain.Organization, error) {
-	lib, err := s.records(ctx)
+	lib, err := s.editRecords(ctx)
 	if err != nil {
 		return o, err
 	}
@@ -123,7 +132,7 @@ func (s *Service) ListOrgs(ctx context.Context) ([]domain.Organization, error) {
 }
 
 func (s *Service) UpdateOrg(ctx context.Context, o domain.Organization, reason string) (domain.Organization, error) {
-	lib, err := s.records(ctx)
+	lib, err := s.editRecords(ctx)
 	if err != nil {
 		return o, err
 	}
@@ -136,7 +145,7 @@ func (s *Service) DeleteOrg(ctx context.Context, ref string) error {
 	if err != nil {
 		return err
 	}
-	lib, err := s.records(ctx)
+	lib, err := s.editRecords(ctx)
 	if err != nil {
 		return err
 	}
@@ -188,7 +197,7 @@ func (s *Service) OrgDetail(ctx context.Context, ref string) (OrgDetail, error) 
 // --- systems ---
 
 func (s *Service) CreateSystem(ctx context.Context, x domain.System, reason string) (domain.System, error) {
-	lib, err := s.records(ctx)
+	lib, err := s.editRecords(ctx)
 	if err != nil {
 		return x, err
 	}
@@ -212,7 +221,7 @@ func (s *Service) ListSystems(ctx context.Context) ([]domain.System, error) {
 }
 
 func (s *Service) UpdateSystem(ctx context.Context, x domain.System, reason string) (domain.System, error) {
-	lib, err := s.records(ctx)
+	lib, err := s.editRecords(ctx)
 	if err != nil {
 		return x, err
 	}
@@ -224,7 +233,7 @@ func (s *Service) DeleteSystem(ctx context.Context, ref string) error {
 	if err != nil {
 		return err
 	}
-	lib, err := s.records(ctx)
+	lib, err := s.editRecords(ctx)
 	if err != nil {
 		return err
 	}
@@ -274,7 +283,7 @@ func (s *Service) systemChannels(ctx context.Context, ref string) (map[string]bo
 // --- plans ---
 
 func (s *Service) CreatePlan(ctx context.Context, p domain.Plan, reason string) (domain.Plan, error) {
-	lib, err := s.records(ctx)
+	lib, err := s.editRecords(ctx)
 	if err != nil {
 		return p, err
 	}
@@ -303,7 +312,7 @@ func (s *Service) ListPlans(ctx context.Context) ([]domain.Plan, error) {
 // UpdatePlan saves a plan and its entries after checking that it lays out
 // (see PlanRows).
 func (s *Service) UpdatePlan(ctx context.Context, p domain.Plan, reason string) (domain.Plan, error) {
-	lib, err := s.records(ctx)
+	lib, err := s.editRecords(ctx)
 	if err != nil {
 		return p, err
 	}

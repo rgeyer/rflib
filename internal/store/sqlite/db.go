@@ -51,9 +51,14 @@ func Open(path string) (*DB, error) {
 
 func (d *DB) Close() error { return d.db.Close() }
 
+// q runs the database's own statements whether or not their context is
+// canceled, as libraries' do (see DB.Library): a statement interrupted on
+// the one connection could leave it unable to commit the next transaction.
+func (d *DB) q() uncanceledDB { return uncanceledDB{d.db} }
+
 func (d *DB) Ready(ctx context.Context) error {
 	var version sql.NullInt64
-	if err := d.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+	if err := d.q().QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		return fmt.Errorf("library is not initialized; run rflib init: %w", err)
 	}
 	if !version.Valid || version.Int64 < latestVersion() {
@@ -266,6 +271,20 @@ CREATE TABLE annotation_revisions (library_id TEXT NOT NULL REFERENCES libraries
 	// taken to hold what rflib has now.
 	{version: 20, after: firstRadioRevisions, sql: `
 CREATE TABLE radio_revisions (radio_id TEXT NOT NULL REFERENCES radios(id) ON DELETE CASCADE, revision INTEGER NOT NULL, saved_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', exported INTEGER NOT NULL DEFAULT 0, record TEXT NOT NULL, PRIMARY KEY(radio_id, revision));`},
+	// Accounts, for a server with them (see domain.User): users, the ways
+	// they sign in (identities, by method and subject; a local password's
+	// subject is the user's ID), browser sessions and invitations by their
+	// tokens' hashes, and each private library's owner. A database without
+	// accounts has no users and no owners.
+	{version: 21, sql: `
+CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, display_name TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', role TEXT NOT NULL, disabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE TABLE identities (method TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, secret TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY(method, subject));
+CREATE INDEX idx_identities_user ON identities(user_id);
+CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+CREATE TABLE invites (code_hash TEXT PRIMARY KEY, created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_by TEXT REFERENCES users(id) ON DELETE SET NULL, used_at TEXT);
+ALTER TABLE libraries ADD COLUMN owner_id TEXT REFERENCES users(id);
+CREATE UNIQUE INDEX idx_libraries_owner ON libraries(owner_id) WHERE owner_id IS NOT NULL;`},
 }
 
 // firstRadioRevisions finishes migration 20: each radio (not a draft) gets
@@ -697,11 +716,11 @@ func latestVersion() int64 {
 }
 
 func (d *DB) Migrate(ctx context.Context) error {
-	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
+	if _, err := d.q().ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
 		return fmt.Errorf("create migration table: %w", err)
 	}
 	var version sql.NullInt64
-	if err := d.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+	if err := d.q().QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	if !version.Valid {
@@ -731,10 +750,10 @@ func (d *DB) migrate(ctx context.Context, m migration) error {
 	if m.rebuild {
 		// The pool has one connection, so the pragma applies to the
 		// transaction below. It can't change inside a transaction.
-		if _, err := d.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		if _, err := d.q().ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
 			return err
 		}
-		defer func() { _, _ = d.db.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`) }()
+		defer func() { _, _ = d.q().ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`) }()
 	}
 	return d.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
@@ -854,7 +873,7 @@ func parseTime(s string) time.Time {
 
 // --- libraries ---
 
-const libraryColumns = `id,name,description,kind,is_default,created_at,updated_at`
+const libraryColumns = `id,name,description,kind,is_default,created_at,updated_at,coalesce(owner_id,'')`
 
 // sharedKind is the kind of the shared library.
 const sharedKind = "shared"
@@ -875,7 +894,7 @@ func (d *DB) CreateLibrary(ctx context.Context, lib domain.Library) (domain.Libr
 				return err
 			}
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO libraries (`+libraryColumns+`) VALUES (?,?,?,'',?,?,?)`,
+		_, err := tx.ExecContext(ctx, `INSERT INTO libraries (id,name,description,kind,is_default,created_at,updated_at) VALUES (?,?,?,'',?,?,?)`,
 			lib.ID, lib.Name, lib.Description, lib.Default, timestamp(lib.CreatedAt), timestamp(lib.UpdatedAt))
 		return conflict(err, "a library named %q", lib.Name)
 	})
@@ -890,7 +909,7 @@ func (d *DB) GetLibrary(ctx context.Context, idOrName string) (domain.Library, e
 	if idOrName == "" {
 		q, args, idOrName = `SELECT `+libraryColumns+` FROM libraries WHERE is_default=1`, nil, "default"
 	}
-	lib, err := scanLibrary(d.db.QueryRowContext(ctx, q, args...))
+	lib, err := scanLibrary(d.q().QueryRowContext(ctx, q, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return lib, fmt.Errorf("library %q: %w", idOrName, store.ErrNotFound)
 	}
@@ -898,7 +917,7 @@ func (d *DB) GetLibrary(ctx context.Context, idOrName string) (domain.Library, e
 }
 
 func (d *DB) ListLibraries(ctx context.Context) ([]domain.Library, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT `+libraryColumns+` FROM libraries ORDER BY name`)
+	rows, err := d.q().QueryContext(ctx, `SELECT `+libraryColumns+` FROM libraries ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -951,10 +970,10 @@ func (d *DB) UpdateLibrary(ctx context.Context, lib domain.Library) (domain.Libr
 
 func (d *DB) DeleteLibrary(ctx context.Context, id string) error {
 	var isDefault bool
-	if err := d.db.QueryRowContext(ctx, `SELECT is_default FROM libraries WHERE id=?`, id).Scan(&isDefault); err == nil && isDefault {
+	if err := d.q().QueryRowContext(ctx, `SELECT is_default FROM libraries WHERE id=?`, id).Scan(&isDefault); err == nil && isDefault {
 		return fmt.Errorf("the default library can't be deleted; make another library the default first: %w", store.ErrConflict)
 	}
-	res, err := d.db.ExecContext(ctx, `DELETE FROM libraries WHERE id=?`, id)
+	res, err := d.q().ExecContext(ctx, `DELETE FROM libraries WHERE id=?`, id)
 	if err != nil {
 		return fmt.Errorf("delete library: %w", err)
 	}
@@ -969,7 +988,7 @@ type scanner interface{ Scan(...any) error }
 func scanLibrary(r scanner) (domain.Library, error) {
 	var lib domain.Library
 	var created, updated, kind string
-	if err := r.Scan(&lib.ID, &lib.Name, &lib.Description, &kind, &lib.Default, &created, &updated); err != nil {
+	if err := r.Scan(&lib.ID, &lib.Name, &lib.Description, &kind, &lib.Default, &created, &updated, &lib.OwnerID); err != nil {
 		return lib, err
 	}
 	lib.Shared = kind == sharedKind

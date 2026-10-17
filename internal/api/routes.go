@@ -30,6 +30,13 @@ func (s *server) routes() []route {
 		{"GET", "/health", s.health, true},
 		{"GET", "/openapi.yaml", s.spec, true},
 
+		{"GET", "/auth", s.authInfo, true},
+		{"POST", "/auth/signin", s.signIn, true},
+		{"POST", "/auth/register", s.register, true},
+		{"POST", "/auth/signout", s.signOut, true},
+		{"PATCH", "/auth/me", s.updateMe, false},
+		{"POST", "/auth/password", s.changePassword, false},
+
 		{"GET", "/libraries", s.listLibraries, false},
 		{"GET", L, s.lib(s.getLibrary), false},
 
@@ -151,9 +158,18 @@ func (s *server) listLibraries(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	out := make([]Library, len(libs))
-	for i, l := range libs {
-		out[i] = newLibrary(l)
+	// A signed-in user sees their own library, as the default, and the
+	// shared list.
+	u, signedIn := app.UserOf(ctx(r))
+	out := []Library{}
+	for _, l := range libs {
+		if signedIn {
+			if !l.Shared && l.ID != u.LibraryID {
+				continue
+			}
+			l.Default = l.ID == u.LibraryID
+		}
+		out = append(out, newLibrary(l))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"libraries": out})
 	return nil
