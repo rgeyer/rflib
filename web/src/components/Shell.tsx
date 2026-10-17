@@ -34,6 +34,7 @@ export function Shell() {
     { to: "import", label: "Import", icon: IconFileImport },
   ];
   const pending = changes.data?.changes.length ?? 0;
+  const health = useQuery({ queryKey: ["health"], queryFn: () => call(api.GET("/health")), staleTime: Infinity });
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 220, breakpoint: "sm", collapsed: { mobile: !opened } }} padding="md">
       <AppShell.Header>
@@ -86,7 +87,7 @@ export function Shell() {
           </>
         )}
         <Text size="xs" c="dimmed" mt="auto" p="xs">
-          API: <a href="/api/v1/openapi.yaml">/api/v1</a>
+          {health.data && <>rflib {health.data.version} · </>}API: <a href="/api/v1/openapi.yaml">/api/v1</a>
         </Text>
       </AppShell.Navbar>
       <AppShell.Main>

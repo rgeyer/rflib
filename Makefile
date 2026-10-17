@@ -1,4 +1,4 @@
-.PHONY: build test vet lint check web web-deps web-check web-test e2e
+.PHONY: build test vet lint check web web-deps web-check web-test e2e dist
 
 # build embeds the web interface when it has been built (make web).
 build:
@@ -28,3 +28,9 @@ web-check: web-deps
 # e2e builds everything and runs the browser smoke tests against rflib serve.
 e2e: web build
 	cd web && npm run browsers && npm run e2e
+
+# dist builds the release archives for every system into dist/, with the web
+# interface built in: make dist VERSION=v0.1.0. The release workflow runs it
+# for each tag.
+dist: web
+	go run ./tools/dist -version $(VERSION)

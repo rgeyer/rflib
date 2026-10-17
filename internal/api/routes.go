@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/buildinfo"
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/importer"
 	"github.com/ryan/rflib/internal/model"
@@ -141,7 +142,7 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) error {
 	if err := s.st.Ready(ctx(r)); err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": buildinfo.Get().String()})
 	return nil
 }
 

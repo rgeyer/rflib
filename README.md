@@ -4,7 +4,40 @@
 
 It's one program, `rflib`, with a command line and a web interface (`rflib serve`), on a single SQLite file. Run it on your own machine, or host it for a club, with an account for each person (see [Accounts](#accounts)).
 
+## Install
+
+Download the archive for your system from the [latest release](https://github.com/rgeyer/rflib/releases/latest) and unpack it. It holds `rflib` (`rflib.exe` on Windows), this README, and the license. There's no installer: put `rflib` wherever you like, such as a folder on your `PATH`.
+
+| System | Archive |
+|---|---|
+| Windows (most PCs) | `windows-amd64.zip` |
+| Windows on ARM (such as Snapdragon laptops) | `windows-arm64.zip` |
+| macOS on Apple silicon (M1 and later) | `macos-arm64.tar.gz` |
+| macOS on Intel | `macos-amd64.tar.gz` |
+| Linux on x86-64 | `linux-amd64.tar.gz` |
+| Linux on 64-bit ARM (such as a Raspberry Pi 4 or 5 with a 64-bit OS) | `linux-arm64.tar.gz` |
+| Linux on 32-bit ARM (older Raspberry Pis, or a 32-bit OS) | `linux-armv7.tar.gz` |
+
+`SHA256SUMS` in the release lists each archive's checksum: `sha256sum -c SHA256SUMS --ignore-missing` checks the one you downloaded (on macOS, `shasum -a 256 -c`; on Windows, compare with `Get-FileHash` in PowerShell).
+
+**The binaries aren't signed,** so Windows and macOS warn the first time you run one:
+
+- **Windows:** before unpacking, right-click the zip, choose **Properties**, tick **Unblock**, and choose **OK** (or run `Unblock-File` on it in PowerShell). If Windows still shows "Windows protected your PC", choose **More info**, then **Run anyway**.
+- **macOS:** after unpacking, run `xattr -d com.apple.quarantine rflib` in Terminal, in the folder you unpacked it into. Otherwise, when macOS says it can't verify the developer, open **System Settings > Privacy & Security** and choose **Open Anyway** for `rflib`.
+- **Linux:** nothing to do; the archive keeps `rflib` executable.
+
+**First run.** `rflib` runs in a terminal (PowerShell on Windows, Terminal on macOS). Make your library, start the web interface, and open http://127.0.0.1:8080/ in your browser:
+
+```sh
+./rflib init     # on Windows: .\rflib.exe init
+./rflib serve    # stop it with Ctrl+C
+```
+
+`rflib version` says which rflib you have; include it when you report a problem.
+
 ## Build
+
+To build rflib from source instead:
 
 ```sh
 make build    # or: go build -o rflib ./cmd/rflib
@@ -14,7 +47,7 @@ Building needs Go. The web interface also needs Node.js to build; without it, `r
 
 ## Library location
 
-Every command takes `--db PATH`. When it is omitted, `rflib` uses `$RFLIB_DB`, then `$XDG_DATA_HOME/rflib/library.db` (`~/.local/share/rflib/library.db` by default, and `%USERPROFILE%\.local\share\rflib\library.db` on Windows). The examples below set `RFLIB_DB` once instead of repeating `--db`, and run `./rflib` from a Unix shell. On Windows, run `rflib.exe`, and set the variable with `$env:RFLIB_DB = "radio-library.db"` in PowerShell or `set RFLIB_DB=radio-library.db` in the Command Prompt.
+Every command takes `--db PATH`. When it is omitted, `rflib` uses `$RFLIB_DB`, then `$XDG_DATA_HOME/rflib/library.db` (`~/.local/share/rflib/library.db` by default, and `%LOCALAPPDATA%\rflib\library.db` on Windows). The examples below set `RFLIB_DB` once instead of repeating `--db`, and run `./rflib` from a Unix shell. On Windows, run `rflib.exe`, and set the variable with `$env:RFLIB_DB = "radio-library.db"` in PowerShell or `set RFLIB_DB=radio-library.db` in the Command Prompt.
 
 The CLI only creates a database when you explicitly initialize one. After upgrading `rflib`, commands may report that the library schema is out of date; re-run `init` to upgrade it in place. Back up the database file first, since an upgrade can convert data.
 
@@ -296,7 +329,7 @@ Changes to a radio's list (its channels, sections, and sources, and sync) go to 
 | `radioddity-uv5g` | CHIRP: Radioddity UV-5G | 0-127 | 7, upper case | Low 1 W, High 4 W | FM, NFM |
 | `chirp-generic` | CHIRP: any radio it supports | 1-999 | unlimited | left to CHIRP | not checked |
 
-`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, modes, and where the facts came from: CHIRP's driver source, or the radio's operating manual. `rflib model list` also lists your own models and the directory they're read from.
+`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, modes, and where the facts came from: CHIRP's driver source, or the radio's operating manual. `rflib model list` also lists your own models and the directory they're read from: `models` in rflib's settings folder, which is `~/.config/rflib` on Linux, `~/Library/Application Support/rflib` on macOS, and `%AppData%\rflib` on Windows (or `$XDG_CONFIG_HOME/rflib` anywhere, when that's set).
 
 ### Radios CHIRP supports but rflib doesn't
 
@@ -656,7 +689,7 @@ Profiles are YAML. Start from a built-in:
 ./rflib export profile my-radio.yaml
 ```
 
-To use a profile by name, put it in the directory `rflib profile list` prints (`~/.config/rflib/profiles` on Linux). A profile there with a built-in's name replaces the built-in, which is how to fix a format locally.
+To use a profile by name, put it in the directory `rflib profile list` prints: `profiles` in rflib's settings folder (see [Models](#models)). A profile there with a built-in's name replaces the built-in, which is how to fix a format locally.
 
 Each column names a `source` (a library value) and how to write it:
 
@@ -796,6 +829,18 @@ make e2e        # rebuild everything (replacing ./rflib) and run the browser smo
 The web interface lives in `web/`: React, TypeScript, Vite, Mantine, and TanStack Query. Its API types are generated from `internal/api/openapi.yaml` (`npm run gen`, run by every build), so an API change that breaks the interface fails its type check. For development, run `rflib serve` and `npm run dev` in `web/`; Vite serves the interface and passes `/api` through.
 
 The CLI (`cmd/rflib`) parses flags and prints results, and the HTTP API (`internal/api`) decodes requests and encodes responses. The operations themselves live in `internal/app`, which both share. Errors made by a request are `domain.ErrInvalid` (`domain.Invalidf`), which the API reports as 400; other failures are 500. `internal/app` works on one library through the `store.Store` and `store.Library` interfaces (`internal/store`); `internal/store/sqlite` implements them. Any other backend must pass the contract tests in `internal/store/storetest`.
+
+### Releases
+
+Versions are `v0.MINOR.PATCH` until 1.0. Pushing a tag makes a release: the `Release` workflow runs the tests, builds every archive with `make dist`, and publishes them, with their checksums and notes drawn from the pull requests merged since the last release.
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+make dist VERSION=v0.1.0    # the same archives, locally, into dist/
+```
+
+The `CI` workflow checks every pull request: Go's checks on Linux, macOS, and Windows, the linter, the web interface's checks, and the browser tests.
 
 ### Maintaining built-in data
 
