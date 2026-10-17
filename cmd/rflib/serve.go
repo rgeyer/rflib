@@ -41,12 +41,17 @@ machine it needs HTTPS. rflib doesn't serve HTTPS itself: put it behind a
 proxy that does (such as Traefik or Caddy) and pass --behind-tls. Where HTTPS
 isn't possible, such as on a mesh network, --plain-http serves sign-in over
 plain HTTP anyway, where anyone on the path can read passwords and take
-sessions.`}
+sessions.
+
+The web interface links to rflib's source, as its license (AGPL-3.0) asks
+of a hosted copy: this build's release or commit. When serving a modified
+rflib, publish your changes and point the link at them with --source-url.`}
 	cmd.Flags().String("addr", "127.0.0.1:8080", "Address to listen on")
 	cmd.Flags().Bool("accounts", false, "Have people sign in, each with their own library")
 	cmd.Flags().String("signup", "closed", "With --accounts, who may register: open, invite, or closed")
 	cmd.Flags().Bool("behind-tls", false, "With --accounts, rflib is behind a proxy serving HTTPS")
 	cmd.Flags().Bool("plain-http", false, "With --accounts, allow sign-in over plain HTTP, unencrypted")
+	cmd.Flags().String("source-url", "", "Where this rflib's source is, for the web interface's Source link (default: this build's release or commit); set it when serving a modified rflib")
 	cmd.MarkFlagsMutuallyExclusive("behind-tls", "plain-http")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr := getString(cmd, "addr")
@@ -93,7 +98,7 @@ sessions.`}
 				}
 			}
 			mux := http.NewServeMux()
-			mux.Handle(api.Prefix+"/", api.New(d, api.Options{Token: token, Logger: logger, Accounts: accounts}))
+			mux.Handle(api.Prefix+"/", api.New(d, api.Options{Token: token, Logger: logger, Accounts: accounts, Source: getString(cmd, "source-url")}))
 			mux.Handle("/", web.Handler())
 			srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 			ln, err := net.Listen("tcp", addr)

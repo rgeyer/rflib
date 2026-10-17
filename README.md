@@ -1,5 +1,7 @@
 # rflib
 
+By Ryan Geyer, W6FAM.
+
 `rflib` keeps your analog radio channels in one library and programs your radios from it. You collect channels once, your own and those on a shared list of repeaters and common frequencies, then build each radio from them and export its programming file for CHIRP or the manufacturer's software (Yaesu ADMS). When a shared channel changes, such as a repeater's new tone, the radios that use it show they need programming again.
 
 It's one program, `rflib`, with a web interface and a command line, on a single SQLite file. Run it on your own computer, or host it for a club, with an account for each person.
@@ -81,6 +83,6 @@ The [documentation](docs/README.md) covers everything else: searching, radios' s
 
 ## License
 
-Copyright (C) 2026 Ryan Geyer.
+Copyright (C) 2026 Ryan Geyer, W6FAM.
 
-rflib is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version (AGPL-3.0-or-later); see [LICENSE](LICENSE). In short: anyone who distributes a modified rflib, or runs one as a service for others (such as a club's instance), must make its source available to those who receive or use it. The built-in channel lists and shared list data aren't covered by a separate data license yet.
+rflib is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version (AGPL-3.0-or-later); see [LICENSE](LICENSE). In short: anyone who distributes a modified rflib, or runs one as a service for others (such as a club's instance), must make its source available to those who receive or use it. The web interface links to the source of the rflib it's running, on the sign-in page and in the sidebar; someone serving a modified rflib points that link at their own source with `rflib serve --source-url`. The built-in channel lists and shared list data aren't covered by a separate data license yet.
