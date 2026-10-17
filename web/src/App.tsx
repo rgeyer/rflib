@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { api, call, type Library } from "./api/client";
+import { SignIn } from "./components/Account";
 import { Shell } from "./components/Shell";
+import { useAuth } from "./lib/auth";
 import { enc } from "./lib/library";
 import { Changes } from "./pages/Changes";
 import { Channels } from "./pages/Channels";
@@ -19,6 +21,10 @@ import { SystemPage, Systems } from "./pages/Systems";
 const MapPage = lazy(() => import("./pages/Map").then((m) => ({ default: m.MapPage })));
 
 export function App() {
+  const auth = useAuth();
+  // A server with accounts shows nothing but sign-in until someone signs in.
+  if (auth.isPending) return <Loader m="xl" />;
+  if (auth.data?.accounts && !auth.data.user) return <SignIn />;
   return (
     <Routes>
       <Route path="/" element={<Home />} />

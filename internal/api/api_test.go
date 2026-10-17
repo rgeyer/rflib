@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
@@ -30,9 +31,21 @@ type client struct {
 	token  string
 	// draft, when set, is sent as X-Rflib-Draft, as the web does.
 	draft string
+	// http keeps the client's cookies; origin, when set, is sent as
+	// Origin, as a browser does.
+	http   *http.Client
+	origin string
 }
 
 func newClient(t *testing.T, token string) *client {
+	t.Helper()
+	c, _ := newServer(t, Options{Token: token})
+	c.token = token
+	return c
+}
+
+// newServer serves a new database with opts, and returns a client of it.
+func newServer(t *testing.T, opts Options) (*client, *sqlite.DB) {
 	t.Helper()
 	d, err := sqlite.Open(filepath.Join(t.TempDir(), "api.db"))
 	if err != nil {
@@ -46,7 +59,7 @@ func newClient(t *testing.T, token string) *client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(New(d, Options{Token: token}))
+	srv := httptest.NewServer(New(d, opts))
 	t.Cleanup(srv.Close)
 	doc.Servers = openapi3.Servers{{URL: srv.URL + Prefix}}
 	if err := doc.Validate(context.Background()); err != nil {
@@ -56,7 +69,25 @@ func newClient(t *testing.T, token string) *client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &client{t: t, srv: srv, router: router, token: token}
+	c := &client{t: t, srv: srv, router: router}
+	c.http = c.newHTTP()
+	return c, d
+}
+
+// newHTTP is an HTTP client with a cookie jar of its own.
+func (c *client) newHTTP() *http.Client {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return &http.Client{Jar: jar}
+}
+
+// another is a client of the same server with no cookies: another browser.
+func (c *client) another() *client {
+	o := &client{t: c.t, srv: c.srv, router: c.router}
+	o.http = o.newHTTP()
+	return o
 }
 
 // do sends a request with a JSON (or raw string) body, checks it and the
@@ -96,6 +127,9 @@ func (c *client) do(method, path string, body any, want int, out any) http.Heade
 	if c.draft != "" {
 		req.Header.Set(draftHeader, c.draft)
 	}
+	if c.origin != "" {
+		req.Header.Set("Origin", c.origin)
+	}
 	route, params, err := c.router.FindRoute(req)
 	if err != nil {
 		c.t.Fatalf("%s %s isn't in the spec: %v", method, path, err)
@@ -106,7 +140,7 @@ func (c *client) do(method, path string, body any, want int, out any) http.Heade
 		c.t.Fatalf("%s %s: the request doesn't match the spec: %v", method, path, err)
 	}
 	req.Body = io.NopCloser(bytes.NewReader(data))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		c.t.Fatal(err)
 	}

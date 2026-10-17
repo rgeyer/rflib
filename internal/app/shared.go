@@ -657,6 +657,9 @@ func (s *Service) UpdateShared(ctx context.Context, c domain.Channel, reason str
 	if !s.info.Shared {
 		return c, nil, errNotShared
 	}
+	if err := maintaining(ctx); err != nil {
+		return c, nil, err
+	}
 	if err := domain.ValidateSharedTags(domain.NormalizeTags(c.Tags)); err != nil {
 		return c, nil, err
 	}
@@ -699,6 +702,13 @@ func (s *Service) SetStatuses(ctx context.Context, sel Selection, ch StatusChang
 	if ch.ReplacedBy != "" && ch.Status != domain.StatusRetired {
 		return nil, domain.Invalidf("a replacement is only for retired channels")
 	}
+	if s.info.Shared {
+		if err := maintaining(ctx); err != nil {
+			return nil, err
+		}
+	} else if err := s.writable(); err != nil {
+		return nil, err
+	}
 	cs, err := s.Select(ctx, sel)
 	if err != nil {
 		return nil, err
@@ -740,6 +750,9 @@ func (s *Service) SetStatuses(ctx context.Context, sel Selection, ch StatusChang
 func (s *Service) ImportShared(ctx context.Context, b importer.Batch, opts importer.Options, reason string) (importer.Summary, []string, error) {
 	if !s.info.Shared {
 		return importer.Summary{}, nil, errNotShared
+	}
+	if err := maintaining(ctx); err != nil {
+		return importer.Summary{}, nil, err
 	}
 	if err := domain.ValidateSharedTags(domain.NormalizeTags(opts.Tags)); err != nil {
 		return importer.Summary{}, nil, err

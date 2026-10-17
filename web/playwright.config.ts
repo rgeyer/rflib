@@ -5,5 +5,6 @@ export default defineConfig({
   timeout: 60_000,
   use: { baseURL: "http://127.0.0.1:18765", headless: true },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
+  // serve.mjs also starts a server with accounts, on 18766 (see accounts.spec.ts).
   webServer: { command: "node e2e/serve.mjs", url: "http://127.0.0.1:18765/api/v1/health", reuseExistingServer: false, timeout: 30_000 },
 });

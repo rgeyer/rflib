@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, call, type Channel, type Organization, type RecordRevision, type System } from "../api/client";
+import { useMaintainer } from "../lib/auth";
 import { History, ReasonModal } from "../components/Records";
 import { enc, useLib } from "../lib/library";
 import { failed, ok } from "../lib/notify";
@@ -28,6 +29,7 @@ function OrgFields(props: { form: OrgForm; onChange: (f: OrgForm) => void }) {
 
 /** Orgs lists the organizations that run repeaters and systems. */
 export function Orgs() {
+  const maintainer = useMaintainer();
   const lib = useLib();
   const navigate = useNavigate();
   const client = useQueryClient();
@@ -47,7 +49,7 @@ export function Orgs() {
     <Stack>
       <Group justify="space-between">
         <Title order={2}>Organizations</Title>
-        <Button onClick={() => setForm({ name: "", kind: "club", callsign: "", website: "", notes: "" })}>New organization</Button>
+        {maintainer && <Button onClick={() => setForm({ name: "", kind: "club", callsign: "", website: "", notes: "" })}>New organization</Button>}
       </Group>
       <Text size="sm" c="dimmed">
         Who runs or supports the shared list's repeaters and systems. Find their channels with org:NAME.
@@ -92,6 +94,7 @@ export function Orgs() {
 
 /** OrgPage shows an organization and what it runs or supports. */
 export function OrgPage() {
+  const maintainer = useMaintainer();
   const lib = useLib();
   const name = useParams().org ?? "";
   const client = useQueryClient();
@@ -130,9 +133,11 @@ export function OrgPage() {
           <Badge variant="light">{o.kind}</Badge>
           {o.callsign && <Text c="dimmed">{o.callsign}</Text>}
         </Group>
-        <Button variant="light" onClick={() => setForm({ name: o.name, kind: o.kind, callsign: o.callsign, website: o.website, notes: o.notes })}>
-          Edit
-        </Button>
+        {maintainer && (
+          <Button variant="light" onClick={() => setForm({ name: o.name, kind: o.kind, callsign: o.callsign, website: o.website, notes: o.notes })}>
+            Edit
+          </Button>
+        )}
       </Group>
       {o.website && (
         <Anchor href={o.website} target="_blank" rel="noreferrer">

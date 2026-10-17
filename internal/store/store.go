@@ -36,10 +36,22 @@ func WithChange(ctx context.Context, reason, author string) context.Context {
 	return context.WithValue(ctx, changeKey{}, change{reason, author})
 }
 
-// ChangeOf returns what WithChange attached to ctx.
+// ChangeOf returns what WithChange attached to ctx. Without an author
+// there, it's the one WithAuthor attached.
 func ChangeOf(ctx context.Context) (reason, author string) {
 	c, _ := ctx.Value(changeKey{}).(change)
+	if c.author == "" {
+		c.author, _ = ctx.Value(authorKey{}).(string)
+	}
 	return c.reason, c.author
+}
+
+type authorKey struct{}
+
+// WithAuthor attaches who is making every change under ctx, such as the
+// signed-in user of a request.
+func WithAuthor(ctx context.Context, author string) context.Context {
+	return context.WithValue(ctx, authorKey{}, author)
 }
 
 // Store is a database of libraries.
@@ -67,6 +79,53 @@ type Store interface {
 	// Library returns the library with the given ID. It doesn't check
 	// that the library exists; look it up with GetLibrary first.
 	Library(id string) Library
+
+	Accounts
+}
+
+// Accounts are the users of a server with accounts, their sign-in
+// methods, sessions, and invitations (see domain.User).
+type Accounts interface {
+	// CreateUser stores a user, with passwordHash as their local identity,
+	// in one transaction with their private library: a new one named after
+	// them, or, with opts.Claim, an existing library no one owns (the first
+	// admin takes the default library). With opts.Invite, it spends that
+	// invite (by its code's hash), and fails with ErrNotFound unless the
+	// invite is unused and unexpired.
+	CreateUser(ctx context.Context, u domain.User, passwordHash string, opts NewUser) (domain.User, error)
+	// GetUser looks a user up by ID or name, ignoring case.
+	GetUser(ctx context.Context, idOrName string) (domain.User, error)
+	ListUsers(ctx context.Context) ([]domain.User, error)
+	// UpdateUser saves a user's display name, email, role, and whether
+	// they're disabled.
+	UpdateUser(ctx context.Context, u domain.User) (domain.User, error)
+	// DeleteUser deletes a user, their sessions, and their library with
+	// everything in it.
+	DeleteUser(ctx context.Context, id string) error
+	// PasswordHash returns a user's local password hash; SetPasswordHash
+	// replaces it.
+	PasswordHash(ctx context.Context, userID string) (string, error)
+	SetPasswordHash(ctx context.Context, userID, hash string) error
+
+	CreateSession(ctx context.Context, s domain.Session) error
+	// Session returns an unexpired session by its token's hash.
+	Session(ctx context.Context, tokenHash string) (domain.Session, error)
+	// ExtendSession moves a session's expiry.
+	ExtendSession(ctx context.Context, tokenHash string, expires time.Time) error
+	DeleteSession(ctx context.Context, tokenHash string) error
+	// DeleteSessions signs a user out everywhere, but for keep (a token
+	// hash, or "").
+	DeleteSessions(ctx context.Context, userID, keep string) error
+
+	CreateInvite(ctx context.Context, inv domain.Invite) error
+	ListInvites(ctx context.Context) ([]domain.Invite, error)
+}
+
+// NewUser is how CreateUser makes a user's library and checks their
+// invitation.
+type NewUser struct {
+	Claim  string
+	Invite string
 }
 
 // Library is one library's data. Every lookup is confined to the library:

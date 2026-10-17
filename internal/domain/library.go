@@ -16,7 +16,10 @@ type Library struct {
 	Shared bool
 	// Default marks the library used when none is chosen. There is always
 	// exactly one, and it is never the shared library.
-	Default   bool
+	Default bool
+	// OwnerID is the user whose private library it is, on a server with
+	// accounts; "" for the shared library and in local mode.
+	OwnerID   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

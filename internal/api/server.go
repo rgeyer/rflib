@@ -38,12 +38,16 @@ type Options struct {
 	// Spec is the OpenAPI document served at /api/v1/openapi.yaml; nil
 	// serves the built-in one.
 	Spec []byte
+	// Accounts, when set, puts the API behind sign-in in place of Token.
+	Accounts *AccountOptions
 }
 
 type server struct {
-	st   store.Store
-	opts Options
-	log  *slog.Logger
+	st       store.Store
+	opts     Options
+	log      *slog.Logger
+	accounts *app.Accounts
+	throttle *throttle
 }
 
 // handler is an endpoint: it writes its response, or returns an error for
@@ -61,7 +65,7 @@ func New(st store.Store, opts Options) http.Handler {
 	if opts.Spec == nil {
 		opts.Spec = Spec
 	}
-	s := &server{st: st, opts: opts, log: opts.Logger}
+	s := &server{st: st, opts: opts, log: opts.Logger, accounts: app.NewAccounts(st), throttle: newThrottle()}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -114,7 +118,19 @@ func (s *server) wrap(h handler, public bool) http.Handler {
 				s.fail(w, r, fmt.Errorf("panic: %v", v))
 			}
 		}()
-		if !public && s.opts.Token != "" {
+		if s.opts.Accounts != nil {
+			if err := sameOrigin(r); err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			if !public {
+				var err error
+				if r, err = s.authenticate(r); err != nil {
+					s.fail(w, r, err)
+					return
+				}
+			}
+		} else if !public && s.opts.Token != "" {
 			got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(s.opts.Token)) != 1 {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="rflib"`)
@@ -158,6 +174,10 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		status, code, msg = http.StatusConflict, "conflict", err.Error()
 	case errors.Is(err, app.ErrReadOnly):
 		status, code, msg = http.StatusForbidden, "read_only", err.Error()
+	case errors.Is(err, app.ErrForbidden):
+		status, code, msg = http.StatusForbidden, "forbidden", err.Error()
+	case errors.Is(err, app.ErrUnauthorized):
+		status, code, msg = http.StatusUnauthorized, "unauthorized", err.Error()
 	case errors.As(err, &tooBig):
 		status, code, msg = http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("the request body is over %d bytes", tooBig.Limit)
 	case errors.Is(err, domain.ErrInvalid):

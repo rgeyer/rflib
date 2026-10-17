@@ -4,7 +4,9 @@ import { IconAntenna, IconBroadcast, IconClipboardList, IconFileImport, IconList
 import { useQuery } from "@tanstack/react-query";
 import { NavLink as RouterLink, Outlet } from "react-router-dom";
 import { api, call, type Change } from "../api/client";
+import { useAuth, useMaintainer } from "../lib/auth";
 import { enc, useLib, useLibraries } from "../lib/library";
+import { AccountMenu } from "./Account";
 import { TokenPrompt } from "./TokenPrompt";
 
 export function Shell() {
@@ -12,6 +14,10 @@ export function Shell() {
   const [opened, { toggle, close }] = useDisclosure();
   // Everything but the Shared list item is in the user's own library.
   const { mine, shared } = useLibraries();
+  const auth = useAuth().data;
+  // Members find shared channels from their own Channels page; the shared
+  // list's own view is for correcting it.
+  const maintainer = useMaintainer();
   const home = `/l/${enc(mine ?? lib)}`;
   const changes = useQuery({
     queryKey: ["changes", mine],
@@ -36,11 +42,14 @@ export function Shell() {
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Menu" />
             <Title order={3}>rflib</Title>
           </Group>
-          {lib === shared && (
-            <Badge size="lg" variant="light" leftSection={<IconWorld size={14} />}>
-              Shared list
-            </Badge>
-          )}
+          <Group>
+            {lib === shared && (
+              <Badge size="lg" variant="light" leftSection={<IconWorld size={14} />}>
+                Shared list
+              </Badge>
+            )}
+            {auth?.user && <AccountMenu user={auth.user} />}
+          </Group>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="xs">
@@ -55,7 +64,7 @@ export function Shell() {
           rightSection={pending > 0 ? <Badge size="sm">{pending}</Badge> : null}
           onClick={close}
         />
-        {shared && (
+        {shared && maintainer && (
           <>
             <Divider my="xs" />
             <NavLink
@@ -83,7 +92,7 @@ export function Shell() {
       <AppShell.Main>
         <Outlet />
       </AppShell.Main>
-      <TokenPrompt />
+      {!auth?.accounts && <TokenPrompt />}
     </AppShell>
   );
 }

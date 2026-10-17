@@ -32,9 +32,18 @@ type Service struct {
 // New returns the operations on lib, without access to the shared library.
 func New(lib store.Library) *Service { return &Service{lib: lib} }
 
-// Open resolves a library by ID or name and returns its Service.
+// Open resolves a library by ID or name and returns its Service. For a
+// signed-in user (see WithUser), "" is their own library, and a library
+// that isn't theirs or the shared list isn't found, unless they're an
+// admin.
 func Open(ctx context.Context, s store.Store, library string) (*Service, error) {
+	if u, ok := UserOf(ctx); ok && library == "" {
+		library = u.LibraryID
+	}
 	lib, err := s.GetLibrary(ctx, library)
+	if err == nil && !visible(ctx, lib) {
+		err = store.ErrNotFound
+	}
 	if errors.Is(err, store.ErrNotFound) && library == "" {
 		return nil, fmt.Errorf("there is no default library; run rflib init: %w", err)
 	}
