@@ -92,6 +92,9 @@ func ServiceCapWatts(c Channel) (float64, bool) {
 	case ServiceMURS:
 		return 2, true
 	case ServiceCB:
+		if c.Mode == "USB" || c.Mode == "LSB" {
+			return 12, true // SSB, peak envelope power
+		}
 		return 4, true // AM carrier
 	}
 	return 0, false

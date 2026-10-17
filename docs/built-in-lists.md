@@ -12,7 +12,7 @@
 | `us-frs` | FRS 1-22, with power limits in the notes |
 | `us-gmrs` | GMRS 1-22 plus repeater pairs 15R-22R (add your repeater's tone) |
 | `us-murs` | MURS 1-5 |
-| `us-cb` | CB 1-40, AM |
+| `us-cb` | CB 1-40, in AM, and again in LSB (`CB 1 LSB`) for SSB radios |
 | `us-noaa` | NOAA Weather Radio WX1-WX7, receive only |
 | `us-ham-calling` | Amateur FM and SSB simplex calling frequencies, 10 m through 70 cm |
 | `us-aprs` | APRS on 144.390, and the ISS and satellite digipeater on 145.825 |

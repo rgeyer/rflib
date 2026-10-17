@@ -844,7 +844,7 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "" || !strings.HasSuffix(strings.TrimSpace(stderr), "Added 7 channels to HT; skipped 40 outside its bands") {
+	if out != "" || !strings.HasSuffix(strings.TrimSpace(stderr), "Added 7 channels to HT; skipped 80 outside its bands") {
 		t.Errorf("add = %q, %q", out, stderr)
 	}
 	if !strings.Contains(stderr, `skipped "CB 19" (27.185000 MHz): HT can't receive it`) {
@@ -876,10 +876,10 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	c.ok("radio", "add", "Base", "--model", "radioddity-uv5g")
 	c.ok("radio", "draft", "Base", "--start")
 	c.ok("radio", "sources", "add", "Base", "service:cb OR service:noaa")
-	if out := c.ok("radio", "sync", "Base", "--dry-run"); strings.Count(out, "would skip") != 40 || strings.Count(out, "would add") != 7 {
+	if out := c.ok("radio", "sync", "Base", "--dry-run"); strings.Count(out, "would skip") != 80 || strings.Count(out, "would add") != 7 {
 		t.Errorf("dry run = %q", out)
 	}
-	if out := c.status("radio", "sync", "Base"); !strings.Contains(out, "added 7; skipped 40 outside its bands") {
+	if out := c.status("radio", "sync", "Base"); !strings.Contains(out, "added 7; skipped 80 outside its bands") {
 		t.Errorf("sync = %q", out)
 	}
 }
