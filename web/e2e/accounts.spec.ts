@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-// A server with accounts (serve.mjs starts it, with the admin K7ADM and
+// A server with accounts (serve.mjs starts it, with the admin N0CALL and
 // open sign-up): sign-in comes first, each account has its own library,
 // and members don't get the maintainer's tools.
 const ACCOUNTS = "http://127.0.0.1:18766";
@@ -21,7 +21,7 @@ test.beforeAll(async ({ request }) => {
 test("sign in, register, and each account has its own library", async ({ page, browser }) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
-  await page.getByLabel("Callsign or username").fill("k7adm");
+  await page.getByLabel("Callsign or username").fill("n0call");
   await page.getByLabel(/^Password\s*\*?$/).fill("wrong password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByText("The name or password is wrong")).toBeVisible();
@@ -31,7 +31,7 @@ test("sign in, register, and each account has its own library", async ({ page, b
   // The admin has the library from before accounts, and the maintainer's
   // tools.
   await expect(page).toHaveURL(/\/l\/default\/channels$/);
-  await expect(page.getByRole("button", { name: "Account" })).toContainText("K7ADM");
+  await expect(page.getByRole("button", { name: "Account" })).toContainText("N0CALL");
   await expect(page.getByRole("link", { name: /Built-in lists/ })).toBeVisible();
 
   // Someone else registers in another browser, and gets a library of
@@ -40,12 +40,12 @@ test("sign in, register, and each account has its own library", async ({ page, b
   const theirs = await other.newPage();
   await theirs.goto("/");
   await theirs.getByRole("button", { name: "Make an account" }).click();
-  await theirs.getByLabel("Callsign or username").fill("KD2ABC");
+  await theirs.getByLabel("Callsign or username").fill("N1CALL");
   await theirs.getByLabel(/^Password\s*\*?$/).fill("a long password");
   await theirs.getByLabel("Password again").fill("a long password");
   await theirs.getByLabel("Display name").fill("Pat");
   await theirs.getByRole("button", { name: "Make the account" }).click();
-  await expect(theirs).toHaveURL(/\/l\/kd2abc\/channels$/);
+  await expect(theirs).toHaveURL(/\/l\/n1call\/channels$/);
   await expect(theirs.getByRole("button", { name: "Account" })).toContainText("Pat");
   await expect(theirs.getByRole("link", { name: /Built-in lists/ })).toHaveCount(0);
   await theirs.getByRole("link", { name: "Organizations" }).click();

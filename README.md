@@ -817,7 +817,7 @@ curl -H "Authorization: Bearer s3cret" 'localhost:8080/api/v1/libraries/default/
 By default, `rflib serve` serves one library, yours, to whoever has the token. To host rflib for other people, start it with accounts: each person signs in and has a library of their own.
 
 ```sh
-./rflib user add K7ABC --admin                     # the first account; it takes the library you have now
+./rflib user add N0CALL --admin                     # the first account; it takes the library you have now
 ./rflib serve --accounts --signup invite --addr :8080 --behind-tls
 ./rflib user invite                                # a code that lets one person register
 ```
