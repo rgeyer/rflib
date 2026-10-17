@@ -14,6 +14,7 @@ import (
 
 	"github.com/ryan/rflib/internal/api"
 	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/buildinfo"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/ryan/rflib/web"
 	"github.com/spf13/cobra"
@@ -107,7 +108,7 @@ sessions.`}
 				defer cancel()
 				_ = srv.Shutdown(shutdown)
 			}()
-			fmt.Fprintf(cmd.ErrOrStderr(), "Serving rflib on http://%s/ (the API is under %s)\n", ln.Addr(), api.Prefix)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Serving rflib %s on http://%s/ (the API is under %s)\n", buildinfo.Get(), ln.Addr(), api.Prefix)
 			if !web.Built() {
 				fmt.Fprintln(cmd.ErrOrStderr(), "This build has no web interface; run make web, then build rflib again.")
 			}

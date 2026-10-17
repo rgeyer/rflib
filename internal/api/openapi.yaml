@@ -54,7 +54,7 @@ security:
 paths:
   /health:
     get:
-      summary: Report that the server and its database are ready
+      summary: Report that the server and its database are ready, and which rflib it is
       security: []
       responses:
         "200":
@@ -63,9 +63,10 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status]
+                required: [status, version]
                 properties:
                   status: {type: string, enum: [ok]}
+                  version: {type: string, description: "rflib's version, and the commit when known, as rflib version prints it: v0.1.0, or dev (1a2b3c4d)"}
         "500": {$ref: "#/components/responses/Error"}
   /openapi.yaml:
     get:

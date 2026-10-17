@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/buildinfo"
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/spf13/cobra"
@@ -18,13 +19,15 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "rflib",
 		Short:         "Manage a local SQLite library of analog radio channels",
+		Version:       buildinfo.Get().String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetVersionTemplate("rflib {{.Version}}\n")
 	root.SetOut(out)
 	root.SetErr(errOut)
-	root.PersistentFlags().String("db", "", "SQLite database path (default $RFLIB_DB, then $XDG_DATA_HOME/rflib/library.db)")
-	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newSharedCommand(), newTagCommand(), newServeCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newOrgCommand(), newSystemCommand(), newPlanCommand(), newUserCommand())
+	root.PersistentFlags().String("db", "", "SQLite database path (default $RFLIB_DB, then library.db in rflib's data directory: $XDG_DATA_HOME/rflib, ~/.local/share/rflib, or %LOCALAPPDATA%\\rflib on Windows)")
+	root.AddCommand(newInitCommand(), newGroupGoneCommand(), newChannelCommand(), newSharedCommand(), newTagCommand(), newServeCommand(), newImportCommand(), newExportCommand(), newSeedCommand(), newCheckCommand(), newProfileCommand(), newNamesCommand(), newModelCommand(), newRadioCommand(), newSearchCommand(), newOrgCommand(), newSystemCommand(), newPlanCommand(), newUserCommand(), newVersionCommand())
 	return root
 }
 

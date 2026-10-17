@@ -18,6 +18,7 @@ import (
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/naming"
+	"github.com/ryan/rflib/internal/paths"
 	"gopkg.in/yaml.v3"
 )
 
@@ -180,14 +181,14 @@ func Parse(data []byte) (Profile, error) {
 //go:embed builtin/*.yaml
 var builtinFS embed.FS
 
-// UserDir is where user profiles live: $XDG_CONFIG_HOME/rflib/profiles (or
-// the OS equivalent).
+// UserDir is where user profiles live: profiles in rflib's configuration
+// directory (see paths.ConfigDir).
 func UserDir() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := paths.ConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "rflib", "profiles"), nil
+	return filepath.Join(dir, "profiles"), nil
 }
 
 // Entry is a profile available by name.

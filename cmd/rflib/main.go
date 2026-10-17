@@ -13,6 +13,7 @@ import (
 
 	"github.com/ryan/rflib/internal/app"
 	"github.com/ryan/rflib/internal/domain"
+	"github.com/ryan/rflib/internal/paths"
 	"github.com/ryan/rflib/internal/seed"
 	"github.com/ryan/rflib/internal/store"
 	"github.com/ryan/rflib/internal/store/sqlite"
@@ -44,15 +45,11 @@ func dbPath(cmd *cobra.Command) (string, error) {
 	if p := os.Getenv("RFLIB_DB"); p != "" {
 		return p, nil
 	}
-	dataHome := os.Getenv("XDG_DATA_HOME")
-	if dataHome == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("no --db given and home directory is unknown: %w", err)
-		}
-		dataHome = filepath.Join(home, ".local", "share")
+	dir, err := paths.DataDir()
+	if err != nil {
+		return "", fmt.Errorf("no --db given, and no place for the database by default: %w", err)
 	}
-	return filepath.Join(dataHome, "rflib", "library.db"), nil
+	return filepath.Join(dir, "library.db"), nil
 }
 
 // withDB opens an existing, initialized database. It never creates one:

@@ -18,6 +18,7 @@ import (
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/naming"
+	"github.com/ryan/rflib/internal/paths"
 	"gopkg.in/yaml.v3"
 )
 
@@ -240,14 +241,14 @@ func Parse(data []byte) (Model, error) {
 //go:embed builtin/*.yaml
 var builtinFS embed.FS
 
-// UserDir is where user models live: $XDG_CONFIG_HOME/rflib/models (or the
-// OS equivalent).
+// UserDir is where user models live: models in rflib's configuration
+// directory (see paths.ConfigDir).
 func UserDir() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := paths.ConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "rflib", "models"), nil
+	return filepath.Join(dir, "models"), nil
 }
 
 // Entry is a model available by name.
