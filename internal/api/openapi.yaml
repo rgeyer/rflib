@@ -2044,7 +2044,7 @@ components:
       properties:
         added: {type: array, items: {$ref: "#/components/schemas/Channel"}}
         removed: {type: array, items: {$ref: "#/components/schemas/Channel"}}
-        changed: {type: array, description: "Memories with another name, power, or scan", items: {$ref: "#/components/schemas/Channel"}}
+        changed: {type: array, description: "Memories with another name, power, or scan, and how", items: {$ref: "#/components/schemas/ChannelChange"}}
         moved: {type: array, description: Memories moved to another section, items: {$ref: "#/components/schemas/MovedMemory"}}
         renumbered: {type: array, description: Memories renumbered within their section, items: {$ref: "#/components/schemas/MovedMemory"}}
         sections_added: {type: array, items: {type: string}}
@@ -2054,12 +2054,14 @@ components:
         channels:
           type: array
           description: "Comparing with a revision: channels whose own values changed since, and how"
-          items:
-            type: object
-            required: [channel, changes]
-            properties:
-              channel: {$ref: "#/components/schemas/Channel"}
-              changes: {type: array, items: {type: string}}
+          items: {$ref: "#/components/schemas/ChannelChange"}
+    ChannelChange:
+      type: object
+      description: 'A channel or memory, and what changed about it, as "power: low → high"'
+      required: [channel, changes]
+      properties:
+        channel: {$ref: "#/components/schemas/Channel"}
+        changes: {type: array, items: {type: string}}
     MovedMemory:
       type: object
       description: "A memory a draft moves: its number (null when not programmed) and section, before and after"

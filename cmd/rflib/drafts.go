@@ -157,7 +157,7 @@ func writeDraftChanges(cmd *cobra.Command, ch app.DraftChanges) error {
 		fmt.Fprintf(tw, "renumbered\t%d memories\t\t\n", n)
 	}
 	for _, c := range ch.Changed {
-		fmt.Fprintf(tw, "changed\t%s\t%s\tname, power, or scan\n", c.Name, mhz(c))
+		fmt.Fprintf(tw, "changed\t%s\t%s\t%s\n", c.Channel.Name, mhz(c.Channel), strings.Join(c.Changes, "; "))
 	}
 	for _, s := range ch.SectionsAdded {
 		fmt.Fprintf(tw, "section added\t%s\t\t\n", s)

@@ -25,7 +25,7 @@ Changes to a radio's list (its channels, sections, and sources, and sync) go to 
 ```
 
 - **One draft per radio,** shared by the web and the CLI: starting another while one is open is refused, and every window and the CLI continue the one that's open.
-- **The CLI needs a draft started** for any command that changes the list; it says how when there's none. The web opens one with your first change, and shows **Draft since …** with **Save draft** and **Discard draft**.
+- **The CLI needs a draft started** for any command that changes the list; it says how when there's none. The web opens one with your first change, and shows **Draft since …** with **Save draft** and **Discard draft**. While it's open, a **Draft** column marks each memory the draft adds (green), changes (orange, saying how), or moves to another section (blue), against the saved radio, and the memories it takes off are listed last, struck through. `radio draft` lists the same, with how each changed memory changed, such as `power: default → high`.
 - **While a draft is open,** listing the radio's channels, sections, and sources shows the draft (the CLI says so on stderr; `--saved` shows the saved radio), and so does comparing with the radio's file.
 - **The saved radio** is what exports, copies, and other radios' comparisons use. With a draft open, `radio export` says so on stderr, and the web asks whether to save the draft first.
 - **Settings** (`radio update`, or **Edit radio…**) save at once, never in a draft. Changes to channels themselves, including retiring and relinking them, reach the saved radio and the draft alike.

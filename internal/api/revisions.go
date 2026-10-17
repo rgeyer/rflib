@@ -68,12 +68,8 @@ func (s *server) compareRadioRevision(w http.ResponseWriter, r *http.Request, a 
 	if err != nil {
 		return err
 	}
-	channels := make([]map[string]any, len(ch.Channels))
-	for i, c := range ch.Channels {
-		channels[i] = map[string]any{"channel": newChannel(c.Channel), "changes": nonNil(c.Changes)}
-	}
 	out := draftChangesOut(ch)
-	out["channels"] = channels
+	out["channels"] = channelChanges(ch.Channels)
 	writeJSON(w, http.StatusOK, map[string]any{"revision": newRadioRevision(rev), "changes": out})
 	return nil
 }

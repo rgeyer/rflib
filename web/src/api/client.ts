@@ -30,6 +30,7 @@ export type PlanEntry = S["PlanEntry"];
 export type PlanRow = S["PlanRow"];
 export type RecordRevision = S["RecordRevision"];
 export type Draft = NonNullable<S["Draft"]>;
+export type ListChanges = S["ListChanges"];
 export type User = S["User"];
 
 const TOKEN_KEY = "rflib.token";

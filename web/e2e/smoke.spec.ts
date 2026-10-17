@@ -746,6 +746,37 @@ test("changes go to a draft, which saves, discards, and catches a stale page", a
   await expect(row("NOAA WX1")).toHaveCount(0);
 });
 
+test("a draft marks what it adds, changes, and takes off", async ({ page, request }) => {
+  await request.post(RADIOS, { data: { name: "Marky", model: "baofeng-uv5rm" } });
+  await saved(request, "Marky", () => request.post(`${RADIOS}/Marky/channels`, { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2"' } }));
+  await page.goto("/l/default/radios/Marky");
+  const row = (name: string) => page.getByRole("row", { name: new RegExp(`^Select memory.*${name}`) });
+  await expect(row("NOAA WX1")).toBeVisible();
+  await expect(page.locator("[data-draft]")).toHaveCount(0);
+
+  // A change says how.
+  await page.getByRole("switch", { name: "Scan NOAA WX2" }).click({ force: true });
+  await expect(page.getByText(/^Draft since/)).toBeVisible();
+  await expect(row("NOAA WX2")).toHaveAttribute("data-draft", "changed");
+  await expect(row("NOAA WX2").getByLabel("Changed: scan: default → off")).toBeVisible();
+
+  // A memory taken off is listed last, struck through.
+  await row("NOAA WX1").getByRole("button", { name: "Take off this radio" }).click();
+  await expect(page.getByText("Taken off by this draft (1)")).toBeVisible();
+  await expect(page.locator('[data-draft="removed"]')).toContainText("NOAA WX1");
+
+  // One added elsewhere is new.
+  expect((await request.post(`${RADIOS}/Marky/channels`, { data: { query: 'name:"NOAA WX3"' } })).ok()).toBeTruthy();
+  await page.reload();
+  await expect(row("NOAA WX3")).toHaveAttribute("data-draft", "added");
+  await expect(row("NOAA WX3").getByText("new", { exact: true })).toBeVisible();
+
+  // Saved, nothing is marked.
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText(/^Draft since/)).toHaveCount(0);
+  await expect(page.locator("[data-draft]")).toHaveCount(0);
+});
+
 test("revisions: an export saves one, a change needs programming, and one restores", async ({ page, request }) => {
   await request.post(RADIOS, { data: { name: "Revvy", model: "baofeng-uv5rm" } });
   await saved(request, "Revvy", () => request.post(`${RADIOS}/Revvy/channels`, { data: { query: 'name:"NOAA WX1"' } }));

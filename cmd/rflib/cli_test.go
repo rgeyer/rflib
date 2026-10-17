@@ -711,6 +711,21 @@ func TestSearchAndSavedSearches(t *testing.T) {
 	}
 }
 
+func TestDraftSaysHowMemoriesChanged(t *testing.T) {
+	c := newCLI(t)
+	ids := c.sharedIDs("us-gmrs")
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
+	c.ok("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]+","+ids["GMRS 2"])
+	c.ok("radio", "draft", "HT", "--save")
+	c.ok("radio", "draft", "HT", "--start")
+	c.ok("radio", "channels", "set", "HT", "--id", ids["GMRS 1"], "--power", "high", "--scan", "no")
+	out := c.ok("radio", "draft", "HT")
+	if !strings.Contains(out, "power: default → high; scan: default → off") || strings.Contains(out, "GMRS 2") {
+		t.Errorf("draft = %q", out)
+	}
+}
+
 func TestRadioSources(t *testing.T) {
 	c := newCLI(t)
 	c.sharedIDs("us-gmrs", "us-noaa")

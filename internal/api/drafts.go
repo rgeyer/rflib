@@ -125,11 +125,20 @@ func draftChangesOut(ch app.DraftChanges) map[string]any {
 		return out
 	}
 	return map[string]any{
-		"added": newChannels(ch.Added), "removed": newChannels(ch.Removed), "changed": newChannels(ch.Changed),
+		"added": newChannels(ch.Added), "removed": newChannels(ch.Removed), "changed": channelChanges(ch.Changed),
 		"moved": moves(ch.Moved), "renumbered": moves(ch.Renumbered),
 		"sections_added": orEmpty(ch.SectionsAdded), "sections_removed": orEmpty(ch.SectionsRemoved),
 		"sources_added": orEmpty(ch.SourcesAdded), "sources_removed": orEmpty(ch.SourcesRemoved),
 	}
+}
+
+// channelChanges are channels, each with what changed about it.
+func channelChanges(cs []app.ChannelChange) []map[string]any {
+	out := make([]map[string]any, len(cs))
+	for i, c := range cs {
+		out[i] = map[string]any{"channel": newChannel(c.Channel), "changes": nonNil(c.Changes)}
+	}
+	return out
 }
 
 func (s *server) startDraft(w http.ResponseWriter, r *http.Request, a *app.Service) error {
