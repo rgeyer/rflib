@@ -756,6 +756,14 @@ test("a draft marks what it adds, changes, and takes off", async ({ page, reques
   await expect(row("NOAA WX1")).toBeVisible();
   await expect(page.locator("[data-draft]")).toHaveCount(0);
 
+  // WX1 is off the air (see the first test), so it isn't scanned unless
+  // this radio says to; turning scan on says so.
+  await expect(row("NOAA WX1")).toContainText("off air");
+  await expect(page.getByRole("switch", { name: "Scan NOAA WX1" })).not.toBeChecked();
+  await page.getByRole("switch", { name: "Scan NOAA WX1" }).click({ force: true });
+  await expect(page.getByRole("switch", { name: "Scan NOAA WX1" })).toBeChecked();
+  await expect(page.getByText(/off the air \(antenna work\); programmed, and scanned as this radio says/)).toBeVisible();
+
   // A change says how.
   await page.getByRole("switch", { name: "Scan NOAA WX2" }).click({ force: true });
   await expect(page.getByText(/^Draft since/)).toBeVisible();

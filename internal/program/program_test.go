@@ -276,7 +276,8 @@ func TestLeavesOutModesTheRadioLacks(t *testing.T) {
 	}
 }
 
-// Off-air channels stay programmed but aren't scanned; retired ones aren't
+// Off-air channels stay programmed but aren't scanned, unless a radio says
+// to scan one; retired ones aren't
 // programmed at all, their numbers kept empty, and come back if they're
 // un-retired.
 func TestStatusOnTheRadio(t *testing.T) {
@@ -284,10 +285,7 @@ func TestStatusOnTheRadio(t *testing.T) {
 	down.Status, down.StatusNote = domain.StatusOffAir, "antenna work"
 	gone := ch("Old Rpt", 146_940_000, 146_340_000, domain.ServiceAmateur)
 	gone.Status = domain.StatusRetired
-	es := entries(down, gone)
-	scan := false
-	es[0].Skip = &scan // even a radio set to scan it skips it while it's down
-	p, err := Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), es)
+	p, err := Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), entries(down, gone))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,6 +293,14 @@ func TestStatusOnTheRadio(t *testing.T) {
 	if !p.Memories[0].Channel.Skip || !p.Memories[0].Programmed() || p.Memories[1].NotProgrammed() != "retired" ||
 		!strings.Contains(warnings, `"Marian": off the air (antenna work); programmed but skipped in scans`) || !strings.Contains(warnings, `"Old Rpt": not programmed: retired`) {
 		t.Errorf("memories = %+v\n%s", p.Memories, warnings)
+	}
+	// A radio set to scan it scans it, down or not.
+	es := entries(down)
+	scan := false
+	es[0].Skip = &scan
+	scanned, err := Build(domain.Radio{Name: "HT"}, mustModel(t, "baofeng-uv5rm"), es)
+	if err != nil || scanned.Memories[0].Channel.Skip || !strings.Contains(strings.Join(scanned.Warnings, "\n"), "programmed, and scanned as this radio says") {
+		t.Errorf("scanned anyway = %+v, %v, %v", scanned.Memories[0].Channel, scanned.Warnings, err)
 	}
 	var out bytes.Buffer
 	if n, err := Write(&out, p, false, &bytes.Buffer{}); err != nil || n != 1 || strings.Contains(out.String(), "Old Rpt") {

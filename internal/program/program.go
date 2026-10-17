@@ -137,13 +137,17 @@ func Build(r domain.Radio, m model.Model, entries []domain.RadioEntry, sections 
 		switch {
 		case c.Status.OrActive() == domain.StatusOffAir:
 			// Kept, so it needs no reprogramming when it's back, but not
-			// scanned while it's silent.
-			c.Skip = true
+			// scanned while it's silent, unless the radio says to scan it.
 			back := ""
 			if c.BackOn != nil {
 				back = ", expected back " + c.BackOn.Format("2006-01-02")
 			}
-			warn("off the air%s%s; programmed but skipped in scans", noteSuffix(c.StatusNote), back)
+			if e.Skip != nil && !*e.Skip {
+				warn("off the air%s%s; programmed, and scanned as this radio says", noteSuffix(c.StatusNote), back)
+			} else {
+				c.Skip = true
+				warn("off the air%s%s; programmed but skipped in scans", noteSuffix(c.StatusNote), back)
+			}
 		case c.Status.OrActive() == domain.StatusRetired:
 			leftOut = "retired" + noteSuffix(c.StatusNote)
 			warn("not programmed: retired%s; see rflib shared changes", noteSuffix(c.StatusNote))

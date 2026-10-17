@@ -601,7 +601,7 @@ export function RadioPage() {
                             {m.overrides.power && "*"}
                           </Table.Td>
                           <Table.Td>
-                            <Switch size="xs" aria-label={`Scan ${m.channel.name}`} checked={m.scan} onChange={() => scan.mutate(m)} />
+                            <ScanSwitch m={m} onToggle={() => scan.mutate(m)} />
                           </Table.Td>
                           <Table.Td ff="monospace">{formatMHz(m.channel.rx_hz)}</Table.Td>
                           <Table.Td>
@@ -1241,5 +1241,31 @@ function TakenOff({ channels }: { channels: Channel[] }) {
         </Table.Tr>
       ))}
     </>
+  );
+}
+
+/** ScanSwitch turns scanning a memory on or off for this radio. An off-air
+ * channel isn't scanned unless the radio says to, which the switch says. */
+function ScanSwitch({ m, onToggle }: { m: Memory; onToggle: () => void }) {
+  const sw = (
+    <Group gap={4} wrap="nowrap">
+      <Switch size="xs" aria-label={`Scan ${m.channel.name}`} checked={m.scan} onChange={onToggle} />
+      {m.overrides.scan && "*"}
+    </Group>
+  );
+  if (m.channel.status !== "off-air") return sw;
+  return (
+    <Tooltip
+      multiline
+      maw={260}
+      label={m.scan ? "Off the air, but scanned on this radio as you set it" : "Off the air, so not scanned; turn it on to scan it on this radio anyway"}
+    >
+      <Group gap={4} wrap="nowrap">
+        {sw}
+        <Text span size="xs" c="dimmed">
+          off air
+        </Text>
+      </Group>
+    </Tooltip>
   );
 }
