@@ -251,6 +251,32 @@ func TestUserProfileOverridesBuiltin(t *testing.T) {
 	if e.Origin == "built-in" || e.Profile.Columns[7].Map["tsql"] != "TONE SQL" {
 		t.Fatalf("user profile not used: %s", e.Origin)
 	}
+	if e.Status() != "replaces the built-in" {
+		t.Errorf("status = %s", e.Status())
+	}
+	// A broken file is skipped, and says what's wrong when asked for.
+	if err := os.WriteFile(filepath.Join(dir, "half-done.yaml"), []byte("name: half-done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Find("yaesu-ftm6000"); err != nil {
+		t.Errorf("a broken user profile broke the rest: %v", err)
+	}
+	if _, err := Find("half-done"); err == nil || !strings.Contains(err.Error(), "half-done.yaml can't be used") {
+		t.Errorf("finding the broken profile = %v", err)
+	}
+	// Once the built-in says the same, the file is reported as such.
+	if err := os.WriteFile(filepath.Join(dir, "ftm150.yaml"), src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := Find("yaesu-ftm150"); !e.SameAsBuiltin() {
+		t.Errorf("status = %s", e.Status())
+	}
+	if _, err := Remove("yaesu-ftm150"); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := Find("yaesu-ftm150"); e.Local() {
+		t.Errorf("after remove, from %s", e.Origin)
+	}
 }
 
 func TestProfileValidation(t *testing.T) {

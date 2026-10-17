@@ -10,6 +10,7 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/naming"
 	"github.com/ryan/rflib/internal/profile"
+	"gopkg.in/yaml.v3"
 )
 
 func TestBuiltinsAreValid(t *testing.T) {
@@ -161,8 +162,55 @@ func TestUserModels(t *testing.T) {
 	if b, _ := Builtins(); slices.ContainsFunc(b, func(m Model) bool { return m.Name == "my-ht" }) {
 		t.Fatal("Builtins includes a user model")
 	}
-	write("bad.yaml", "name: x\nformat: nope\n")
-	if _, err := All(); err == nil || !strings.Contains(err.Error(), "bad.yaml") {
-		t.Fatalf("bad user model: %v", err)
+	if e, err := Lookup("yaesu-ft857"); err != nil || e.Status() != "replaces the built-in" || e.Builtin == nil || e.Builtin.Memories.Last != 200 {
+		t.Fatalf("replacement = %+v %v", e, err)
 	}
+	if e, _ := Lookup("my-ht"); e.Status() != "local" {
+		t.Errorf("my-ht = %s", e.Status())
+	}
+
+	// A broken file is skipped, and everything else still works; looking
+	// it up by its file's name says what's wrong with it.
+	write("half-done.yaml", "name: half-done\nformat: nope\n")
+	if _, err := All(); err != nil {
+		t.Fatalf("a broken user model broke the rest: %v", err)
+	}
+	if mustFind(t, "my-ht").Names.MaxLength != 6 || mustFind(t, "chirp-generic").Name != "chirp-generic" {
+		t.Error("models went missing")
+	}
+	if ps := Problems(); len(ps) != 1 || filepath.Base(ps[0].Path) != "half-done.yaml" {
+		t.Errorf("problems = %v", ps)
+	}
+	if _, err := Find("half-done"); err == nil || !strings.Contains(err.Error(), "half-done.yaml can't be used") {
+		t.Errorf("finding the broken model = %v", err)
+	}
+
+	// A replacement that matches the built-in says so.
+	b, err := Lookup("yaesu-ft857")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("fix.yml", string(b.Builtin.mustYAML(t)))
+	if e, _ := Lookup("yaesu-ft857"); !e.SameAsBuiltin() || e.Status() != "same as the built-in" {
+		t.Errorf("same as built-in = %s", e.Status())
+	}
+	if _, err := Remove("yaesu-ft857"); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := Lookup("yaesu-ft857"); e.Local() {
+		t.Errorf("after remove, yaesu-ft857 is from %s", e.Origin)
+	}
+	if _, err := Remove("chirp-generic"); err == nil || !strings.Contains(err.Error(), "built-in") {
+		t.Errorf("removing a built-in = %v", err)
+	}
+}
+
+// mustYAML is the model as a file, for tests.
+func (m Model) mustYAML(t *testing.T) []byte {
+	t.Helper()
+	b, err := yaml.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

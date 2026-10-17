@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, call, type Model, type Radio } from "../api/client";
+import { modelLabel } from "../lib/radio";
 import { enc, useLib } from "../lib/library";
 import { failed } from "../lib/notify";
 
@@ -105,7 +106,7 @@ function AddRadio(props: { opened: boolean; onClose: () => void }) {
             label="Model"
             required
             searchable
-            data={(models.data?.models ?? []).map((m) => ({ value: m.name, label: `${m.description} (${m.name})` }))}
+            data={(models.data?.models ?? []).map((m) => ({ value: m.name, label: modelLabel(m) }))}
             value={model}
             onChange={setModel}
           />

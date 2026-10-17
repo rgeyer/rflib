@@ -2,6 +2,13 @@
 // integer Hz for frequencies, and tones as none, ctcss:100.000, dcs:023, or
 // dcs:023:inverted.
 
+/** modelLabel names a model in a picker, marking one installed from a
+ * file on the server, which may be one sent to try. */
+export function modelLabel(m: { name: string; description: string; origin: string }): string {
+  const from = { builtin: "", local: ", installed", replaces_builtin: ", installed in place of the built-in", same_as_builtin: ", installed" }[m.origin] ?? "";
+  return `${m.description} (${m.name}${from})`;
+}
+
 /** formatMHz shows Hz as MHz with six decimals, as rflib does. */
 export function formatMHz(hz: number): string {
   const whole = Math.floor(hz / 1_000_000);

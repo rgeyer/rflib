@@ -345,7 +345,7 @@ Nothing else is checked: rflib doesn't know the radio's bands, modes, or memory 
 
 ```sh
 ./rflib model new my-ht            # prints the new file's path
-./rflib model validate ~/.config/rflib/models/my-ht.yaml
+./rflib model validate             # checks every model of yours
 ./rflib radio update HT --model my-ht
 ```
 
@@ -353,11 +353,25 @@ To fill it in from CHIRP itself, `tools/chirp_model.py` drafts a model from CHIR
 
 ```sh
 uv run tools/chirp_model.py --list uv-5r                     # find the radio as CHIRP names it
-uv run tools/chirp_model.py "Baofeng UV-5R" > ~/.config/rflib/models/baofeng-uv-5r.yaml
-./rflib model validate ~/.config/rflib/models/baofeng-uv-5r.yaml
+uv run tools/chirp_model.py "Baofeng UV-5R" > baofeng-uv-5r.yaml
+./rflib model install baofeng-uv-5r.yaml
 ```
 
 Check the draft against the radio's manual or a CHIRP export of your radio: some drivers depend on the radio's region or firmware, which the draft can't see. Optionally tag power levels with an `intent` (low, medium, high, or max) to choose which level each power setting uses.
+
+**A model file someone sends you,** such as one to try for a radio rflib doesn't have yet, or a fix to a built-in model:
+
+```sh
+./rflib model install my-ht.yaml             # check it, and add it to your models
+./rflib model install my-ht.yaml --replace   # a newer copy of one you have
+./rflib model validate                       # check every model of yours
+./rflib model remove my-ht                   # take it out again
+```
+
+- **Installing** copies the file into your models folder, named after the model, so you can delete the one you downloaded. A model with a built-in model's name replaces the built-in.
+- **Where each comes from:** `model list` says whether each model is built in, yours, or yours in place of a built-in. `radio show` and `radio export` say so for a radio whose model is yours, and the web interface marks installed models in its model lists.
+- **A file that can't be used,** such as one with a mistake, is skipped with a warning, and everything else keeps working. Using the model says what's wrong with its file.
+- **When a fix reaches a release:** once a built-in model says the same as the file replacing it, `model list` suggests `rflib model remove`, so you go back to the built-in and get its later fixes.
 
 **Share it:** once a model works on your radio, [submit it](https://github.com/rgeyer/rflib/issues/new?template=radio-model.yml) with a sample CHIRP export, so others get it built in.
 
@@ -689,7 +703,7 @@ Profiles are YAML. Start from a built-in:
 ./rflib export profile my-radio.yaml
 ```
 
-To use a profile by name, put it in the directory `rflib profile list` prints: `profiles` in rflib's settings folder (see [Models](#models)). A profile there with a built-in's name replaces the built-in, which is how to fix a format locally.
+To use a profile by name, install it with `rflib profile install FILE`, which copies it into the directory `rflib profile list` prints: `profiles` in rflib's settings folder (see [Models](#models)). A profile with a built-in's name replaces the built-in, which is how to fix a format locally. `profile install --replace`, `profile remove`, and `profile validate` with no file work as they do for models (see [Radios CHIRP supports but rflib doesn't](#radios-chirp-supports-but-rflib-doesnt)).
 
 Each column names a `source` (a library value) and how to write it:
 

@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/naming"
 	"github.com/ryan/rflib/internal/paths"
+	"github.com/ryan/rflib/internal/userfiles"
 	"gopkg.in/yaml.v3"
 )
 
@@ -256,7 +258,81 @@ type Entry struct {
 	Model Model
 	// Origin is "built-in" or the file the model was loaded from.
 	Origin string
-	data   []byte
+	// Builtin is the built-in model a user file replaces, by having its
+	// name; nil when it replaces none.
+	Builtin *Model
+	data    []byte
+}
+
+// Local reports whether the model comes from a file of the user's own.
+func (e Entry) Local() bool { return e.Origin != builtinOrigin }
+
+// SameAsBuiltin reports whether a user file replacing a built-in model now
+// says just what the built-in does, such as once a fix sent as a file is
+// in a release. Removing the file then changes nothing, and lets later
+// fixes to the built-in through.
+func (e Entry) SameAsBuiltin() bool {
+	return e.Builtin != nil && reflect.DeepEqual(e.Model, *e.Builtin)
+}
+
+// Status says where a model comes from: "built-in", "local", "replaces
+// the built-in", or "same as the built-in".
+func (e Entry) Status() string {
+	switch {
+	case !e.Local():
+		return builtinOrigin
+	case e.SameAsBuiltin():
+		return "same as the built-in"
+	case e.Builtin != nil:
+		return "replaces the built-in"
+	}
+	return "local"
+}
+
+const builtinOrigin = "built-in"
+
+// files are the user's model files.
+var files = userfiles.Kind[Model]{What: "model", Dir: UserDir, Parse: Parse, Name: func(m Model) string { return m.Name }}
+
+// Problems lists the user's model files that can't be used, which
+// Available leaves out.
+func Problems() []userfiles.Problem {
+	_, problems := files.Scan()
+	return problems
+}
+
+// Install checks a model file and copies it into UserDir, replacing an
+// installed model of the same name only with replace. It returns the
+// installed model and the file it replaced ("" for none).
+func Install(path string, replace bool) (Entry, string, error) {
+	f, old, err := files.Install(path, replace)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	e, err := Lookup(f.Value.Name)
+	return e, old, err
+}
+
+// Remove deletes the user's file for a model, and returns it as it was.
+func Remove(name string) (Entry, error) {
+	es, _ := Available()
+	var was Entry
+	for _, e := range es {
+		if e.Model.Name == name {
+			was = e
+		}
+	}
+	if was.Model.Name != "" && !was.Local() {
+		return was, domain.Invalidf("%s is a built-in model, with no file of yours to remove", name)
+	}
+	f, err := files.Remove(name)
+	if err != nil {
+		return was, domain.Invalidf("%v", err)
+	}
+	if was.Model.Name == "" {
+		was.Origin = f.Path
+	}
+	return was, nil
 }
 
 // Builtins returns the built-in models by name.
@@ -283,13 +359,14 @@ func builtins() ([]Entry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("built-in %s: %w", p, err)
 		}
-		out = append(out, Entry{m, "built-in", data})
+		out = append(out, Entry{Model: m, Origin: builtinOrigin, data: data})
 	}
 	return out, nil
 }
 
 // Available lists the built-in models and those in UserDir, by name. A user
 // model with a built-in's name replaces it, so a model can be fixed locally.
+// User files that can't be used are left out (see Problems).
 func Available() ([]Entry, error) {
 	es, err := builtins()
 	if err != nil {
@@ -299,16 +376,13 @@ func Available() ([]Entry, error) {
 	for _, e := range es {
 		byName[e.Model.Name] = e
 	}
-	if dir, err := UserDir(); err == nil {
-		files, _ := filepath.Glob(filepath.Join(dir, "*.yaml"))
-		more, _ := filepath.Glob(filepath.Join(dir, "*.yml"))
-		for _, path := range append(files, more...) {
-			e, err := load(path)
-			if err != nil {
-				return nil, err
-			}
-			byName[e.Model.Name] = e
+	user, _ := files.Scan()
+	for _, f := range user {
+		e := Entry{Model: f.Value, Origin: f.Path, data: f.Data}
+		if b, ok := byName[f.Value.Name]; ok && !b.Local() {
+			e.Builtin = &b.Model
 		}
+		byName[f.Value.Name] = e
 	}
 	out := make([]Entry, 0, len(byName))
 	for _, e := range byName {
@@ -333,7 +407,7 @@ func load(path string) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("%s: %w", path, err)
 	}
-	return Entry{m, path, data}, nil
+	return Entry{Model: m, Origin: path, data: data}, nil
 }
 
 // All returns the available models (built-in and user) by name.
@@ -365,6 +439,9 @@ func Lookup(name string) (Entry, error) {
 			return e, nil
 		}
 		names[i] = e.Model.Name
+	}
+	if p, ok := userfiles.ProblemWith(Problems(), name); ok {
+		return Entry{}, domain.Invalidf("the model file %s can't be used: %v", p.Path, p.Err)
 	}
 	return Entry{}, domain.Invalidf("unknown radio model %q; available: %s", name, strings.Join(names, ", "))
 }
