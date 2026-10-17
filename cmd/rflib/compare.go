@@ -145,6 +145,9 @@ func printComparison(out io.Writer, c app.Comparison) error {
 		if len(d.Fields) > 0 {
 			notes = append(notes, "differs in "+strings.Join(d.Fields, ", "))
 		}
+		if slices.Contains(d.Fields, "power") {
+			notes = append(notes, fmt.Sprintf("power %s on the radio, %s in rflib", d.RadioPower, d.RflibPower))
+		}
 		if d.Unexported != "" {
 			notes = append(notes, "rflib's export leaves it out: "+d.Unexported)
 		}
@@ -152,7 +155,11 @@ func printComparison(out io.Writer, c app.Comparison) error {
 			notes = append(notes, fmt.Sprintf("rflib has it at %d", *d.RflibLocation))
 		}
 		for _, cand := range d.Candidates {
-			notes = append(notes, fmt.Sprintf("maybe %s (%s, %s)", cand.Channel.Name, cand.Match, abbrevID(cand.Channel.ID)))
+			how := cand.Match
+			if len(cand.Differs) > 0 {
+				how += ", differs in " + strings.Join(cand.Differs, ", ")
+			}
+			notes = append(notes, fmt.Sprintf("maybe %s (%s, %s)", cand.Channel.Name, how, abbrevID(cand.Channel.ID)))
 		}
 		if d.Kind == app.MemoryOnRadio && len(d.Candidates) == 0 {
 			notes = append(notes, "no library channel matches")

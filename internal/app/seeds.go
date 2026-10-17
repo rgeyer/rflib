@@ -229,6 +229,22 @@ func planSeed(ctx context.Context, sh store.Library, l seed.List, rows []importe
 			row.ID = rec.ChannelID
 		}
 		cur, err := sh.GetChannel(ctx, row.ID)
+		// A row the list renamed is the channel it had under an old name.
+		for _, old := range l.Renamed[row.Name] {
+			if has || !errors.Is(err, store.ErrNotFound) {
+				break
+			}
+			listed[old] = true
+			if rec, has = recorded[old]; has {
+				row.ID = rec.ChannelID
+			} else {
+				row.ID = SeedID(l.ID, old)
+			}
+			cur, err = sh.GetChannel(ctx, row.ID)
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			row.ID = SeedID(l.ID, row.Name)
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			st.Changes = append(st.Changes, SeedChange{Kind: "add", Name: row.Name, Channel: row})
 			continue

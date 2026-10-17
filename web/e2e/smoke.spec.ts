@@ -298,15 +298,35 @@ test("map markers stay clickable inside a radius", async ({ page, request }) => 
     data: { name: "Radius Test", rx_hz: 145_650_000, mode: "FM", location: { latitude: 34.69, longitude: -120.46, radius_km: 50 } },
   });
   await page.goto("/l/default/map");
-  await page.getByLabel("Search").fill("name:\"Radius Test\"");
-  await expect(page.getByText("1 channels with a location")).toBeVisible();
-  // The marker is the smallest shape on the map; click its center.
-  const paths = page.locator(".leaflet-overlay-pane path");
-  await expect(paths).toHaveCount(2);
-  const boxes = await paths.evaluateAll((ps) => ps.map((p) => p.getBoundingClientRect().toJSON()));
-  const marker = boxes.reduce((a, b) => (a.width <= b.width ? a : b));
-  await page.mouse.click(marker.x + marker.width / 2, marker.y + marker.height / 2);
+  await page.getByLabel("Search").fill('name:"Radius Test"');
+  await expect(page.getByText("1 channel with a location")).toBeVisible();
+  await expect(page.locator(".leaflet-overlay-pane path")).toHaveCount(1);
+  await page.locator(".rflib-site").click();
   await expect(page.locator(".leaflet-popup").getByText("Radius Test")).toBeVisible();
+});
+
+// Channels at one place share a numbered marker listing them all, and
+// markers too close to tell apart cluster until you zoom in.
+test("map groups channels at one place, and clusters close ones", async ({ page, request }) => {
+  const add = (name: string, rx_hz: number, latitude: number, longitude: number) =>
+    request.post("/api/v1/libraries/default/channels", { data: { name, rx_hz, mode: "FM", location: { latitude, longitude, radius_km: 20 } } });
+  await add("Peak A", 146_940_000, 34.8, -120.3);
+  await add("Peak B", 147_300_000, 34.8, -120.3);
+  await add("Peak C", 446_000_000, 34.8, -120.3);
+  await add("Valley", 145_330_000, 34.81, -120.31);
+  await page.goto("/l/default/map");
+  await page.getByLabel("Search").fill("name:Peak OR name:Valley");
+  await expect(page.getByText("4 channels with a location, at 2 places")).toBeVisible();
+  // One circle per reach at a place, not one per channel.
+  await expect(page.locator(".leaflet-overlay-pane path")).toHaveCount(2);
+  // About a kilometer apart, the two places are one cluster of 4 at first.
+  await expect(page.locator(".rflib-cluster")).toHaveText("4");
+  await page.locator(".rflib-cluster").click();
+  await expect(page.locator(".rflib-site")).toHaveCount(2);
+  await page.locator(".rflib-site", { hasText: "3" }).click();
+  const popup = page.locator(".leaflet-popup");
+  await expect(popup.getByText("3 channels here")).toBeVisible();
+  for (const name of ["Peak A", "Peak B", "Peak C"]) await expect(popup.getByText(name)).toBeVisible();
 });
 
 // The channel editor suggests tags already in use, and still takes new ones.
@@ -401,7 +421,9 @@ test("compare a radio with its file, and start it from that", async ({ page, req
   await expect(page.getByText("2 only on the radio")).toBeVisible();
   // The first test's Marian repeater programs exactly as memory 9 does, so
   // it's chosen; memory 4 matches nothing and is kept as programmed.
-  await expect(page.getByRole("combobox", { name: "Memory 9" })).toHaveValue("Use Marian (exact match)");
+  // It programs the same, but under another name, which it says.
+  await expect(page.getByRole("combobox", { name: "Memory 9" })).toHaveValue("Use Marian (exact match; differs in name)");
+  await expect(page.getByTestId("candidate-differs")).toHaveText("name: Repeater B on the radio, Marian in rflib");
   await expect(page.getByRole("combobox", { name: "Memory 4" })).toHaveValue("Keep as programmed");
   await page.getByRole("button", { name: "Apply" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Apply" }).click();
@@ -744,6 +766,45 @@ test("changes go to a draft, which saves, discards, and catches a stale page", a
   await expect(page.getByText("Saved Drafty's draft; program the radio again")).toBeVisible();
   await expect(page.getByText(/^Draft since/)).toHaveCount(0);
   await expect(row("NOAA WX1")).toHaveCount(0);
+});
+
+test("a draft marks what it adds, changes, and takes off", async ({ page, request }) => {
+  await request.post(RADIOS, { data: { name: "Marky", model: "baofeng-uv5rm" } });
+  await saved(request, "Marky", () => request.post(`${RADIOS}/Marky/channels`, { data: { query: 'name:"NOAA WX1" OR name:"NOAA WX2"' } }));
+  await page.goto("/l/default/radios/Marky");
+  const row = (name: string) => page.getByRole("row", { name: new RegExp(`^Select memory.*${name}`) });
+  await expect(row("NOAA WX1")).toBeVisible();
+  await expect(page.locator("[data-draft]")).toHaveCount(0);
+
+  // WX1 is off the air (see the first test), so it isn't scanned unless
+  // this radio says to; turning scan on says so.
+  await expect(row("NOAA WX1")).toContainText("off air");
+  await expect(page.getByRole("switch", { name: "Scan NOAA WX1" })).not.toBeChecked();
+  await page.getByRole("switch", { name: "Scan NOAA WX1" }).click({ force: true });
+  await expect(page.getByRole("switch", { name: "Scan NOAA WX1" })).toBeChecked();
+  await expect(page.getByText(/off the air \(antenna work\); programmed, and scanned as this radio says/)).toBeVisible();
+
+  // A change says how.
+  await page.getByRole("switch", { name: "Scan NOAA WX2" }).click({ force: true });
+  await expect(page.getByText(/^Draft since/)).toBeVisible();
+  await expect(row("NOAA WX2")).toHaveAttribute("data-draft", "changed");
+  await expect(row("NOAA WX2").getByLabel("Changed: scan: default → off")).toBeVisible();
+
+  // A memory taken off is listed last, struck through.
+  await row("NOAA WX1").getByRole("button", { name: "Take off this radio" }).click();
+  await expect(page.getByText("Taken off by this draft (1)")).toBeVisible();
+  await expect(page.locator('[data-draft="removed"]')).toContainText("NOAA WX1");
+
+  // One added elsewhere is new.
+  expect((await request.post(`${RADIOS}/Marky/channels`, { data: { query: 'name:"NOAA WX3"' } })).ok()).toBeTruthy();
+  await page.reload();
+  await expect(row("NOAA WX3")).toHaveAttribute("data-draft", "added");
+  await expect(row("NOAA WX3").getByText("new", { exact: true })).toBeVisible();
+
+  // Saved, nothing is marked.
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByText(/^Draft since/)).toHaveCount(0);
+  await expect(page.locator("[data-draft]")).toHaveCount(0);
 });
 
 test("revisions: an export saves one, a change needs programming, and one restores", async ({ page, request }) => {

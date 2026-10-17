@@ -3,9 +3,9 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { IconArrowDown, IconArrowUp, IconChevronDown, IconCopy, IconDots, IconDownload, IconGripVertical, IconPencil, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, call, download, showDraft, type Memory, type Radio, type Section, type Source } from "../api/client";
+import { api, call, download, showDraft, type Channel, type Memory, type Radio, type Section, type Source } from "../api/client";
 import { CompareRadio } from "../components/CompareRadio";
 import { CompareRadios } from "../components/CompareRadios";
 import { CopyRadio } from "../components/CopyRadio";
@@ -18,6 +18,7 @@ import { confirmMerge, SectionEditor, SectionHeader, useMergeSection, useSection
 import { SourcePreview } from "../components/SourcePreview";
 import { useLib, useTags } from "../lib/library";
 import { failed, ok, warn } from "../lib/notify";
+import { draftMarks, type DraftMark } from "../lib/draft";
 import { usePlans } from "../lib/records";
 import { duplex, formatMHz, offsetMHz, toneSummary } from "../lib/radio";
 
@@ -69,6 +70,15 @@ export function RadioPage() {
     queryFn: () => call<{ sources: Source[] }>(api.GET("/libraries/{lib}/radios/{radio}/sources", { params: { path } })),
     refetchOnWindowFocus: true,
   });
+  // A draft's changes from the saved radio, to mark them in the list.
+  const draftID = info.data?.draft?.id;
+  const draftChanges = useQuery({
+    queryKey: ["draft", lib, radio, draftID],
+    queryFn: () => call(api.GET("/libraries/{lib}/radios/{radio}/draft", { params: { path } })),
+    enabled: !!draftID,
+  });
+  const changes = draftID ? draftChanges.data?.changes : undefined;
+  const marks = useMemo(() => draftMarks(changes), [changes]);
   const sections = plan.data?.sections ?? [];
   const [editingSection, setEditingSection] = useState<Section | "new" | null>(null);
   // Drag and drop: a memory onto a memory (before or after it), onto a
@@ -477,6 +487,7 @@ export function RadioPage() {
                   </Table.Th>
                   <Table.Th w={28} />
                   <Table.Th>Memory</Table.Th>
+                  {draftID && <Table.Th>Draft</Table.Th>}
                   <Table.Th>Name on radio</Table.Th>
                   <Table.Th>Fit</Table.Th>
                   <Table.Th>Power</Table.Th>
@@ -527,14 +538,22 @@ export function RadioPage() {
                     ),
                     ...rows.map((m) => {
                       const i = shown.indexOf(m);
+                      const mark = marks.get(m.channel.id);
+                      const edge = mark && markColor(mark);
+                      const shadows = [
+                        over === m.channel.id && "inset 0 2px 0 var(--mantine-color-blue-filled)",
+                        edge && `inset 4px 0 0 var(--mantine-color-${edge}-filled)`,
+                      ].filter(Boolean);
                       return (
                         <Table.Tr
                           key={m.channel.id}
                           opacity={m.exported ? (drag?.id === m.channel.id ? 0.4 : 1) : 0.55}
+                          bg={mark?.kind === "added" ? "var(--mantine-color-green-light)" : undefined}
                           onDragOver={dragOver(m.channel.id)}
                           onDragLeave={() => setOver(null)}
                           onDrop={(e) => dropOnMemory(m, e)}
-                          style={over === m.channel.id ? { boxShadow: "inset 0 2px 0 var(--mantine-color-blue-filled)" } : undefined}
+                          style={shadows.length ? { boxShadow: shadows.join(", ") } : undefined}
+                          data-draft={mark?.kind}
                         >
                           <Table.Td>
                             <Checkbox
@@ -565,6 +584,7 @@ export function RadioPage() {
                               </Text>
                             )}
                           </Table.Td>
+                          {draftID && <Table.Td>{mark && <DraftBadge mark={mark} />}</Table.Td>}
                           <Table.Td ff="monospace" td={m.exported ? undefined : "line-through"}>
                             {m.name}
                             {m.overrides.name && "*"}
@@ -581,7 +601,7 @@ export function RadioPage() {
                             {m.overrides.power && "*"}
                           </Table.Td>
                           <Table.Td>
-                            <Switch size="xs" aria-label={`Scan ${m.channel.name}`} checked={m.scan} onChange={() => scan.mutate(m)} />
+                            <ScanSwitch m={m} onToggle={() => scan.mutate(m)} />
                           </Table.Td>
                           <Table.Td ff="monospace">{formatMHz(m.channel.rx_hz)}</Table.Td>
                           <Table.Td>
@@ -629,6 +649,7 @@ export function RadioPage() {
                     }),
                   ];
                 })}
+                {changes && changes.removed.length > 0 && <TakenOff channels={changes.removed} />}
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>
@@ -637,6 +658,8 @@ export function RadioPage() {
             memory to any section, and the page scrolls near the window's edges. Placing a memory in a section sorted by name or frequency makes it
             manual. * marks this radio's override; Ch is a plan's channel number. Shift-click selects a range. Add channels from the
             Channels page, or with sources.
+            {draftID &&
+              " In a draft, green marks memories it adds, orange ones it changes, and blue ones it moves to another section, against the saved radio; memories it takes off are listed last."}
           </Text>
           {editingSection && (
             <SectionEditor lib={lib} radio={radio} section={editingSection === "new" ? null : editingSection} onClose={() => setEditingSection(null)} />
@@ -1127,3 +1150,122 @@ function SourceMark(props: { n: number; sources: Source[] }) {
   );
 }
 
+
+/** markColor is the color a draft's change to a memory is marked in:
+ * none for a memory only renumbered, since adding one renumbers those
+ * after it. */
+function markColor(mark: DraftMark): string | null {
+  switch (mark.kind) {
+    case "added":
+      return "green";
+    case "changed":
+      return "orange";
+    case "moved":
+      return "blue";
+  }
+  return null;
+}
+
+/** DraftBadge says how a draft changes a memory from the saved radio. */
+function DraftBadge({ mark }: { mark: DraftMark }) {
+  switch (mark.kind) {
+    case "added":
+      return (
+        <Badge size="xs" color="green" variant="light">
+          new
+        </Badge>
+      );
+    case "moved":
+      return (
+        <Badge size="xs" color="blue" variant="light">
+          from {mark.from}
+        </Badge>
+      );
+    case "changed":
+      return (
+        <Tooltip label={mark.changes.join("; ")} multiline maw={320}>
+          <Badge size="xs" color="orange" variant="light" aria-label={`Changed: ${mark.changes.join("; ")}`}>
+            changed
+          </Badge>
+        </Tooltip>
+      );
+    case "renumbered":
+      return (
+        <Text span size="xs" c="dimmed">
+          was {mark.from ?? "–"}
+        </Text>
+      );
+  }
+}
+
+/** TakenOff lists, after a radio's memories, those its draft takes off. */
+function TakenOff({ channels }: { channels: Channel[] }) {
+  return (
+    <>
+      <Table.Tr bg="var(--mantine-color-default-hover)">
+        <Table.Td colSpan={14}>
+          <Text size="sm" fw={500}>
+            Taken off by this draft ({channels.length})
+          </Text>
+        </Table.Td>
+      </Table.Tr>
+      {channels.map((c) => (
+        <Table.Tr
+          key={`removed-${c.id}`}
+          bg="var(--mantine-color-red-light)"
+          style={{ boxShadow: "inset 4px 0 0 var(--mantine-color-red-filled)" }}
+          data-draft="removed"
+        >
+          <Table.Td />
+          <Table.Td />
+          <Table.Td />
+          <Table.Td>
+            <Badge size="xs" color="red" variant="light">
+              removed
+            </Badge>
+          </Table.Td>
+          <Table.Td ff="monospace" td="line-through">
+            {c.name}
+          </Table.Td>
+          <Table.Td />
+          <Table.Td />
+          <Table.Td />
+          <Table.Td ff="monospace" td="line-through">
+            {formatMHz(c.rx_hz)}
+          </Table.Td>
+          <Table.Td>
+            {duplex(c.rx_hz, c.tx_hz)} {offsetMHz(c.rx_hz, c.tx_hz)}
+          </Table.Td>
+          <Table.Td>{toneSummary(c)}</Table.Td>
+          <Table.Td colSpan={3} />
+        </Table.Tr>
+      ))}
+    </>
+  );
+}
+
+/** ScanSwitch turns scanning a memory on or off for this radio. An off-air
+ * channel isn't scanned unless the radio says to, which the switch says. */
+function ScanSwitch({ m, onToggle }: { m: Memory; onToggle: () => void }) {
+  const sw = (
+    <Group gap={4} wrap="nowrap">
+      <Switch size="xs" aria-label={`Scan ${m.channel.name}`} checked={m.scan} onChange={onToggle} />
+      {m.overrides.scan && "*"}
+    </Group>
+  );
+  if (m.channel.status !== "off-air") return sw;
+  return (
+    <Tooltip
+      multiline
+      maw={260}
+      label={m.scan ? "Off the air, but scanned on this radio as you set it" : "Off the air, so not scanned; turn it on to scan it on this radio anyway"}
+    >
+      <Group gap={4} wrap="nowrap">
+        {sw}
+        <Text span size="xs" c="dimmed">
+          off air
+        </Text>
+      </Group>
+    </Tooltip>
+  );
+}

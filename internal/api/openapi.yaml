@@ -2044,7 +2044,7 @@ components:
       properties:
         added: {type: array, items: {$ref: "#/components/schemas/Channel"}}
         removed: {type: array, items: {$ref: "#/components/schemas/Channel"}}
-        changed: {type: array, description: "Memories with another name, power, or scan", items: {$ref: "#/components/schemas/Channel"}}
+        changed: {type: array, description: "Memories with another name, power, or scan, and how", items: {$ref: "#/components/schemas/ChannelChange"}}
         moved: {type: array, description: Memories moved to another section, items: {$ref: "#/components/schemas/MovedMemory"}}
         renumbered: {type: array, description: Memories renumbered within their section, items: {$ref: "#/components/schemas/MovedMemory"}}
         sections_added: {type: array, items: {type: string}}
@@ -2054,12 +2054,14 @@ components:
         channels:
           type: array
           description: "Comparing with a revision: channels whose own values changed since, and how"
-          items:
-            type: object
-            required: [channel, changes]
-            properties:
-              channel: {$ref: "#/components/schemas/Channel"}
-              changes: {type: array, items: {type: string}}
+          items: {$ref: "#/components/schemas/ChannelChange"}
+    ChannelChange:
+      type: object
+      description: 'A channel or memory, and what changed about it, as "power: low → high"'
+      required: [channel, changes]
+      properties:
+        channel: {$ref: "#/components/schemas/Channel"}
+        changes: {type: array, items: {type: string}}
     MovedMemory:
       type: object
       description: "A memory a draft moves: its number (null when not programmed) and section, before and after"
@@ -2123,8 +2125,9 @@ components:
         ignore_numbers: {type: boolean, description: "Compare only what memories hold, wherever they are: for a first import into a radio rflib lays out its own way"}
     MemoryValues:
       type: object
-      required: [name, rx_hz, tx_hz, mode, rx_tone, tx_tone, tone_squelch, skip]
+      required: [name, rx_hz, tx_hz, mode, rx_tone, tx_tone, tone_squelch, skip, power]
       properties:
+        power: {type: string, description: "The power as the radio's file names it, such as 5W or HIGH; empty when it has none"}
         name: {type: string}
         rx_hz: {type: integer, format: int64}
         tx_hz: {type: integer, format: int64, nullable: true}
@@ -2150,10 +2153,11 @@ components:
           description: Channels a memory only on the radio might be, best first
           items:
             type: object
-            required: [match, channel]
+            required: [match, channel, differs]
             properties:
               match: {type: string, enum: [exact, frequencies, receive]}
               channel: {$ref: "#/components/schemas/Channel"}
+              differs: {type: array, items: {type: string}, description: "What differs from the memory, as fields names it, with name when the memory's isn't the channel's or a short name"}
     AddResult:
       type: object
       required: [added, channels, skipped, wrong_mode]
@@ -2372,12 +2376,13 @@ components:
 
     Model:
       type: object
-      required: [name, description, format, chirp_model, memories, name_length, modes, bands_mhz, power, notes, source, origin]
+      required: [name, description, format, chirp_model, software, memories, name_length, modes, bands_mhz, power, notes, source, origin]
       properties:
         name: {type: string}
         description: {type: string}
         format: {type: string}
         chirp_model: {type: string}
+        software: {type: string, description: "The software that loads a chirp format file when CHIRP doesn't support the radio, such as the maker's app; empty for CHIRP"}
         memories: {type: array, items: {type: integer}, minItems: 2, maxItems: 2}
         name_length: {type: integer}
         modes: {type: array, items: {type: string}}

@@ -100,6 +100,9 @@ func FromChannel(c domain.Channel, location, maxNameLen int) (Memory, error) {
 	return m, nil
 }
 
+// PowerText is a power level as rflib writes it in a CHIRP file.
+func PowerText(p domain.PowerLevel) string { return chirpPower(&p) }
+
 // chirpPower writes a radio power level as CHIRP's CSV import reads it:
 // watts. A level without known watts, or no level at all, is left blank and
 // CHIRP picks its default.

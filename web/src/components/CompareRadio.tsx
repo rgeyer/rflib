@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, call, type MemoryDiff, type MemoryValues } from "../api/client";
 import { failed, ok } from "../lib/notify";
-import { duplex, formatMHz, offsetMHz, toneSummary } from "../lib/radio";
+import { duplex, fieldValue, formatMHz, offsetMHz, toneSummary } from "../lib/radio";
 
 type Comparison = { memories: MemoryDiff[]; errors: string[] };
 type Applied = { used: number; kept: number; taken: number; at_end: string[]; copied: string[] };
@@ -203,11 +203,25 @@ function Decision(props: { m: MemoryDiff; choice?: Choice; take: boolean; onChoi
   const { m } = props;
   if (m.status === "radio") {
     const data = [
-      ...m.candidates.map((c) => ({ value: c.channel.id, label: `Use ${c.channel.name} (${c.match === "exact" ? "exact match" : c.match === "frequencies" ? "same frequencies" : "same receive"})` })),
+      ...m.candidates.map((c) => ({ value: c.channel.id, label: `Use ${c.channel.name} (${candidateMatch(c)})` })),
       { value: "keep", label: "Keep as programmed" },
       { value: "off", label: "Leave it off" },
     ];
-    return <Select aria-label={`Memory ${m.memory}`} data={data} value={props.choice ?? "keep"} allowDeselect={false} onChange={(v) => v && props.onChoice(v)} />;
+    const chosen = m.candidates.find((c) => c.channel.id === props.choice);
+    return (
+      <Stack gap={4}>
+        <Select aria-label={`Memory ${m.memory}`} data={data} value={props.choice ?? "keep"} allowDeselect={false} onChange={(v) => v && props.onChoice(v)} />
+        {chosen && m.radio && chosen.differs.length > 0 && (
+          <Stack gap={0} data-testid="candidate-differs">
+            {chosen.differs.map((f) => (
+              <Text key={f} size="xs">
+                {f}: <Text span inherit c="orange" fw={600}>{fieldValue(m.radio!, f)}</Text> on the radio, {fieldValue(chosen.channel, f)} in rflib
+              </Text>
+            ))}
+          </Stack>
+        )}
+      </Stack>
+    );
   }
   if (m.status === "changed") {
     return (
@@ -223,7 +237,7 @@ function Decision(props: { m: MemoryDiff; choice?: Choice; take: boolean; onChoi
           value={props.take ? "radio" : "rflib"}
           onChange={(v) => props.onTake(v === "radio")}
         />
-        {props.take && m.channel?.link && m.fields.some((f) => f !== "name" && f !== "skip") && (
+        {props.take && m.channel?.link && m.fields.some((f) => f !== "name" && f !== "skip" && f !== "power") && (
           <Text size="xs" c="dimmed">
             A shared channel: you'll get your own copy with the radio's values.
           </Text>
@@ -240,6 +254,13 @@ function Decision(props: { m: MemoryDiff; choice?: Choice; take: boolean; onChoi
   return null;
 }
 
+/** candidateMatch says how well a channel matches a memory only on the
+ * radio, and what differs. */
+function candidateMatch(c: MemoryDiff["candidates"][number]): string {
+  const how = c.match === "exact" ? "exact match" : c.match === "frequencies" ? "same frequencies" : "same receive";
+  return c.differs.length ? `${how}; differs in ${c.differs.join(", ")}` : how;
+}
+
 /** Values shows a memory's programming, marking the parts that differ
  * from the other side (fields, as the comparison names them). */
 function Values(props: { v?: MemoryValues | null; fields?: string[] }) {
@@ -254,6 +275,7 @@ function Values(props: { v?: MemoryValues | null; fields?: string[] }) {
     // "no tone" only where the other side has one.
     [toneSummary(v) || (differs("tx tone", "rx tone", "tone squelch") ? "no tone" : ""), differs("tx tone", "rx tone", "tone squelch")],
     [v.mode, differs("mode")],
+    [v.power, differs("power")],
     [v.skip ? "skipped" : "", differs("skip")],
   ];
   return (

@@ -25,11 +25,15 @@ func ParseCHIRP(r io.Reader) (Batch, error) {
 			b.fail(row, "%v", err)
 			return
 		}
+		n := len(b.Records)
 		if strings.TrimSpace(get("location")) == "" {
 			b.finish(row, c)
-			return
+		} else {
+			b.AddAt(row, m.Location, c)
 		}
-		b.AddAt(row, m.Location, c)
+		if rec := b.Added(n); rec != nil {
+			rec.Power = m.Power
+		}
 	}, &b)
 	return b, err
 }

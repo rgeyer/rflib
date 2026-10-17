@@ -711,6 +711,21 @@ func TestSearchAndSavedSearches(t *testing.T) {
 	}
 }
 
+func TestDraftSaysHowMemoriesChanged(t *testing.T) {
+	c := newCLI(t)
+	ids := c.sharedIDs("us-gmrs")
+	c.ok("radio", "add", "HT", "--model", "baofeng-uv5rm")
+	c.ok("radio", "draft", "HT", "--start")
+	c.ok("radio", "channels", "add", "HT", "--id", ids["GMRS 1"]+","+ids["GMRS 2"])
+	c.ok("radio", "draft", "HT", "--save")
+	c.ok("radio", "draft", "HT", "--start")
+	c.ok("radio", "channels", "set", "HT", "--id", ids["GMRS 1"], "--power", "high", "--scan", "no")
+	out := c.ok("radio", "draft", "HT")
+	if !strings.Contains(out, "power: default → high; scan: default → off") || strings.Contains(out, "GMRS 2") {
+		t.Errorf("draft = %q", out)
+	}
+}
+
 func TestRadioSources(t *testing.T) {
 	c := newCLI(t)
 	c.sharedIDs("us-gmrs", "us-noaa")
@@ -829,7 +844,7 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "" || !strings.HasSuffix(strings.TrimSpace(stderr), "Added 7 channels to HT; skipped 40 outside its bands") {
+	if out != "" || !strings.HasSuffix(strings.TrimSpace(stderr), "Added 7 channels to HT; skipped 120 outside its bands") {
 		t.Errorf("add = %q, %q", out, stderr)
 	}
 	if !strings.Contains(stderr, `skipped "CB 19" (27.185000 MHz): HT can't receive it`) {
@@ -861,10 +876,10 @@ func TestRadioSkipsOutOfBandChannels(t *testing.T) {
 	c.ok("radio", "add", "Base", "--model", "radioddity-uv5g")
 	c.ok("radio", "draft", "Base", "--start")
 	c.ok("radio", "sources", "add", "Base", "service:cb OR service:noaa")
-	if out := c.ok("radio", "sync", "Base", "--dry-run"); strings.Count(out, "would skip") != 40 || strings.Count(out, "would add") != 7 {
+	if out := c.ok("radio", "sync", "Base", "--dry-run"); strings.Count(out, "would skip") != 120 || strings.Count(out, "would add") != 7 {
 		t.Errorf("dry run = %q", out)
 	}
-	if out := c.status("radio", "sync", "Base"); !strings.Contains(out, "added 7; skipped 40 outside its bands") {
+	if out := c.status("radio", "sync", "Base"); !strings.Contains(out, "added 7; skipped 120 outside its bands") {
 		t.Errorf("sync = %q", out)
 	}
 }
@@ -997,7 +1012,7 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 
 func TestSharedChannels(t *testing.T) {
 	c := newCLI(t)
-	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 7 {
+	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || !strings.HasSuffix(got, "winlink\nsatellite") || strings.Count(got, "\n") != 8 {
 		t.Errorf("tag list = %q", got)
 	}
 	// A private channel matching GMRS 20, named differently, gives way to

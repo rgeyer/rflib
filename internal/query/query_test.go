@@ -31,6 +31,8 @@ func TestParseCanonical(t *testing.T) {
 		{"frequency:146.52 tags:x", "freq:146.52 tag:x"},
 		{`name:"say \"hi\""`, `name:"say \"hi\""`},
 		{`"OR"`, `"OR"`},
+		{"tag:a or tag:b and not tag:c", "(tag:a OR tag:b) -tag:c"},
+		{`"or" "Not"`, `"or" "Not"`},
 		{"x-ray", "x-ray"},
 		{"wiresx:123 organization:SBARC", "wires-x:123 org:SBARC"},
 	} {
@@ -75,6 +77,7 @@ func TestParseErrors(t *testing.T) {
 		{`name:"open`, "missing closing quote", 6},
 		{"OR tag:a", "OR needs a term before it", 1},
 		{"tag:a OR", "OR needs a term after it", 7},
+		{"tag:a or", "OR needs a term after it", 7},
 		{"tag:a -", "", 0}, // a lone - is text
 		{"tag:", "tag: needs a value", 1},
 		{"()", "empty ( )", 1},

@@ -35,6 +35,8 @@ func TestServiceCapWatts(t *testing.T) {
 		{Channel{Service: ServiceGMRS, TransmitHz: hz(467_550_000)}, 50, true},
 		{Channel{Service: ServiceMURS, TransmitHz: hz(151_820_000)}, 2, true},
 		{Channel{Service: ServiceCB, TransmitHz: hz(27_185_000)}, 4, true},
+		{Channel{Service: ServiceCB, TransmitHz: hz(27_185_000), Mode: "LSB"}, 12, true},
+		{Channel{Service: ServiceCB, TransmitHz: hz(27_185_000), Mode: "USB"}, 12, true},
 		{Channel{Service: ServiceAmateur, TransmitHz: hz(146_520_000)}, 0, false},
 		{Channel{Service: ServiceGMRS, TransmitHz: hz(462_550_000), RXOnly: true}, 0, false},
 		{Channel{Service: ServiceGMRS}, 0, false},

@@ -112,7 +112,7 @@ function RevisionCompare(props: { lib: string; radio: string; n: number; draft: 
     for (const x of c.removed) lines.push(`Removed ${x.name} (${mhz(x.rx_hz)})`);
     for (const m of c.moved) lines.push(`Moved ${m.channel.name} from ${m.from_section} to ${m.to_section}`);
     if (c.renumbered.length) lines.push(`${c.renumbered.length} memories renumbered`);
-    for (const x of c.changed) lines.push(`${x.name}: another name, power, or scan`);
+    for (const x of c.changed) for (const change of x.changes) lines.push(`${x.channel.name}: ${change}`);
     for (const x of c.channels ?? []) for (const change of x.changes) lines.push(`${x.channel.name}: ${change}`);
     for (const s of c.sections_added) lines.push(`Section added: ${s}`);
     for (const s of c.sections_removed) lines.push(`Section removed: ${s}`);

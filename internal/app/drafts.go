@@ -187,8 +187,10 @@ func started(d domain.Radio) string {
 // settings (name, power, or scan), and sections and sources added or
 // removed (by name, and by search).
 type DraftChanges struct {
-	Added, Removed, Changed []domain.Channel
-	Moved, Renumbered       []MovedMemory
+	Added, Removed []domain.Channel
+	// Changed are memories with another name, power, or scan, and how.
+	Changed           []ChannelChange
+	Moved, Renumbered []MovedMemory
 	// Channels are channels on both whose own values differ, as when
 	// comparing with a revision; a draft shares its radio's channels.
 	Channels        []ChannelChange
@@ -300,8 +302,10 @@ func diffLists(before, after list) DraftChanges {
 			out.Moved = append(out.Moved, MovedMemory{Channel: x.entry.Channel, From: y.number, To: x.number, FromSec: y.entry.Section.Name, ToSec: x.entry.Section.Name})
 		case x.number != y.number:
 			out.Renumbered = append(out.Renumbered, MovedMemory{Channel: x.entry.Channel, From: y.number, To: x.number, FromSec: y.entry.Section.Name, ToSec: x.entry.Section.Name})
-		case x.entry.Name != y.entry.Name || x.entry.Power != y.entry.Power || !sameSkip(x.entry.Skip, y.entry.Skip):
-			out.Changed = append(out.Changed, x.entry.Channel)
+		default:
+			if changes := entryChanges(y.entry, x.entry); len(changes) > 0 {
+				out.Changed = append(out.Changed, ChannelChange{Channel: x.entry.Channel, Changes: changes})
+			}
 		}
 		if ok {
 			if changes := domain.SharedChanges(y.entry.Channel, x.entry.Channel); len(changes) > 0 {
@@ -333,6 +337,39 @@ func missing(a, b []string) []string {
 		if !slices.Contains(b, x) {
 			out = append(out, x)
 		}
+	}
+	return out
+}
+
+// entryChanges says how a memory's own settings differ from one list to
+// another: its name on the radio, power, and scan, as "power: low → high".
+// An empty setting is the radio's default.
+func entryChanges(a, b domain.RadioEntry) []string {
+	var out []string
+	add := func(field, x, y string) {
+		if x != y {
+			out = append(out, fmt.Sprintf("%s: %s → %s", field, x, y))
+		}
+	}
+	or := func(s, empty string) string {
+		if s == "" {
+			return empty
+		}
+		return s
+	}
+	scan := func(skip *bool) string {
+		switch {
+		case skip == nil:
+			return "default"
+		case *skip:
+			return "off"
+		}
+		return "on"
+	}
+	add("name", or(a.Name, "automatic"), or(b.Name, "automatic"))
+	add("power", or(string(a.Power), "default"), or(string(b.Power), "default"))
+	if !sameSkip(a.Skip, b.Skip) {
+		add("scan", scan(a.Skip), scan(b.Skip))
 	}
 	return out
 }

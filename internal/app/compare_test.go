@@ -134,6 +134,26 @@ func TestCompareRadio(t *testing.T) {
 	}
 }
 
+// A memory's candidates say what differs from it, so a partial match can be
+// judged: tones here, and the name unless it's the channel's or a short name.
+func TestCandidatesSayWhatDiffers(t *testing.T) {
+	rptr := analog("Club Repeater", 147.3, 147.9, 131.8)
+	rptr.ID, rptr.ShortNames = "a", []string{"CLUB"}
+	other := analog("Other Repeater", 147.3, 147.9, 131.8)
+	other.ID = "b"
+	got := candidates(analog("CLUB", 147.3, 147.9, 100), []domain.Channel{rptr, other})
+	var out []string
+	for _, c := range got {
+		out = append(out, c.Channel.Name+" "+c.Match+" "+strings.Join(c.Differs, "+"))
+	}
+	if got, want := strings.Join(out, ", "), "Club Repeater frequencies tx tone, Other Repeater frequencies name+tx tone"; got != want {
+		t.Errorf("candidates = %s, want %s", got, want)
+	}
+	if c := candidates(analog("CLUB", 147.3, 147.9, 131.8), []domain.Channel{rptr}); len(c) != 1 || c[0].Match != "exact" || len(c[0].Differs) != 0 {
+		t.Errorf("an exact match = %+v", c)
+	}
+}
+
 // An empty radio starts from its file: every memory is only on the radio,
 // and kept memories keep their numbers, gaps and all.
 func TestCompareAdoptsEmptyRadio(t *testing.T) {
@@ -788,5 +808,74 @@ func TestReleaseKeepsAChannel(t *testing.T) {
 	}
 	if got, _, _ := s.radioEntriesNamed(ctx, "HT"); len(got) != 0 {
 		t.Errorf("after removing the section = %v", got)
+	}
+}
+
+// Compared with its own export, a radio's power compares too: a memory set
+// to another level on the radio is changed, and taking the radio's sets
+// this radio's power for it.
+func TestComparePower(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	calling, _, err := s.CreateChannel(ctx, analog("Calling", 146.52, 146.52, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rptr, _, err := s.CreateChannel(ctx, analog("Repeater", 147.3, 147.9, 131.8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRadio(ctx, domain.Radio{Name: "HT", Model: "baofeng-uv5rm"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddChannels(ctx, "HT", AddRequest{IDs: []string{calling.ID, rptr.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	layout, _, err := s.Layout(ctx, "HT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := program.Write(&buf, layout, true, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	// High is 8 W; on the radio, the repeater was set to Low, 1 W, which
+	// CHIRP writes as 1.0W.
+	lines := strings.Split(buf.String(), "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "2,") {
+			lines[i] = strings.Replace(l, ",8W,", ",1.0W,", 1)
+		}
+	}
+	file := strings.Join(lines, "\n")
+	cmpn, err := s.CompareRadio(ctx, "HT", strings.NewReader(file), CompareOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := diffs(cmpn), "same:01, changed:02 power"; got != want {
+		t.Fatalf("compare = %s, want %s", got, want)
+	}
+	if m := cmpn.Memories[1]; m.RadioPower != "1.0W" || m.RflibPower != "8W" {
+		t.Errorf("powers = %q, %q", m.RadioPower, m.RflibPower)
+	}
+	if _, _, err := s.ApplyComparison(ctx, "HT", strings.NewReader(file), CompareDecisions{Take: []int{2}}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.GetRadio(ctx, "HT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	es, err := s.lib.RadioEntries(ctx, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if es[1].Power != domain.PowerLow {
+		t.Errorf("repeater power = %q", es[1].Power)
+	}
+	if got, err := s.lib.GetChannel(ctx, rptr.ID); err != nil || got.Power != "" {
+		t.Errorf("the channel's own power changed: %q, %v", got.Power, err)
+	}
+	if cmpn, err = s.CompareRadio(ctx, "HT", strings.NewReader(file), CompareOptions{}); err != nil || diffs(cmpn) != "same:01, same:02" {
+		t.Errorf("compare again = %s, %v", diffs(cmpn), err)
 	}
 }

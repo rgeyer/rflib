@@ -8,7 +8,7 @@
 ./rflib export chirp -q 'band:2m OR band:70cm' --output dual.csv
 ```
 
-- **Combining:** terms are `field:value`, and a space between them means AND. `OR` binds tighter than AND, so `a b OR c` means `a AND (b OR c)`.
+- **Combining:** terms are `field:value`, and a space between them means AND. `OR` binds tighter than AND, so `a b OR c` means `a AND (b OR c)`. `OR`, `AND`, and `NOT` work in any case (`or` too); to search for one of those words, quote it: `"or"`.
 - **Negating:** a leading `-` (or `NOT`) negates a term or a parenthesized group. When a negation comes first among the arguments, put `--` before it so it isn't read as a flag: `channel list -- -tag:hf`. Quoting a whole query, or passing it with `-q`, avoids this.
 - **Grouping and quoting:** parentheses group terms, and quotes keep spaces in a value: `name:"Lompoc PD"`.
 - **Bare words** match names, short names, and notes, ignoring case.

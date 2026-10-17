@@ -8,13 +8,14 @@
 | `yaesu-ftm6000` | ADMS-13 (`yaesu-ftm6000` profile) | 1-999 | 6 | LOW 5 W, MID 25 W, HIGH 50 W | FM, NFM, AM |
 | `yaesu-ft857` | CHIRP: Yaesu FT-857/897 (US) | 1-200 | 8 | set from the radio's menu | FM, NFM, AM, USB, LSB, CW |
 | `tidradio-tdh3-gmrs` | CHIRP: TIDRADIO TD-H3-GMRS | 1-199 | 8 | Low 2 W, High 5 W | FM, NFM, AM |
+| `tidradio-tdh9` | ODmaster's web interface (CHIRP's CSV layout), in Normal, Ham, or GMRS mode | 1-199 | 8 | Low 1 W, High 4 W | FM, NFM (AM is the radio's airband setting, not a memory's) |
 | `baofeng-uv5rm` | CHIRP: Baofeng 5RM | 1-1000 | 12 | Low 1 W, Medium 5 W, High 8 W | FM, NFM, AM |
 | `explorer-qrz1` | CHIRP: Explorer QRZ-1 | 1-200 | 10 | Low 0.5 W, Mid 2.5 W, High 5 W | FM, NFM |
 | `tyt-th9800` | CHIRP: TYT TH-9800 | 1-800 | 6, upper case | Low 5 W, Mid2 10 W, Mid1 20 W, High 50 W | FM, NFM, AM |
 | `radioddity-uv5g` | CHIRP: Radioddity UV-5G | 0-127 | 7, upper case | Low 1 W, High 4 W | FM, NFM |
 | `chirp-generic` | CHIRP: any radio it supports | 1-999 | unlimited | left to CHIRP | not checked |
 
-`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, modes, and where the facts came from: CHIRP's driver source, or the radio's operating manual. `rflib model list` also lists your own models and the directory they're read from: `models` in rflib's settings folder, which is `~/.config/rflib` on Linux, `~/Library/Application Support/rflib` on macOS, and `%AppData%\rflib` on Windows (or `$XDG_CONFIG_HOME/rflib` anywhere, when that's set).
+`rflib model show NAME` prints a model's full facts, including allowed name characters, tunable bands, modes, and where the facts came from: CHIRP's driver source, or the radio's operating manual. A model can be programmed with software other than CHIRP that reads CHIRP's CSV layout, such as ODmaster for the TD-H9; its `software` field names it, and `model list` shows it. `rflib model list` also lists your own models and the directory they're read from: `models` in rflib's settings folder, which is `~/.config/rflib` on Linux, `~/Library/Application Support/rflib` on macOS, and `%AppData%\rflib` on Windows (or `$XDG_CONFIG_HOME/rflib` anywhere, when that's set).
 
 ## Radios CHIRP supports but rflib doesn't
 

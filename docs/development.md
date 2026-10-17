@@ -45,7 +45,7 @@ uv run tools/chirp_model.py --json > /tmp/chirp.json   # CHIRP checks need this
 go run ./tools/datacheck -chirp /tmp/chirp.json         # -only ID,ID for some datasets
 ```
 
-Resolve a finding by fixing the data, or by recording an accepted difference or a fresh review in `sources.yaml`. In Claude Code, `/maintain-data` works through open findings. GitHub stops scheduled workflows in repositories with no activity for 60 days; re-enable it from the Actions tab, or run the same commands from cron with `GH_TOKEN` set and `-issues`.
+Resolve a finding by fixing the data, or by recording an accepted difference or a fresh review in `sources.yaml`. In Claude Code, `/maintain-data` works through open findings. To rename a channel in a built-in list, change its name in the list's CSV and record its old name in the list's `Renamed` (`internal/seed/seed.go`); otherwise an update retires the old channel and adds a new one. GitHub stops scheduled workflows in repositories with no activity for 60 days; re-enable it from the Actions tab, or run the same commands from cron with `GH_TOKEN` set and `-issues`.
 
 ---
 

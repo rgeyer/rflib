@@ -95,7 +95,7 @@ func lexWord(s string, start int) (token, int, error) {
 	}
 	t.value, t.raw = buf.String(), s[start:i]
 	if !t.hasColon && !t.quoted {
-		switch t.value {
+		switch strings.ToUpper(t.value) {
 		case "OR":
 			t.kind = tOr
 		case "AND":

@@ -32,9 +32,13 @@ type Model struct {
 	Format string `yaml:"format"`
 	// ChirpModel is what to choose in CHIRP for this radio, for chirp
 	// formats.
-	ChirpModel string   `yaml:"chirp_model"`
-	Memories   Memories `yaml:"memories"`
-	Names      Names    `yaml:"names"`
+	ChirpModel string `yaml:"chirp_model"`
+	// Software is the programming software that loads a chirp format
+	// file when CHIRP doesn't support the radio, such as the maker's own
+	// app reading CHIRP's CSV layout, with where to import it.
+	Software string   `yaml:"software"`
+	Memories Memories `yaml:"memories"`
+	Names    Names    `yaml:"names"`
 	// Power lists the radio's levels from lowest to highest. Empty means
 	// power isn't set per memory.
 	Power []Level `yaml:"power"`

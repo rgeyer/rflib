@@ -1,6 +1,6 @@
 name,receive_mhz,transmit_mhz,transmit_tone,mode,service,rx_only,tags,notes
-SO-50,436.795,145.850,ctcss:67.0,FM,amateur,false,,FM satellite (downlink 436.795; uplink 145.850 with 67.0 Hz); arm its 10-minute timer with a 2 s carrier on 74.4 Hz; expect Doppler shift
-AO-123,435.400,145.850,ctcss:67.0,FM,amateur,false,,FM satellite ASRTU-1 (downlink 435.400; uplink 145.850 with 67.0 Hz); expect Doppler shift
-AO-91,145.960,435.250,ctcss:67.0,FM,amateur,false,,FM satellite Fox-1B (downlink 145.960; uplink 435.250 with 67.0 Hz); battery-limited: don't use it in eclipse; expect Doppler shift
-PO-101,145.900,437.500,ctcss:141.3,FM,amateur,false,,FM satellite Diwata-2 (downlink 145.900; uplink 437.500 with 141.3 Hz); on by schedule only; AMSAT reports it may be failing; expect Doppler shift
-CAS-3H,437.200,144.350,,FM,amateur,false,,FM satellite LilacSat-2 (downlink 437.200; uplink 144.350; no tone); no set schedule; expect Doppler shift
+SO-50,436.795,145.850,ctcss:67.0,FM,amateur,false,satellite,FM satellite (downlink 436.795; uplink 145.850 with 67.0 Hz); arm its 10-minute timer with a 2 s carrier on 74.4 Hz; expect Doppler shift
+AO-123,435.400,145.850,ctcss:67.0,FM,amateur,false,satellite,FM satellite ASRTU-1 (downlink 435.400; uplink 145.850 with 67.0 Hz); expect Doppler shift
+AO-91,145.960,435.250,ctcss:67.0,FM,amateur,false,satellite,FM satellite Fox-1B (downlink 145.960; uplink 435.250 with 67.0 Hz); battery-limited: don't use it in eclipse; expect Doppler shift
+PO-101,145.900,437.500,ctcss:141.3,FM,amateur,false,satellite,FM satellite Diwata-2 (downlink 145.900; uplink 437.500 with 141.3 Hz); on by schedule only; AMSAT reports it may be failing; expect Doppler shift
+CAS-3H,437.200,144.350,,FM,amateur,false,satellite,FM satellite LilacSat-2 (downlink 437.200; uplink 144.350; no tone); no set schedule; expect Doppler shift

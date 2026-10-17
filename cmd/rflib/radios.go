@@ -152,6 +152,9 @@ func formatName(m model.Model) string {
 	if p, ok := m.ProfileName(); ok {
 		return "profile " + p
 	}
+	if m.Software != "" {
+		return "CHIRP CSV for " + m.Software
+	}
 	return "CHIRP: " + m.ChirpModel
 }
 

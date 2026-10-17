@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { duplex, formatMHz, formatTone, offsetMHz, parseMHz, parseTone, toneSummary } from "./radio";
+import { duplex, fieldValue, formatMHz, formatTone, offsetMHz, parseMHz, parseTone, toneSummary } from "./radio";
 
 describe("frequencies", () => {
   it("round-trips exactly", () => {
@@ -28,5 +28,16 @@ describe("tones", () => {
     expect(toneSummary({ tx_tone: "ctcss:100.000", rx_tone: "ctcss:100.000", tone_squelch: true })).toBe("TSQL 100.0");
     expect(toneSummary({ tx_tone: "ctcss:131.800", rx_tone: "ctcss:88.500", tone_squelch: false })).toBe("T131.8");
     expect(toneSummary({ tx_tone: "none", rx_tone: "dcs:023", tone_squelch: true })).toBe("RD023N");
+  });
+});
+
+describe("fieldValue", () => {
+  it("shows what a comparison names", () => {
+    const v = { name: "Club", rx_hz: 147_300_000, tx_hz: null, mode: "FM", tx_tone: "ctcss:131.800", rx_tone: "none", tone_squelch: false };
+    expect(fieldValue(v, "tx tone")).toBe("131.8");
+    expect(fieldValue(v, "rx tone")).toBe("none");
+    expect(fieldValue(v, "tx")).toBe("none");
+    expect(fieldValue(v, "rx")).toBe("147.300000");
+    expect(fieldValue(v, "tone squelch")).toBe("off");
   });
 });

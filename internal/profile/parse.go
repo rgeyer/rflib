@@ -54,10 +54,14 @@ func (x Parser) Parse(r io.Reader) (importer.Batch, error) {
 			b.Fail(line, err)
 			continue
 		}
+		n := len(b.Records)
 		if loc, ok := x.location(fields); ok {
 			b.AddAt(line, loc, c)
 		} else {
 			b.Add(line, c)
+		}
+		if rec := b.Added(n); rec != nil {
+			rec.Power = get("power")
 		}
 	}
 }

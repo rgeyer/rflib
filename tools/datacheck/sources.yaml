@@ -146,6 +146,12 @@ datasets:
     source: CHIRP drivers (uv run tools/chirp_model.py --json)
     # The CHIRP radios last reviewed, one per line.
     baseline: chirp-radios.txt
+  - id: tidradio-odmaster
+    covers: [tidradio-tdh9]
+    check: review
+    source: the user's ODmaster web interface exports, one per radio mode
+    verified: 2026-10-17
+    every: 365d
   - id: yaesu-adms
     covers: [yaesu-ftm150, yaesu-ftm6000]
     check: review

@@ -6,7 +6,7 @@ rflib is in public preview. These are known; there's no need to report them, tho
 
 - **Analog only.** Channels are FM, NFM, AM, USB, LSB, or CW. Digital modes, such as DMR, D-STAR, P25, and System Fusion, aren't supported yet; importing a file with them reports those memories and skips them.
 - **US rules.** The built-in lists, band plans, service power limits, and where a radio may transmit all follow US (FCC) rules.
-- **Few radios are built in.** Nine models ship with rflib (see [Radio models](radio-models.md)). Any other radio CHIRP supports works through `chirp-generic`, which checks nothing about the radio: not its bands, modes, memory count, or power levels. A [radio request](https://github.com/rgeyer/rflib/issues/new?template=2-radio-request.yml) gets a model started.
+- **Few radios are built in.** Ten models ship with rflib (see [Radio models](radio-models.md)). Any other radio CHIRP supports works through `chirp-generic`, which checks nothing about the radio: not its bands, modes, memory count, or power levels. A [radio request](https://github.com/rgeyer/rflib/issues/new?template=2-radio-request.yml) gets a model started.
 - **Yaesu FTM-150:** tone squelch isn't mapped to ADMS-17's spelling yet, so a tone squelch channel fails the export (or is left out with `--skip-invalid`).
 - **Split tones on some radios.** Radios that hold one tone per memory, such as the Yaesu FTM-150 and FTM-6000 and the TYT TH-9800, can't hold different transmit and receive tones. rflib programs those channels with the transmit tone alone, which still opens the repeater, and marks them.
 - **Programming software isn't driven directly.** rflib writes a file; you load it into the radio with CHIRP or the manufacturer's software.

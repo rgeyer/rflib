@@ -20,9 +20,10 @@ type MemoryValues struct {
 	TxTone      string `json:"tx_tone"`
 	ToneSquelch bool   `json:"tone_squelch"`
 	Skip        bool   `json:"skip"`
+	Power       string `json:"power"`
 }
 
-func newMemoryValues(c *domain.Channel) *MemoryValues {
+func newMemoryValues(c *domain.Channel, power string) *MemoryValues {
 	if c == nil {
 		return nil
 	}
@@ -30,13 +31,14 @@ func newMemoryValues(c *domain.Channel) *MemoryValues {
 	if c.RXOnly {
 		tx = nil
 	}
-	return &MemoryValues{c.Name, c.ReceiveHz, tx, c.Mode, domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, c.Skip}
+	return &MemoryValues{c.Name, c.ReceiveHz, tx, c.Mode, domain.FormatTone(c.ReceiveTone), domain.FormatTone(c.TransmitTone), c.ToneSquelch, c.Skip, power}
 }
 
 // Candidate is a channel a memory only on the radio might be.
 type Candidate struct {
-	Match   string  `json:"match"`
-	Channel Channel `json:"channel"`
+	Match   string   `json:"match"`
+	Channel Channel  `json:"channel"`
+	Differs []string `json:"differs"`
 }
 
 // MemoryDiff is one memory of a comparison.
@@ -64,7 +66,7 @@ func (in compareInput) options() app.CompareOptions {
 func newComparison(c app.Comparison) map[string]any {
 	out := make([]MemoryDiff, len(c.Memories))
 	for i, d := range c.Memories {
-		m := MemoryDiff{Memory: number(d.Location), Status: string(d.Kind), Radio: newMemoryValues(d.Radio), Rflib: newMemoryValues(d.Rflib),
+		m := MemoryDiff{Memory: number(d.Location), Status: string(d.Kind), Radio: newMemoryValues(d.Radio, d.RadioPower), Rflib: newMemoryValues(d.Rflib, d.RflibPower),
 			Fields: d.Fields, Candidates: []Candidate{}}
 		if m.Fields == nil {
 			m.Fields = []string{}
@@ -79,7 +81,7 @@ func newComparison(c app.Comparison) map[string]any {
 			m.Channel = &ch
 		}
 		for _, cand := range d.Candidates {
-			m.Candidates = append(m.Candidates, Candidate{cand.Match, newChannel(cand.Channel)})
+			m.Candidates = append(m.Candidates, Candidate{cand.Match, newChannel(cand.Channel), nonNil(cand.Differs)})
 		}
 		out[i] = m
 	}
