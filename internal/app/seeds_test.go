@@ -112,6 +112,39 @@ func TestSeedUpdates(t *testing.T) {
 	}
 }
 
+// A list that renames a channel says so, and an update renames the shared
+// channel in place, rather than retiring it and adding another, so radios
+// and notes on it keep it.
+func TestSeedRenames(t *testing.T) {
+	ctx := context.Background()
+	_, d := newService(t)
+	sh := openShared(t, d)
+	l := seed.List{ID: "test-list"}
+	if _, err := sh.updateSeed(ctx, l, rows("APRS Space", "145.825", "space", "APRS", "144.39", "national"), false); err != nil {
+		t.Fatal(err)
+	}
+	old, err := sh.lib.GetChannel(ctx, SeedID(l.ID, "APRS Space"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Renamed = map[string][]string{"ARISS APRS": {"APRS Space"}}
+	v2 := rows("ARISS APRS", "145.825", "the ISS", "APRS", "144.39", "national")
+	st, err := sh.updateSeed(ctx, l, v2, false)
+	if err != nil || changes(st) != "update ARISS APRS: name,notes" {
+		t.Fatalf("rename = %q, %v", changes(st), err)
+	}
+	got, err := sh.lib.GetChannel(ctx, old.ID)
+	if err != nil || got.Name != "ARISS APRS" || got.Status.OrActive() != domain.StatusActive {
+		t.Fatalf("renamed channel = %+v, %v", got, err)
+	}
+	if all, _ := sh.lib.ListChannels(ctx); len(all) != 2 {
+		t.Errorf("channels after the rename = %d", len(all))
+	}
+	if st, _ := sh.updateSeed(ctx, l, v2, true); st.Pending() {
+		t.Errorf("after the rename = %q", changes(st))
+	}
+}
+
 // Seeding records each channel's list, RecordSeeds changes nothing on a
 // list already recorded, and a list never seeded isn't installed.
 func TestRecordSeeds(t *testing.T) {
