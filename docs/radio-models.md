@@ -8,7 +8,7 @@
 | `yaesu-ftm6000` | ADMS-13 (`yaesu-ftm6000` profile) | 1-999 | 6 | LOW 5 W, MID 25 W, HIGH 50 W | FM, NFM, AM |
 | `yaesu-ft857` | CHIRP: Yaesu FT-857/897 (US) | 1-200 | 8 | set from the radio's menu | FM, NFM, AM, USB, LSB, CW |
 | `tidradio-tdh3-gmrs` | CHIRP: TIDRADIO TD-H3-GMRS | 1-199 | 8 | Low 2 W, High 5 W | FM, NFM, AM |
-| `tidradio-tdh9` | ODmaster's web interface (CHIRP's CSV layout), in Normal, Ham, or GMRS mode | 1-199 | 8 | Low 1 W, High 4 W | FM, NFM, AM |
+| `tidradio-tdh9` | ODmaster's web interface (CHIRP's CSV layout), in Normal, Ham, or GMRS mode | 1-199 | 8 | Low 1 W, High 4 W | FM, NFM (AM is the radio's airband setting, not a memory's) |
 | `baofeng-uv5rm` | CHIRP: Baofeng 5RM | 1-1000 | 12 | Low 1 W, Medium 5 W, High 8 W | FM, NFM, AM |
 | `explorer-qrz1` | CHIRP: Explorer QRZ-1 | 1-200 | 10 | Low 0.5 W, Mid 2.5 W, High 5 W | FM, NFM |
 | `tyt-th9800` | CHIRP: TYT TH-9800 | 1-800 | 6, upper case | Low 5 W, Mid2 10 W, Mid1 20 W, High 50 W | FM, NFM, AM |
