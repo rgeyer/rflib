@@ -2125,8 +2125,9 @@ components:
         ignore_numbers: {type: boolean, description: "Compare only what memories hold, wherever they are: for a first import into a radio rflib lays out its own way"}
     MemoryValues:
       type: object
-      required: [name, rx_hz, tx_hz, mode, rx_tone, tx_tone, tone_squelch, skip]
+      required: [name, rx_hz, tx_hz, mode, rx_tone, tx_tone, tone_squelch, skip, power]
       properties:
+        power: {type: string, description: "The power as the radio's file names it, such as 5W or HIGH; empty when it has none"}
         name: {type: string}
         rx_hz: {type: integer, format: int64}
         tx_hz: {type: integer, format: int64, nullable: true}

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ryan/rflib/internal/chirp"
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/export"
 	"github.com/ryan/rflib/internal/importer"
@@ -315,6 +316,16 @@ func choosePower(m model.Model, c domain.Channel, intent domain.PowerIntent, war
 		level, _ = m.Level(domain.PowerHigh)
 	}
 	return &domain.PowerLevel{Label: level.Label, Watts: level.Watts}
+}
+
+// PowerText is how a model's file spells one of its power levels: the
+// level's label for a profile, its watts for CHIRP.
+func PowerText(m model.Model, l model.Level) string {
+	level := domain.PowerLevel{Label: l.Label, Watts: l.Watts}
+	if _, ok := m.ProfileName(); ok {
+		return strings.ToUpper(level.Label)
+	}
+	return chirp.PowerText(level)
 }
 
 func fmtWatts(w float64) string { return strconv.FormatFloat(w, 'f', -1, 64) }

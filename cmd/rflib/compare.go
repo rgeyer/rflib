@@ -145,6 +145,9 @@ func printComparison(out io.Writer, c app.Comparison) error {
 		if len(d.Fields) > 0 {
 			notes = append(notes, "differs in "+strings.Join(d.Fields, ", "))
 		}
+		if slices.Contains(d.Fields, "power") {
+			notes = append(notes, fmt.Sprintf("power %s on the radio, %s in rflib", d.RadioPower, d.RflibPower))
+		}
 		if d.Unexported != "" {
 			notes = append(notes, "rflib's export leaves it out: "+d.Unexported)
 		}

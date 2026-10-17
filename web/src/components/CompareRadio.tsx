@@ -237,7 +237,7 @@ function Decision(props: { m: MemoryDiff; choice?: Choice; take: boolean; onChoi
           value={props.take ? "radio" : "rflib"}
           onChange={(v) => props.onTake(v === "radio")}
         />
-        {props.take && m.channel?.link && m.fields.some((f) => f !== "name" && f !== "skip") && (
+        {props.take && m.channel?.link && m.fields.some((f) => f !== "name" && f !== "skip" && f !== "power") && (
           <Text size="xs" c="dimmed">
             A shared channel: you'll get your own copy with the radio's values.
           </Text>
@@ -275,6 +275,7 @@ function Values(props: { v?: MemoryValues | null; fields?: string[] }) {
     // "no tone" only where the other side has one.
     [toneSummary(v) || (differs("tx tone", "rx tone", "tone squelch") ? "no tone" : ""), differs("tx tone", "rx tone", "tone squelch")],
     [v.mode, differs("mode")],
+    [v.power, differs("power")],
     [v.skip ? "skipped" : "", differs("skip")],
   ];
   return (

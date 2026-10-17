@@ -18,6 +18,9 @@ type Record struct {
 	// HasLocation (some radios number from 0).
 	Location    int
 	HasLocation bool
+	// Power is the power column as a radio's file has it, such as "5W" or
+	// "HIGH"; comparing a radio with its file reads it.
+	Power string
 }
 
 // RowError reports a source row that could not be turned into a Record.
@@ -59,6 +62,16 @@ func (b *Batch) finish(row int, c domain.Channel) {
 // Add validates c and records it as a Record or a RowError. Parsers outside
 // this package use it so every source normalizes channels the same way.
 func (b *Batch) Add(row int, c domain.Channel) { b.finish(row, c) }
+
+// Added returns the record added since the batch held n records, or nil
+// when the row added none, so a parser can fill in what a record keeps
+// beside its channel.
+func (b *Batch) Added(n int) *Record {
+	if len(b.Records) > n {
+		return &b.Records[n]
+	}
+	return nil
+}
 
 // AddAt is Add for a channel at a memory number.
 func (b *Batch) AddAt(row, location int, c domain.Channel) {

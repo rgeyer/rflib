@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ryan/rflib/internal/domain"
 	"github.com/ryan/rflib/internal/importer"
+	"github.com/ryan/rflib/internal/model"
 	"github.com/ryan/rflib/internal/program"
 	"github.com/ryan/rflib/internal/store"
 )
@@ -56,6 +58,9 @@ type MemoryDiff struct {
 	// Radio is the memory as the file has it, and Rflib as rflib's export
 	// has it.
 	Radio, Rflib *domain.Channel
+	// RadioPower and RflibPower are each side's power, as the radio's
+	// file names it ("5W", "HIGH"); empty when the file has none.
+	RadioPower, RflibPower string
 	// Channel is the library channel behind rflib's side.
 	Channel *domain.Channel
 	// Fields are what differs, for MemoryChanged.
@@ -177,7 +182,11 @@ func (s *Service) CompareRadio(ctx context.Context, radio string, file io.Reader
 	pair := func(i, j int, kind MemoryKind) {
 		pairedRadio[i], pairedRflib[j] = true, true
 		a, b, ch := radioSide[i].Channel, rflibSide[j].Channel, original[j]
-		d := MemoryDiff{Kind: kind, Location: radioSide[i].Location, Radio: &a, Rflib: &b, Channel: &ch, Fields: diffFields(a, b)}
+		d := MemoryDiff{Kind: kind, Location: radioSide[i].Location, Radio: &a, Rflib: &b, Channel: &ch, Fields: diffFields(a, b),
+			RadioPower: radioSide[i].Power, RflibPower: rflibSide[j].Power}
+		if powerDiffers(d.RadioPower, d.RflibPower) {
+			d.Fields = append(d.Fields, "power")
+		}
 		if l := rflibSide[j].Location; l != d.Location && l != program.NoNumber {
 			d.RflibLocation = &l
 		}
@@ -267,13 +276,13 @@ func (s *Service) CompareRadio(ctx context.Context, radio string, file io.Reader
 	for i, a := range radioSide {
 		if !pairedRadio[i] {
 			c := a.Channel
-			cmpn.Memories = append(cmpn.Memories, MemoryDiff{Kind: MemoryOnRadio, Location: a.Location, Radio: &c, Candidates: candidates(c, pool)})
+			cmpn.Memories = append(cmpn.Memories, MemoryDiff{Kind: MemoryOnRadio, Location: a.Location, Radio: &c, RadioPower: a.Power, Candidates: candidates(c, pool)})
 		}
 	}
 	for j, b := range rflibSide {
 		if !pairedRflib[j] {
 			c, ch := b.Channel, original[j]
-			cmpn.Memories = append(cmpn.Memories, MemoryDiff{Kind: MemoryInRflib, Location: b.Location, Rflib: &c, Channel: &ch, Unexported: unexported[j]})
+			cmpn.Memories = append(cmpn.Memories, MemoryDiff{Kind: MemoryInRflib, Location: b.Location, Rflib: &c, RflibPower: b.Power, Channel: &ch, Unexported: unexported[j]})
 		}
 	}
 	slices.SortStableFunc(cmpn.Memories, func(a, b MemoryDiff) int { return cmp.Compare(a.Location, b.Location) })
@@ -404,6 +413,39 @@ func diffFields(radio, rflib domain.Channel) []string {
 	return out
 }
 
+// powerIntent is the power to set for a radio's power as its file names
+// it: the first of low, medium, high, and max the model programs that way.
+func powerIntent(m model.Model, text string) (domain.PowerIntent, bool) {
+	for _, p := range []domain.PowerIntent{domain.PowerLow, domain.PowerMedium, domain.PowerHigh, domain.PowerMax} {
+		if l, ok := m.Level(p); ok && normalPower(program.PowerText(m, l)) == normalPower(text) {
+			return p, true
+		}
+	}
+	return domain.PowerUnset, false
+}
+
+// powerDiffers reports whether a memory's power on the radio isn't what
+// rflib programs. Only powers both sides name count: a model without power
+// levels leaves the radio's power to the radio, and a file without a power
+// column says nothing about it. Watts compare as numbers, so CHIRP's
+// "5.0W" is rflib's "5W".
+func powerDiffers(radio, rflib string) bool {
+	if strings.TrimSpace(radio) == "" || strings.TrimSpace(rflib) == "" {
+		return false
+	}
+	return normalPower(radio) != normalPower(rflib)
+}
+
+func normalPower(p string) string {
+	p = strings.ToUpper(strings.TrimSpace(p))
+	if w, ok := strings.CutSuffix(p, "W"); ok {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(w), 64); err == nil {
+			return strconv.FormatFloat(f, 'f', -1, 64) + "W"
+		}
+	}
+	return p
+}
+
 // CompareDecisions are what to do with a comparison's memories, by radio
 // memory number; memories not named are left as they are in rflib.
 type CompareDecisions struct {
@@ -486,7 +528,7 @@ func (s *Service) ApplyComparison(ctx context.Context, radio string, file io.Rea
 	slices.SortFunc(places, func(a, b placement) int { return cmp.Compare(a.loc, b.loc) })
 	err = s.lib.InTx(ctx, func(tx store.Library) error {
 		for _, mem := range takes {
-			copied, err := takeRadio(ctx, tx, r, mem)
+			copied, err := takeRadio(ctx, tx, r, m, mem)
 			if err != nil {
 				return fmt.Errorf("memory %d: %w", mem.Location, err)
 			}
@@ -557,9 +599,17 @@ func (s *Service) ApplyComparison(ctx context.Context, radio string, file io.Rea
 
 // takeRadio gives rflib a changed memory's values from the radio. It
 // reports whether a shared channel was copied to do so.
-func takeRadio(ctx context.Context, tx store.Library, r domain.Radio, mem MemoryDiff) (bool, error) {
+func takeRadio(ctx context.Context, tx store.Library, r domain.Radio, m model.Model, mem MemoryDiff) (bool, error) {
 	ch, radio := *mem.Channel, onAir(*mem.Radio)
-	channelFields := slices.ContainsFunc(mem.Fields, func(f string) bool { return f != "name" && f != "skip" })
+	entryField := func(f string) bool { return f == "name" || f == "skip" || f == "power" }
+	channelFields := slices.ContainsFunc(mem.Fields, func(f string) bool { return !entryField(f) })
+	var power domain.PowerIntent
+	if slices.Contains(mem.Fields, "power") {
+		var ok bool
+		if power, ok = powerIntent(m, mem.RadioPower); !ok {
+			return false, domain.Invalidf("the radio's power %q isn't one of %s's levels; keep rflib's", mem.RadioPower, m.Name)
+		}
+	}
 	copied := false
 	if channelFields {
 		if ch.Link != nil {
@@ -576,7 +626,7 @@ func takeRadio(ctx context.Context, tx store.Library, r domain.Radio, mem Memory
 			return copied, err
 		}
 	}
-	if !slices.Contains(mem.Fields, "name") && !slices.Contains(mem.Fields, "skip") {
+	if !slices.ContainsFunc(mem.Fields, entryField) {
 		return copied, nil
 	}
 	entries, err := tx.RadioEntries(ctx, r.ID)
@@ -593,6 +643,9 @@ func takeRadio(ctx context.Context, tx store.Library, r domain.Radio, mem Memory
 		if slices.Contains(mem.Fields, "skip") {
 			skip := mem.Radio.Skip
 			e.Skip = &skip
+		}
+		if power != domain.PowerUnset {
+			e.Power = power
 		}
 		return copied, tx.SetRadioEntry(ctx, r.ID, e)
 	}
