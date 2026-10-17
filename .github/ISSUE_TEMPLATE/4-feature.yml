@@ -1,0 +1,37 @@
+name: Feature request
+description: Something rflib could do, or do better.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. For a radio rflib doesn't support, use **Radio request** instead. Not sure yet what you'd want? Start a thread in [Discussions](https://github.com/rgeyer/rflib/discussions/categories/ideas).
+  - type: textarea
+    id: goal
+    attributes:
+      label: What you're trying to do
+      description: The task or outcome, in your own terms, such as "program the club's net frequencies into every member's radio before the event".
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How you do it today
+      description: With rflib or without it, and what's hard about that.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you picture it working, if you have an idea. Optional; the goal matters most.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      multiple: true
+      options:
+        - Command line
+        - Web interface
+        - Radios and exports
+        - The shared list
+        - Hosting and accounts
+        - Something else

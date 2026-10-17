@@ -1,0 +1,20 @@
+labels: []
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you're trying to do, and where you got stuck.
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: rflib version
+      description: Paste what `rflib version` prints, and say which system you're on (Windows, macOS, or Linux).
+      render: text
+  - type: input
+    id: radio
+    attributes:
+      label: Radio, if one is involved
+      placeholder: Baofeng UV-5RM with CHIRP

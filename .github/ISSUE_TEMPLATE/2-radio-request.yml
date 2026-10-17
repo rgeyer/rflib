@@ -1,0 +1,49 @@
+name: Radio request
+description: Ask for a radio rflib doesn't have a model for yet.
+title: "Radio request: "
+labels: ["radio-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for asking. Until there's a model, `chirp-generic` works for any radio CHIRP supports (see "Radios CHIRP supports but rflib doesn't" in the README). A maintainer may send you a model file to try: install it with `rflib model install FILE`, use it, and report back here. Already made a model of your own? Use **Radio model submission** instead.
+  - type: input
+    id: radio
+    attributes:
+      label: Radio
+      description: Make and model as printed on the radio, plus region or firmware if you know it.
+      placeholder: Baofeng UV-5R (US)
+    validations:
+      required: true
+  - type: input
+    id: software
+    attributes:
+      label: How it's programmed
+      description: CHIRP (and the radio's name in CHIRP's list), or the manufacturer's software and its version.
+      placeholder: CHIRP, "Baofeng UV-5R"; or ADMS-17 version 1.0.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample export
+      description: |
+        Attach a CSV exported from that software with a few memories programmed: a simplex channel, a repeater with a tone, and anything unusual the radio does (DCS, split tones, AM, narrow FM, power levels, skip). Name the memories so they say what they are. This shows rflib exactly what the file looks like. Remove anything private.
+    validations:
+      required: true
+  - type: input
+    id: manual
+    attributes:
+      label: Manual
+      description: A link to the radio's manual, if you have one. Bands, power levels, and memory counts come from it.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Quirks you know of, such as how many characters a name shows, or settings the software can't export.
+  - type: checkboxes
+    id: test
+    attributes:
+      label: Testing
+      options:
+        - label: I can try a model file on my radio and report back.

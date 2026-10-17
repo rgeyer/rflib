@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/rgeyer/rflib/discussions/categories/q-a
+    about: How do I…? Is this a bug or me? Ask in Discussions.
+  - name: Share an idea, or how you use rflib
+    url: https://github.com/rgeyer/rflib/discussions
+    about: Ideas that aren't ready to be a feature request, and anything else.

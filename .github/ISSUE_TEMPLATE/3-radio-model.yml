@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thanks for sharing a model. A maintainer checks it against your sample and adds it as a built-in, citing your sample as its source.
-        See "Radios CHIRP supports but rflib doesn't" in the README for making one.
+        See "Radios CHIRP supports but rflib doesn't" in the README for making one. Check it with `rflib model validate`, and use it on your radio (`rflib model install FILE`) before submitting.
   - type: input
     id: radio
     attributes:
@@ -28,7 +28,7 @@ body:
     id: model
     attributes:
       label: Model file
-      description: The model file, after `rflib model validate` passes.
+      description: Paste the model file, or attach it.
       render: yaml
     validations:
       required: true
@@ -44,6 +44,14 @@ body:
     attributes:
       label: What you checked
       description: For example, bands and power levels against the manual, names on the display, or transmit on each band.
+  - type: textarea
+    id: version
+    attributes:
+      label: rflib version
+      description: Paste what `rflib version` prints.
+      render: text
+    validations:
+      required: true
   - type: checkboxes
     id: rights
     attributes:
