@@ -175,6 +175,7 @@ var CuratedTags = []struct{ Name, Meaning string }{
 	{"emergency", "set aside for emergency traffic"},
 	{"travel", "useful to travelers, such as a highway or travel net"},
 	{"winlink", "a Winlink RMS gateway, for radio email"},
+	{"satellite", "worked through an amateur satellite: usable during passes, with Doppler shift"},
 }
 
 // ValidateSharedTags checks a shared channel's tags are all curated.

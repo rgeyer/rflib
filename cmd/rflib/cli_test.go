@@ -1012,7 +1012,7 @@ func TestPipedIDsAndBulkChanges(t *testing.T) {
 
 func TestSharedChannels(t *testing.T) {
 	c := newCLI(t)
-	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || strings.Count(got, "\n") != 7 {
+	if got := c.ok("tag", "list", "--fields", "name"); !strings.HasPrefix(got, "calling\nares\n") || !strings.HasSuffix(got, "winlink\nsatellite") || strings.Count(got, "\n") != 8 {
 		t.Errorf("tag list = %q", got)
 	}
 	// A private channel matching GMRS 20, named differently, gives way to
