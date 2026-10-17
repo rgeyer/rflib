@@ -133,7 +133,7 @@ func TestRecordSeeds(t *testing.T) {
 		t.Errorf("noaa = %q", changes(st))
 	}
 	cb, _ := seed.Get("us-cb")
-	if st, _ := sh.SeedStatus(ctx, cb); st.Installed || len(st.Changes) != 80 {
+	if st, _ := sh.SeedStatus(ctx, cb); st.Installed || len(st.Changes) != 120 {
 		t.Error("a list never seeded counts as installed")
 	}
 }

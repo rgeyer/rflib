@@ -29,7 +29,7 @@ var lists = []List{
 	{"us-60m", "US amateur 60m channels 1-5 (USB dial frequencies)"},
 	{"us-aprs", "APRS: the national frequency and the space digipeaters"},
 	{"us-beacons", "NCDXF/IARU HF beacons, 20m to 10m (CW, receive only)"},
-	{"us-cb", "Citizens Band channels 1-40, in AM and in LSB"},
+	{"us-cb", "Citizens Band channels 1-40, in AM, LSB, and USB"},
 	{"us-fm-sats", "FM amateur satellites, with uplink tones (the ISS is in us-iss)"},
 	{"us-ft4", "FT4 dial frequencies, 80m to 2m (USB)"},
 	{"us-ft8", "FT8 dial frequencies, 160m to 2m (USB; 60m is in us-60m)"},
