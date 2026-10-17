@@ -1,10 +1,11 @@
-import { Alert, Anchor, Badge, Button, Center, Menu, Modal, Paper, PasswordInput, Stack, Text, TextInput, Title, UnstyledButton } from "@mantine/core";
+import { Alert, Anchor, Badge, Box, Button, Center, Menu, Modal, Paper, PasswordInput, Stack, Text, TextInput, Title, UnstyledButton } from "@mantine/core";
 import { IconChevronDown, IconUserCircle } from "@tabler/icons-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, call, message, type User } from "../api/client";
 import { useAuth } from "../lib/auth";
+import { About } from "./About";
 import { failed, ok } from "../lib/notify";
 
 /** SignIn is the page a server with accounts shows until someone signs
@@ -110,6 +111,9 @@ export function SignIn() {
             )}
           </Stack>
         </form>
+        <Box mt="lg">
+          <About ta="center" />
+        </Box>
       </Paper>
     </Center>
   );

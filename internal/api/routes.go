@@ -142,7 +142,8 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) error {
 	if err := s.st.Ready(ctx(r)); err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": buildinfo.Get().String()})
+	info := buildinfo.Get()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": info.String(), "source": cmpOr(s.opts.Source, info.SourceURL()), "author": buildinfo.Author})
 	return nil
 }
 

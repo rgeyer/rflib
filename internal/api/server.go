@@ -40,6 +40,10 @@ type Options struct {
 	Spec []byte
 	// Accounts, when set, puts the API behind sign-in in place of Token.
 	Accounts *AccountOptions
+	// Source is where the running rflib's source is, which the web
+	// interface links to; empty uses this build's (buildinfo.SourceURL).
+	// Someone serving a modified rflib points it at their own.
+	Source string
 }
 
 type server struct {

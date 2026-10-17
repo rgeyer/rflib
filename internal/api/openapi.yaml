@@ -2,6 +2,8 @@ openapi: 3.0.3
 info:
   title: rflib API
   version: "1"
+  contact: {name: "Ryan Geyer, W6FAM", url: "https://github.com/rgeyer/rflib"}
+  license: {name: AGPL-3.0-or-later, url: "https://www.gnu.org/licenses/agpl-3.0.html"}
   description: |
     rflib's JSON HTTP API: libraries of radio channels, the radios they're
     programmed into, saved searches, and the shared channel list.
@@ -63,8 +65,10 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status, version]
+                required: [status, version, source, author]
                 properties:
+                  source: {type: string, description: "Where the running rflib's source is: its release's tag or commit, or what serve --source-url names"}
+                  author: {type: string}
                   status: {type: string, enum: [ok]}
                   version: {type: string, description: "rflib's version, and the commit when known, as rflib version prints it: v0.1.0, or dev (1a2b3c4d)"}
         "500": {$ref: "#/components/responses/Error"}

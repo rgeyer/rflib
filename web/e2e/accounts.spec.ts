@@ -21,6 +21,9 @@ test.beforeAll(async ({ request }) => {
 test("sign in, register, and each account has its own library", async ({ page, browser }) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  // Before signing in, the page says who wrote rflib and links to its source.
+  await expect(page.getByText(/^rflib .* by Ryan Geyer, W6FAM/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Source" })).toHaveAttribute("href", /^https:\/\/github\.com\/rgeyer\/rflib/);
   await page.getByLabel("Callsign or username").fill("n0call");
   await page.getByLabel(/^Password\s*\*?$/).fill("wrong password");
   await page.getByRole("button", { name: "Sign in" }).click();

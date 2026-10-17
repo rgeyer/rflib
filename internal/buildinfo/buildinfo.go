@@ -13,6 +13,12 @@ import (
 // Version is the release, such as v0.1.0, or "dev".
 var Version = "dev"
 
+// Repository is where rflib's source is published.
+const Repository = "https://github.com/rgeyer/rflib"
+
+// Author is who wrote rflib.
+const Author = "Ryan Geyer, W6FAM"
+
 // Info is a build's version, commit, and commit time.
 type Info struct {
 	Version string `json:"version"`
@@ -46,6 +52,19 @@ func Get() Info {
 		info.Commit += "-modified"
 	}
 	return info
+}
+
+// SourceURL is where this build's source is: its release's tag, or the
+// commit of an unmodified checkout; otherwise the repository, since a
+// modified build's changes aren't published there.
+func (i Info) SourceURL() string {
+	switch {
+	case i.Version != "dev":
+		return Repository + "/tree/" + i.Version
+	case i.Commit != "" && !strings.HasSuffix(i.Commit, "-modified"):
+		return Repository + "/tree/" + i.Commit
+	}
+	return Repository
 }
 
 // String is the version and, when known, the short commit: "v0.1.0

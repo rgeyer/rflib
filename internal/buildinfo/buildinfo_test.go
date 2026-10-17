@@ -19,3 +19,19 @@ func TestString(t *testing.T) {
 		t.Errorf("an unstamped build's version = %q", Get().Version)
 	}
 }
+
+func TestSourceURL(t *testing.T) {
+	for _, tc := range []struct {
+		info Info
+		want string
+	}{
+		{Info{Version: "v0.1.0", Commit: "1a2b3c4d5e"}, Repository + "/tree/v0.1.0"},
+		{Info{Version: "dev", Commit: "1a2b3c4d5e"}, Repository + "/tree/1a2b3c4d5e"},
+		{Info{Version: "dev", Commit: "1a2b3c4d5e-modified"}, Repository},
+		{Info{Version: "dev"}, Repository},
+	} {
+		if got := tc.info.SourceURL(); got != tc.want {
+			t.Errorf("%+v: %s, want %s", tc.info, got, tc.want)
+		}
+	}
+}

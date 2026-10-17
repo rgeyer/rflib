@@ -17,6 +17,9 @@ test("lists, channels, radios, and export", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/l\/default\/channels$/);
   await expect(page.getByText("0 channels")).toBeVisible();
+  // The sidebar says who wrote rflib and links to its source.
+  await expect(page.getByRole("navigation").getByText(/by Ryan Geyer, W6FAM/)).toBeVisible();
+  await expect(page.getByRole("navigation").getByRole("link", { name: "Source" })).toHaveAttribute("href", /^https:\/\/github\.com\/rgeyer\/rflib/);
 
   // The Shared list item opens the shared list, marked in the header; the
   // other items always lead back to the user's own library.

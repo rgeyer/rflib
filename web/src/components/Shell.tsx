@@ -1,4 +1,4 @@
-import { AppShell, Badge, Burger, Divider, Group, NavLink, Text, Title } from "@mantine/core";
+import { AppShell, Badge, Box, Burger, Divider, Group, NavLink, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { IconAntenna, IconBroadcast, IconClipboardList, IconFileImport, IconList, IconMap, IconRefresh, IconTopologyStar, IconUsersGroup, IconWorld } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
@@ -6,6 +6,7 @@ import { NavLink as RouterLink, Outlet } from "react-router-dom";
 import { api, call, type Change } from "../api/client";
 import { useAuth, useMaintainer } from "../lib/auth";
 import { enc, useLib, useLibraries } from "../lib/library";
+import { About } from "./About";
 import { AccountMenu } from "./Account";
 import { TokenPrompt } from "./TokenPrompt";
 
@@ -34,7 +35,6 @@ export function Shell() {
     { to: "import", label: "Import", icon: IconFileImport },
   ];
   const pending = changes.data?.changes.length ?? 0;
-  const health = useQuery({ queryKey: ["health"], queryFn: () => call(api.GET("/health")), staleTime: Infinity });
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 220, breakpoint: "sm", collapsed: { mobile: !opened } }} padding="md">
       <AppShell.Header>
@@ -86,9 +86,9 @@ export function Shell() {
             />
           </>
         )}
-        <Text size="xs" c="dimmed" mt="auto" p="xs">
-          {health.data && <>rflib {health.data.version} · </>}API: <a href="/api/v1/openapi.yaml">/api/v1</a>
-        </Text>
+        <Box mt="auto" p="xs">
+          <About api />
+        </Box>
       </AppShell.Navbar>
       <AppShell.Main>
         <Outlet />

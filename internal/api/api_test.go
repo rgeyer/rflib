@@ -19,6 +19,7 @@ import (
 	"github.com/getkin/kin-openapi/routers"
 	"github.com/getkin/kin-openapi/routers/legacy"
 	"github.com/ryan/rflib/internal/app"
+	"github.com/ryan/rflib/internal/buildinfo"
 	"github.com/ryan/rflib/internal/seed"
 	"github.com/ryan/rflib/internal/store/sqlite"
 )
@@ -254,7 +255,13 @@ func TestRoutesMatchTheSpec(t *testing.T) {
 
 func TestAuthAndErrors(t *testing.T) {
 	c := newClient(t, "secret")
-	c.do("GET", "/health", nil, 200, nil)
+	// The health check says which rflib it is, where its source is, and
+	// who wrote it, without a token.
+	var health map[string]string
+	c.do("GET", "/health", nil, 200, &health)
+	if !strings.HasPrefix(health["source"], buildinfo.Repository) || health["author"] != "Ryan Geyer, W6FAM" {
+		t.Errorf("health = %v", health)
+	}
 	var spec string
 	c.do("GET", "/openapi.yaml", nil, 200, &spec)
 	if !strings.HasPrefix(spec, "openapi: ") {
