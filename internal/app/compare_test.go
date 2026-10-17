@@ -134,6 +134,26 @@ func TestCompareRadio(t *testing.T) {
 	}
 }
 
+// A memory's candidates say what differs from it, so a partial match can be
+// judged: tones here, and the name unless it's the channel's or a short name.
+func TestCandidatesSayWhatDiffers(t *testing.T) {
+	rptr := analog("Club Repeater", 147.3, 147.9, 131.8)
+	rptr.ID, rptr.ShortNames = "a", []string{"CLUB"}
+	other := analog("Other Repeater", 147.3, 147.9, 131.8)
+	other.ID = "b"
+	got := candidates(analog("CLUB", 147.3, 147.9, 100), []domain.Channel{rptr, other})
+	var out []string
+	for _, c := range got {
+		out = append(out, c.Channel.Name+" "+c.Match+" "+strings.Join(c.Differs, "+"))
+	}
+	if got, want := strings.Join(out, ", "), "Club Repeater frequencies tx tone, Other Repeater frequencies name+tx tone"; got != want {
+		t.Errorf("candidates = %s, want %s", got, want)
+	}
+	if c := candidates(analog("CLUB", 147.3, 147.9, 131.8), []domain.Channel{rptr}); len(c) != 1 || c[0].Match != "exact" || len(c[0].Differs) != 0 {
+		t.Errorf("an exact match = %+v", c)
+	}
+}
+
 // An empty radio starts from its file: every memory is only on the radio,
 // and kept memories keep their numbers, gaps and all.
 func TestCompareAdoptsEmptyRadio(t *testing.T) {

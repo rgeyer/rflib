@@ -70,10 +70,13 @@ type MemoryDiff struct {
 
 // Candidate is a channel a memory might be, and how well it matches:
 // "exact" (frequencies, tones, and mode), "frequencies" (tones or mode
-// differ), or "receive" (only the receive frequency).
+// differ), or "receive" (only the receive frequency). Differs names what
+// differs from the memory, as MemoryDiff.Fields does, with "name" when the
+// memory's name isn't the channel's or one of its short names.
 type Candidate struct {
 	Channel domain.Channel
 	Match   string
+	Differs []string
 }
 
 // Comparison is a radio against its file, by memory number.
@@ -308,7 +311,7 @@ func candidates(mem domain.Channel, pool []domain.Channel) []Candidate {
 		case equalTX(onAir(c), onAir(mem)):
 			match = "frequencies"
 		}
-		out = append(out, Candidate{Channel: c, Match: match})
+		out = append(out, Candidate{Channel: c, Match: match, Differs: candidateDiffers(mem, c)})
 	}
 	rank := map[string]int{"exact": 0, "frequencies": 1, "receive": 2}
 	slices.SortStableFunc(out, func(a, b Candidate) int {
@@ -320,6 +323,17 @@ func candidates(mem domain.Channel, pool []domain.Channel) []Candidate {
 	})
 	if len(out) > maxCandidates {
 		out = out[:maxCandidates]
+	}
+	return out
+}
+
+// candidateDiffers is what differs between a memory and a channel it might
+// be: what it programs, and its name, unless the memory carries the
+// channel's name or a short name. Scan is the radio's, so it's left out.
+func candidateDiffers(mem, c domain.Channel) []string {
+	out := slices.DeleteFunc(diffFields(mem, c), func(f string) bool { return f == "name" || f == "skip" })
+	if nameDistance(mem.Name, c) != 0 {
+		out = append([]string{"name"}, out...)
 	}
 	return out
 }

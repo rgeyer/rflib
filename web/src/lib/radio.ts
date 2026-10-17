@@ -106,3 +106,28 @@ export const DCS = [
 export const MODES = ["FM", "NFM", "AM", "USB", "LSB", "CW"];
 export const SERVICES = ["", "amateur", "gmrs", "frs", "cb", "murs", "marine", "noaa", "public_safety", "other"];
 export const POWERS = ["", "low", "medium", "high", "max"];
+
+/** Programmed is what a comparison looks at in a memory or a channel. */
+type Programmed = { name: string; rx_hz: number; tx_hz?: number | null; mode: string; tx_tone: string; rx_tone: string; tone_squelch: boolean };
+
+/** fieldValue is one field of a memory or channel, named as a comparison
+ * names what differs ("rx", "tx tone", and so on), for showing. */
+export function fieldValue(v: Programmed, field: string): string {
+  switch (field) {
+    case "name":
+      return v.name;
+    case "rx":
+      return formatMHz(v.rx_hz);
+    case "tx":
+      return v.tx_hz == null ? "none" : formatMHz(v.tx_hz);
+    case "mode":
+      return v.mode;
+    case "tx tone":
+      return shortTone(v.tx_tone) || "none";
+    case "rx tone":
+      return shortTone(v.rx_tone) || "none";
+    case "tone squelch":
+      return v.tone_squelch ? "on" : "off";
+  }
+  return "";
+}

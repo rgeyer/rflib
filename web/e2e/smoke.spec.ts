@@ -401,7 +401,9 @@ test("compare a radio with its file, and start it from that", async ({ page, req
   await expect(page.getByText("2 only on the radio")).toBeVisible();
   // The first test's Marian repeater programs exactly as memory 9 does, so
   // it's chosen; memory 4 matches nothing and is kept as programmed.
-  await expect(page.getByRole("combobox", { name: "Memory 9" })).toHaveValue("Use Marian (exact match)");
+  // It programs the same, but under another name, which it says.
+  await expect(page.getByRole("combobox", { name: "Memory 9" })).toHaveValue("Use Marian (exact match; differs in name)");
+  await expect(page.getByTestId("candidate-differs")).toHaveText("name: Repeater B on the radio, Marian in rflib");
   await expect(page.getByRole("combobox", { name: "Memory 4" })).toHaveValue("Keep as programmed");
   await page.getByRole("button", { name: "Apply" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Apply" }).click();

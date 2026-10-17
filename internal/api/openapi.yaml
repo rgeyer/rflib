@@ -2152,10 +2152,11 @@ components:
           description: Channels a memory only on the radio might be, best first
           items:
             type: object
-            required: [match, channel]
+            required: [match, channel, differs]
             properties:
               match: {type: string, enum: [exact, frequencies, receive]}
               channel: {$ref: "#/components/schemas/Channel"}
+              differs: {type: array, items: {type: string}, description: "What differs from the memory, as fields names it, with name when the memory's isn't the channel's or a short name"}
     AddResult:
       type: object
       required: [added, channels, skipped, wrong_mode]

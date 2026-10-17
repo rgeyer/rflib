@@ -35,8 +35,9 @@ func newMemoryValues(c *domain.Channel) *MemoryValues {
 
 // Candidate is a channel a memory only on the radio might be.
 type Candidate struct {
-	Match   string  `json:"match"`
-	Channel Channel `json:"channel"`
+	Match   string   `json:"match"`
+	Channel Channel  `json:"channel"`
+	Differs []string `json:"differs"`
 }
 
 // MemoryDiff is one memory of a comparison.
@@ -79,7 +80,7 @@ func newComparison(c app.Comparison) map[string]any {
 			m.Channel = &ch
 		}
 		for _, cand := range d.Candidates {
-			m.Candidates = append(m.Candidates, Candidate{cand.Match, newChannel(cand.Channel)})
+			m.Candidates = append(m.Candidates, Candidate{cand.Match, newChannel(cand.Channel), nonNil(cand.Differs)})
 		}
 		out[i] = m
 	}
