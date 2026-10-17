@@ -1,7 +1,7 @@
 // Command dist builds rflib's release archives: rflib for each system it's
 // released for, with the web interface built in (build it first, with make
-// web), each in an archive with the README and the license, and a
-// SHA256SUMS file listing them.
+// web), each in an archive with the README, the documentation (docs), and
+// the license, and a SHA256SUMS file listing them.
 //
 //	go run ./tools/dist -version v0.1.0 [-out dist]
 package main
@@ -82,6 +82,10 @@ func run(version, out string) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(build) }()
+	docs, err := docFiles()
+	if err != nil {
+		return err
+	}
 	var archives []string
 	for _, t := range targets {
 		bin := filepath.Join(build, t.name(), "rflib")
@@ -96,7 +100,7 @@ func run(version, out string) error {
 			return fmt.Errorf("%s: %w", t.name(), err)
 		}
 		dir := "rflib-" + version + "-" + t.name()
-		files := []file{{bin, filepath.Base(bin), 0o755}, {"README.md", "README.md", 0o644}, {"LICENSE", "LICENSE", 0o644}}
+		files := append([]file{{bin, filepath.Base(bin), 0o755}, {"README.md", "README.md", 0o644}, {"LICENSE", "LICENSE", 0o644}}, docs...)
 		var name string
 		if t.os == "windows" {
 			name = dir + ".zip"
@@ -112,6 +116,20 @@ func run(version, out string) error {
 		archives = append(archives, name)
 	}
 	return writeSums(out, archives)
+}
+
+// docFiles are the documentation's pages, which go in every archive, so
+// its links from the README work offline.
+func docFiles() ([]file, error) {
+	paths, err := filepath.Glob(filepath.Join("docs", "*.md"))
+	if err != nil || len(paths) == 0 {
+		return nil, errors.Join(err, errors.New("no documentation in docs"))
+	}
+	files := []file{{"SECURITY.md", "SECURITY.md", 0o644}}
+	for _, p := range paths {
+		files = append(files, file{p, "docs/" + filepath.Base(p), 0o644})
+	}
+	return files, nil
 }
 
 // file is one file in an archive: where it is, its name in the archive, and

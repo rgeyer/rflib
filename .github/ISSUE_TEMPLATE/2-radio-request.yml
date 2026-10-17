@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for asking. Until there's a model, `chirp-generic` works for any radio CHIRP supports (see "Radios CHIRP supports but rflib doesn't" in the README). A maintainer may send you a model file to try: install it with `rflib model install FILE`, use it, and report back here. Already made a model of your own? Use **Radio model submission** instead.
+        Thanks for asking. Until there's a model, `chirp-generic` works for any radio CHIRP supports (see [Radio models](https://github.com/rgeyer/rflib/blob/main/docs/radio-models.md)). A maintainer may send you a model file to try: install it with `rflib model install FILE`, use it, and report back here. Already made a model of your own? Use **Radio model submission** instead.
   - type: input
     id: radio
     attributes:

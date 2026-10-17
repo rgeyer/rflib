@@ -8,7 +8,7 @@ info:
 
     Frequencies are exact integer Hz. Tones are `none`, `ctcss:100.000`,
     `dcs:023`, or `dcs:023:inverted`. Queries use rflib's search language
-    (`band:2m is:repeater`, `in:shared`, `status:off-air`; see the README).
+    (`band:2m is:repeater`, `in:shared`, `status:off-air`; see docs/search.md).
     A library is named by its name or ID; a channel by its ID or a unique
     prefix of four or more characters.
 
