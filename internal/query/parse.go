@@ -391,10 +391,19 @@ func (t Term) String() string { return t.Field + ":" + t.Op + quoteValue(t.Value
 
 func (t Text) String() string {
 	if t.Value == "" || needsQuotes(t.Value) || strings.Contains(t.Value, ":") || strings.ContainsAny(t.Value[:1], "@-") ||
-		t.Value == "OR" || t.Value == "AND" || t.Value == "NOT" {
+		isKeyword(t.Value) {
 		return quote(t.Value)
 	}
 	return t.Value
+}
+
+// isKeyword says a word would lex as OR, AND, or NOT, in any case.
+func isKeyword(s string) bool {
+	switch strings.ToUpper(s) {
+	case "OR", "AND", "NOT":
+		return true
+	}
+	return false
 }
 
 func (r Ref) String() string { return "@" + r.Name }
