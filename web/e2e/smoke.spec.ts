@@ -298,15 +298,35 @@ test("map markers stay clickable inside a radius", async ({ page, request }) => 
     data: { name: "Radius Test", rx_hz: 145_650_000, mode: "FM", location: { latitude: 34.69, longitude: -120.46, radius_km: 50 } },
   });
   await page.goto("/l/default/map");
-  await page.getByLabel("Search").fill("name:\"Radius Test\"");
-  await expect(page.getByText("1 channels with a location")).toBeVisible();
-  // The marker is the smallest shape on the map; click its center.
-  const paths = page.locator(".leaflet-overlay-pane path");
-  await expect(paths).toHaveCount(2);
-  const boxes = await paths.evaluateAll((ps) => ps.map((p) => p.getBoundingClientRect().toJSON()));
-  const marker = boxes.reduce((a, b) => (a.width <= b.width ? a : b));
-  await page.mouse.click(marker.x + marker.width / 2, marker.y + marker.height / 2);
+  await page.getByLabel("Search").fill('name:"Radius Test"');
+  await expect(page.getByText("1 channel with a location")).toBeVisible();
+  await expect(page.locator(".leaflet-overlay-pane path")).toHaveCount(1);
+  await page.locator(".rflib-site").click();
   await expect(page.locator(".leaflet-popup").getByText("Radius Test")).toBeVisible();
+});
+
+// Channels at one place share a numbered marker listing them all, and
+// markers too close to tell apart cluster until you zoom in.
+test("map groups channels at one place, and clusters close ones", async ({ page, request }) => {
+  const add = (name: string, rx_hz: number, latitude: number, longitude: number) =>
+    request.post("/api/v1/libraries/default/channels", { data: { name, rx_hz, mode: "FM", location: { latitude, longitude, radius_km: 20 } } });
+  await add("Peak A", 146_940_000, 34.8, -120.3);
+  await add("Peak B", 147_300_000, 34.8, -120.3);
+  await add("Peak C", 446_000_000, 34.8, -120.3);
+  await add("Valley", 145_330_000, 34.81, -120.31);
+  await page.goto("/l/default/map");
+  await page.getByLabel("Search").fill("name:Peak OR name:Valley");
+  await expect(page.getByText("4 channels with a location, at 2 places")).toBeVisible();
+  // One circle per reach at a place, not one per channel.
+  await expect(page.locator(".leaflet-overlay-pane path")).toHaveCount(2);
+  // About a kilometer apart, the two places are one cluster of 4 at first.
+  await expect(page.locator(".rflib-cluster")).toHaveText("4");
+  await page.locator(".rflib-cluster").click();
+  await expect(page.locator(".rflib-site")).toHaveCount(2);
+  await page.locator(".rflib-site", { hasText: "3" }).click();
+  const popup = page.locator(".leaflet-popup");
+  await expect(popup.getByText("3 channels here")).toBeVisible();
+  for (const name of ["Peak A", "Peak B", "Peak C"]) await expect(popup.getByText(name)).toBeVisible();
 });
 
 // The channel editor suggests tags already in use, and still takes new ones.
