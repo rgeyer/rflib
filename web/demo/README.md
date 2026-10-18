@@ -39,11 +39,11 @@ The version stamp, and `-buildvcs=false`, make the sidebar read as a release doe
 | `map.png` | The shared list's repeaters on the map, clustered |
 | `demo.webm` | The recording: a repeater's tone is corrected once, both radios show they need programming, and the HT is exported |
 
-Then, with ffmpeg, make the README's GIF from the recording (about 3.5 MB: 8 frames a second, 64 colors, which suits the interface's flat colors), and the map a JPEG (its tiles make a large PNG). Neither `demo.webm` nor `map.png` is committed:
+Then, with ffmpeg, make the README's GIF from the recording (about 3.5 MB: 8 frames a second, 64 colors, which suits the interface's flat colors, less the first second, while the page loads), and the map a JPEG (its tiles make a large PNG). Neither `demo.webm` nor `map.png` is committed:
 
 ```sh
 cd docs/media
-ffmpeg -y -i demo.webm -vf "fps=8,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" demo.gif
+ffmpeg -y -ss 1.2 -i demo.webm -vf "fps=8,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" demo.gif
 ffmpeg -y -i map.png -q:v 3 map.jpg
 rm demo.webm map.png
 ```
