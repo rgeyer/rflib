@@ -1,0 +1,39 @@
+# Publishes rflib's landing page (site/) to GitHub Pages, with the demo
+# media from docs/media, when either changes on main. Pages must be set to
+# deploy from GitHub Actions (Settings > Pages > Source).
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "docs/media/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble the site
+        run: |
+          mkdir -p _site/media
+          cp -r site/. _site/
+          cp docs/media/demo.gif docs/media/memories.png docs/media/draft.png docs/media/compare.png docs/media/map.jpg _site/media/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
