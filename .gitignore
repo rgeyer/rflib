@@ -11,3 +11,5 @@
 /web/test-results/
 /web/playwright-report/
 /web/*.tsbuildinfo
+/docs/media/*.webm
+/docs/media/map.png

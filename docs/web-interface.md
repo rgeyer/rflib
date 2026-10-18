@@ -14,6 +14,27 @@ When the server needs a token (`$RFLIB_API_TOKEN`), the page asks for it once an
 
 Building the interface needs Node.js: `make web` builds it into `web/dist`, and `make build` then embeds it. An rflib built without it serves a page saying so. See [Development](development.md).
 
+
+## Screenshots
+
+From rflib's demo (`web/demo` makes them): a handheld and a truck radio built from a shared list of Central Coast California repeaters.
+
+**A radio's memories**, in sections, as they'll be programmed: each section from a search, with names fitted to the radio's display.
+
+![The HT's memories: calling channels, nearby repeaters, and weather, each in a section from a search](media/memories.png)
+
+**A draft**, marked against the saved radio: a repeater added (green), one with scanning turned off (orange), one renumbered, and one taken off, listed last.
+
+![A draft of the HT, with memories it adds, changes, renumbers, and takes off marked](media/draft.png)
+
+**Comparing with the radio's file**: what was changed on the radio itself, here a tone and a power level, with the choice of keeping rflib's or taking the radio's.
+
+![A comparison of the HT with its file, finding a changed tone and a changed power level](media/compare.png)
+
+**The map**: the shared list's repeaters, clustered where they're close, with the links of the systems they belong to.
+
+![The map of the Central Coast, with repeater sites clustered and system links drawn](media/map.jpg)
+
 ---
 
 [Documentation index](README.md)
