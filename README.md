@@ -4,6 +4,10 @@ By Ryan Geyer, W6FAM.
 
 `rflib` keeps your analog radio channels in one library and programs your radios from it. You collect channels once, your own and those on a shared list of repeaters and common frequencies, then build each radio from them and export its programming file for CHIRP or the manufacturer's software (Yaesu ADMS). When a shared channel changes, such as a repeater's new tone, the radios that use it show they need programming again.
 
+![A repeater's tone is corrected once in the shared list, both radios that use it show they need programming, and the HT's file is exported again](docs/media/demo.gif)
+
+More of it: [screenshots of the web interface](docs/web-interface.md#screenshots).
+
 It's one program, `rflib`, with a web interface and a command line, on a single SQLite file. Run it on your own computer, or host it for a club, with an account for each person.
 
 **rflib is in public preview.** It works, and its author programs real radios with it, but expect rough edges, and see the [known limitations](docs/limitations.md) before you start. Feedback is welcome: see [Questions, problems, and radios](#questions-problems-and-radios).
